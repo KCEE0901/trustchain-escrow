@@ -11,6 +11,7 @@ Related reading:
 - [docs/event-schema.md](event-schema.md) — canonical on-chain event definitions (topic/data tuples, Rust emitters)
 - [docs/indexer-guide.md](indexer-guide.md) — how contract events reach the database in the first place
 - [docs/api-reference.md](api-reference.md) — authentication and the rest of the REST surface
+- [docs/configuration.md](configuration.md) — every environment variable, including the `WEBHOOK_*` family
 - [docs/error-codes.md](error-codes.md) — API error semantics
 
 ---
@@ -661,8 +662,8 @@ The stored payload is not returned by this endpoint — it is retained in
 
 ## Configuration
 
-Delivery behaviour is tuned with these backend environment variables, all set in
-`backend/.env` (see [backend/.env.example](../backend/.env.example)).
+Delivery behaviour is tuned with these backend environment variables. See
+[docs/configuration.md](configuration.md) for the full catalogue.
 
 | Variable                       | Default | Purpose                                                             |
 | ------------------------------ | ------- | ------------------------------------------------------------------- |

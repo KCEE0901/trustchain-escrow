@@ -8,7 +8,7 @@ grouped by the subsystem that consumes it.
 Related reading:
 
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — local setup walkthrough
-- [backend/docs/webhook-delivery.md](../backend/docs/webhook-delivery.md) — webhook delivery tuning
+- [docs/webhooks.md](webhooks.md) — webhook delivery tuning
 - [docs/indexer-guide.md](indexer-guide.md) — indexer operation
 - [docs/monitoring/setup.md](monitoring/setup.md) — metrics, tracing, and alerting
 - [docs/disaster-recovery.md](disaster-recovery.md) — backup and restore procedures
@@ -353,8 +353,7 @@ See [docs/indexer-guide.md](indexer-guide.md) for operational detail.
 
 ### Webhooks
 
-Full behaviour is documented in the
-[webhook delivery guide](../backend/docs/webhook-delivery.md).
+Full behaviour is documented in [docs/webhooks.md](webhooks.md).
 
 | Variable                     | Default | Description                                                    |
 | ---------------------------- | ------- | -------------------------------------------------------------- |
