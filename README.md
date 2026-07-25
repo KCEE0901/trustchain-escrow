@@ -192,7 +192,8 @@ trustchain-escrow/
 │
 ├── docs/
 │   ├── CONTRIBUTING.md
-│   └── SECURITY.md
+│   ├── SECURITY.md
+│   └── configuration.md               # All env vars & config options
 │
 ├── scripts/
 │   ├── deploy/
@@ -231,6 +232,7 @@ docker compose up -d
 
 # Configure environment
 cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env.local
 
 # Run migrations
 npm run db:migrate -w backend
@@ -255,6 +257,13 @@ npm run test:unit -w frontend
 # Contracts
 cargo test --workspace
 ```
+
+### Configuration
+
+Every environment variable and configuration option — backend, frontend, mobile,
+Docker Compose, and the ops scripts — is catalogued in
+[docs/configuration.md](docs/configuration.md), along with defaults, startup
+validation rules, and per-environment recommendations.
 
 ---
 
