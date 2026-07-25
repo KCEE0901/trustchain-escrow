@@ -9,7 +9,7 @@ A platform where clients lock funds into verifiable smart contracts, contractors
 [![Soroban Contracts](https://img.shields.io/badge/Smart%20Contracts-Soroban%20%2F%20Rust-orange)](https://soroban.stellar.org)
 [![Backend Tests](https://img.shields.io/badge/backend%20tests-425%20passing-brightgreen)](#testing)
 [![Node](https://img.shields.io/badge/Node.js-%3E%3D20-339933?logo=node.js)](https://nodejs.org)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-blue)](docs/CONTRIBUTING.md)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-blue)](CONTRIBUTING.md)
 
 ---
 
@@ -190,8 +190,10 @@ trustchain-escrow/
 │   │   └── offlineCache.ts
 │   └── lib/
 │
+├── CONTRIBUTING.md                    # Contributor guide (setup → first PR)
+│
 ├── docs/
-│   ├── CONTRIBUTING.md
+│   ├── CONTRIBUTING.md                # → points at the root guide
 │   ├── SECURITY.md
 │   ├── configuration.md               # All env vars & config options
 │   ├── event-schema.md                # On-chain event catalogue
@@ -313,7 +315,7 @@ See [docs/SECURITY.md](docs/SECURITY.md) for the vulnerability disclosure policy
 
 ## Contributing
 
-See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for branch naming conventions, commit format, and PR guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, the Soroban toolchain, how to test each layer, branch naming conventions, commit format, and the PR process. New pull requests are pre-filled with the [PR template](.github/pull_request_template.md).
 
 ---
 
