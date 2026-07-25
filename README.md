@@ -192,7 +192,9 @@ trustchain-escrow/
 │
 ├── docs/
 │   ├── CONTRIBUTING.md
-│   └── SECURITY.md
+│   ├── SECURITY.md
+│   ├── event-schema.md                # On-chain event catalogue
+│   └── webhooks.md                    # Webhook payloads & event types
 │
 ├── scripts/
 │   ├── deploy/
@@ -272,8 +274,16 @@ All endpoints are versioned under `/api/v1/`. Authentication uses Bearer JWT tok
 | `POST` | `/escrows/:id/dispute` | Raise a dispute                     |
 | `GET`  | `/escrows/:id/events`  | Full event timeline                 |
 | `GET`  | `/users/me/stats`      | Account stats and volume            |
+| `POST` | `/webhooks/subscribe`  | Subscribe to on-chain event webhooks |
 
 Full API reference: `backend/openapi.yaml`
+
+### Webhooks
+
+Subscribe to indexed on-chain events and receive signed `POST` callbacks. See
+[docs/webhooks.md](docs/webhooks.md) for subscription management, the delivery
+envelope, payload schemas for every event type, signature verification, and retry
+behaviour.
 
 ---
 
