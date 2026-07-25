@@ -423,7 +423,7 @@ Notes:
 
 1. Pick or claim an issue before starting substantial work.
 2. Keep the branch scoped to one fix, feature, or documentation change.
-3. Open a pull request against `main`.
+3. Open a pull request against `develop` — it is the repository's default branch and where active work lands. `main` tracks releases and lags well behind; targeting it produces conflicts from the branch divergence rather than from your change.
 4. Fill in the [PR template](.github/pull_request_template.md) completely — it is applied automatically when you open the PR.
 5. Link the issue with `Closes #<issue-number>`.
 6. Run the relevant tests and list the exact commands in the PR.
