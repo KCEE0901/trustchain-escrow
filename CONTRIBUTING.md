@@ -1,6 +1,10 @@
-# Contributing to StellarTrustEscrow
+# Contributing to Trustchain Escrow
 
 This guide is the fastest path from clone to first PR. It covers local setup, testing, linting, the review process, and how to find newcomer-friendly issues.
+
+> This file is the single contributor guide for the repository. `docs/CONTRIBUTING.md` is a pointer to it.
+
+The Cargo package names still carry the project's former `stellar-trust-*` prefix — that is deliberate, and the commands below use them verbatim.
 
 ## Table of Contents
 
@@ -180,9 +184,9 @@ This path assumes Node, Rust, Docker, and Git are already installed.
 ### 1. Fork and clone
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/stellar-trust-escrow.git
-cd stellar-trust-escrow
-git remote add upstream https://github.com/barry01-hash/stellar-trust-escrow.git
+git clone https://github.com/YOUR_USERNAME/trustchain-escrow.git
+cd trustchain-escrow
+git remote add upstream https://github.com/KCEE0901/trustchain-escrow.git
 ```
 
 ### 2. Install workspace dependencies
@@ -260,12 +264,16 @@ cargo build -p stellar-trust-insurance-contract --target wasm32-unknown-unknown
 
 ### Branch naming
 
-Use a short descriptive branch name:
+Use `<type>/<short-description>`, lowercase and hyphenated:
 
-- `docs/contributor-onboarding`
-- `feature/add-wallet-retry`
-- `fix/backend-health-route`
-- `test/improve-escrow-coverage`
+| Type      | Prefix     | Example                            |
+| --------- | ---------- | ---------------------------------- |
+| Feature   | `feature/` | `feature/add-wallet-retry`         |
+| Bug fix   | `fix/`     | `fix/backend-health-route`         |
+| Docs      | `docs/`    | `docs/contributor-onboarding`      |
+| Tests     | `test/`    | `test/improve-escrow-coverage`     |
+| Chore     | `chore/`   | `chore/bump-prisma`                |
+| Refactor  | `refactor/`| `refactor/extract-fee-calculator`  |
 
 ### Typical flow
 
@@ -275,12 +283,30 @@ git checkout -b docs/contributor-onboarding
 
 Make your change, then run the relevant checks from the sections below.
 
-Commit using Conventional Commits:
+### Commit messages
+
+Commit using [Conventional Commits](https://www.conventionalcommits.org/) — `<type>(<scope>): <summary>`, imperative mood, no trailing period.
+
+| Type       | Use for                                                        |
+| ---------- | -------------------------------------------------------------- |
+| `feat`     | A user-visible capability                                       |
+| `fix`      | A bug fix                                                       |
+| `docs`     | Documentation only                                              |
+| `test`     | Adding or correcting tests                                      |
+| `refactor` | Behaviour-preserving restructuring                              |
+| `perf`     | A performance improvement                                       |
+| `chore`    | Tooling, dependencies, CI — anything not shipped to users       |
+
+Scope is the affected area: `contracts`, `backend`, `frontend`, `mobile`, `docs`, `ci`.
 
 ```bash
 git add .
-git commit -m "docs: create contributor onboarding guide"
+git commit -m "feat(contracts): add milestone release support"
+git commit -m "fix(backend): correct cursor pagination on escrow list"
+git commit -m "docs(api): document webhook signature verification"
 ```
+
+Note that a pre-commit hook runs `prettier --write` and `eslint --fix` over staged files via lint-staged, so a commit may amend your staged content.
 
 Push your branch:
 
@@ -397,8 +423,8 @@ Notes:
 
 1. Pick or claim an issue before starting substantial work.
 2. Keep the branch scoped to one fix, feature, or documentation change.
-3. Open a pull request against `main`.
-4. Fill in the PR template completely.
+3. Open a pull request against `develop` — it is the repository's default branch and where active work lands. `main` tracks releases and lags well behind; targeting it produces conflicts from the branch divergence rather than from your change.
+4. Fill in the [PR template](.github/pull_request_template.md) completely — it is applied automatically when you open the PR.
 5. Link the issue with `Closes #<issue-number>`.
 6. Run the relevant tests and list the exact commands in the PR.
 7. Wait for maintainer review and address feedback with follow-up commits.
@@ -433,9 +459,9 @@ Use GitHub labels to find a good starting point:
 
 Useful searches:
 
-- Good first issues: `https://github.com/barry01-hash/stellar-trust-escrow/issues?q=is%3Aopen+is%3Aissue+label%3A%22good-first-issue%22`
-- Documentation issues: `https://github.com/barry01-hash/stellar-trust-escrow/issues?q=is%3Aopen+is%3Aissue+label%3Adocumentation`
-- Help wanted: `https://github.com/barry01-hash/stellar-trust-escrow/issues?q=is%3Aopen+is%3Aissue+label%3A%22help+wanted%22`
+- Good first issues: `https://github.com/KCEE0901/trustchain-escrow/issues?q=is%3Aopen+is%3Aissue+label%3A%22good-first-issue%22`
+- Documentation issues: `https://github.com/KCEE0901/trustchain-escrow/issues?q=is%3Aopen+is%3Aissue+label%3Adocumentation`
+- Help wanted: `https://github.com/KCEE0901/trustchain-escrow/issues?q=is%3Aopen+is%3Aissue+label%3A%22help+wanted%22`
 
 If you want an issue, leave a comment so maintainers know it is in progress.
 

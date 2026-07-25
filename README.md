@@ -9,7 +9,7 @@ A platform where clients lock funds into verifiable smart contracts, contractors
 [![Soroban Contracts](https://img.shields.io/badge/Smart%20Contracts-Soroban%20%2F%20Rust-orange)](https://soroban.stellar.org)
 [![Backend Tests](https://img.shields.io/badge/backend%20tests-425%20passing-brightgreen)](#testing)
 [![Node](https://img.shields.io/badge/Node.js-%3E%3D20-339933?logo=node.js)](https://nodejs.org)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-blue)](docs/CONTRIBUTING.md)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-blue)](CONTRIBUTING.md)
 
 ---
 
@@ -190,9 +190,14 @@ trustchain-escrow/
 │   │   └── offlineCache.ts
 │   └── lib/
 │
+├── CONTRIBUTING.md                    # Contributor guide (setup → first PR)
+│
 ├── docs/
-│   ├── CONTRIBUTING.md
-│   └── SECURITY.md
+│   ├── CONTRIBUTING.md                # → points at the root guide
+│   ├── SECURITY.md
+│   ├── configuration.md               # All env vars & config options
+│   ├── event-schema.md                # On-chain event catalogue
+│   └── webhooks.md                    # Webhook payloads & event types
 │
 ├── scripts/
 │   ├── deploy/
@@ -231,6 +236,7 @@ docker compose up -d
 
 # Configure environment
 cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env.local
 
 # Run migrations
 npm run db:migrate -w backend
@@ -256,6 +262,13 @@ npm run test:unit -w frontend
 cargo test --workspace
 ```
 
+### Configuration
+
+Every environment variable and configuration option — backend, frontend, mobile,
+Docker Compose, and the ops scripts — is catalogued in
+[docs/configuration.md](docs/configuration.md), along with defaults, startup
+validation rules, and per-environment recommendations.
+
 ---
 
 ## API Overview
@@ -272,8 +285,16 @@ All endpoints are versioned under `/api/v1/`. Authentication uses Bearer JWT tok
 | `POST` | `/escrows/:id/dispute` | Raise a dispute                     |
 | `GET`  | `/escrows/:id/events`  | Full event timeline                 |
 | `GET`  | `/users/me/stats`      | Account stats and volume            |
+| `POST` | `/webhooks/subscribe`  | Subscribe to on-chain event webhooks |
 
 Full API reference: `backend/openapi.yaml`
+
+### Webhooks
+
+Subscribe to indexed on-chain events and receive signed `POST` callbacks. See
+[docs/webhooks.md](docs/webhooks.md) for subscription management, the delivery
+envelope, payload schemas for every event type, signature verification, and retry
+behaviour.
 
 ---
 
@@ -294,7 +315,7 @@ See [docs/SECURITY.md](docs/SECURITY.md) for the vulnerability disclosure policy
 
 ## Contributing
 
-See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for branch naming conventions, commit format, and PR guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, the Soroban toolchain, how to test each layer, branch naming conventions, commit format, and the PR process. New pull requests are pre-filled with the [PR template](.github/pull_request_template.md).
 
 ---
 
