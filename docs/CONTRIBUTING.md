@@ -1,46 +1,27 @@
 # Contributing to Trustchain Escrow
 
-Thank you for your interest in contributing!
+> **Moved.** The contributor guide lives at **[CONTRIBUTING.md](../CONTRIBUTING.md)**
+> in the repository root, where GitHub surfaces it automatically on issues and pull
+> requests.
+>
+> This stub remains so existing links keep working. It previously held an abridged
+> copy of the guide whose branch-naming and commit conventions had drifted out of
+> sync with the root version; the root file is now the single source of truth.
 
-## Getting Started
+The full guide covers:
 
-1. Fork the repository
-2. Clone your fork: `git clone git@github.com:<you>/trustchain-escrow.git`
-3. Install dependencies: `npm install`
-4. Copy env file: `cp backend/.env.example backend/.env`
+- [Prerequisites](../CONTRIBUTING.md#prerequisites) and the [15-minute quickstart](../CONTRIBUTING.md#15-minute-quickstart)
+- [Soroban development environment](../CONTRIBUTING.md#soroban-development-environment) — Rust toolchain, testnet identity, contract tests
+- [Development workflow](../CONTRIBUTING.md#development-workflow) — branch naming and commit conventions
+- [Testing all layers](../CONTRIBUTING.md#testing-all-layers) — contracts, backend, frontend
+- [Code style and linting](../CONTRIBUTING.md#code-style-and-linting)
+- [Pull request process](../CONTRIBUTING.md#pull-request-process)
+- [Finding a first issue](../CONTRIBUTING.md#finding-a-first-issue)
+- [OS notes](../CONTRIBUTING.md#os-notes) and [troubleshooting](../CONTRIBUTING.md#troubleshooting)
 
-## Branch Naming
+Related documents:
 
-| Type    | Pattern                     |
-| ------- | --------------------------- |
-| Feature | `feat/<short-description>`  |
-| Bug fix | `fix/<short-description>`   |
-| Docs    | `docs/<short-description>`  |
-| Chore   | `chore/<short-description>` |
-
-## Commit Messages
-
-Follow [Conventional Commits](https://www.conventionalcommits.org/):
-
-```
-feat(contracts): add milestone release support
-fix(backend): correct cursor pagination on escrow list
-docs(api): document webhook signature verification
-```
-
-## Pull Requests
-
-- Keep PRs focused — one feature or fix per PR
-- Link the relevant issue with `Closes #<number>`
-- Ensure all CI checks pass before requesting review
-- Add tests for any new behaviour
-
-## Code Style
-
-- **Backend**: ESLint + Prettier (runs on commit via lint-staged)
-- **Frontend**: ESLint + Prettier
-- **Contracts**: `cargo fmt` + `cargo clippy`
-
-## Questions?
-
-Open a discussion or an issue — we're happy to help.
+- [PR template](../.github/pull_request_template.md) — applied automatically to new pull requests
+- [Issue templates](../.github/ISSUE_TEMPLATE/) — bug report, feature request, contributor task, security disclosure
+- [SECURITY.md](SECURITY.md) — vulnerability disclosure policy
+- [ARCHITECTURE.md](../ARCHITECTURE.md) — system design overview
