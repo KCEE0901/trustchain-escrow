@@ -319,6 +319,10 @@ See [docs/security-model.md](docs/security-model.md) for the complete security m
 
 ## Documentation Guides
 
+- [REST API Reference](docs/api-reference.md) — Comprehensive technical reference for all REST endpoints, request/response schemas, and code samples.
+- [Developer Onboarding & Local Setup Guide](docs/developer-onboarding.md) — Step-by-step developer setup, toolchain requirements, Docker stack, and troubleshooting.
+- [Smart Contract ABI & Function Reference](docs/smart-contract-abi.md) — Detailed Soroban smart contract ABI signatures, data types, authorization, and event catalog.
+- [System Architecture Overview](docs/architecture-overview.md) — High-level architecture diagram, component breakdowns, data flows, and security boundaries.
 - [Escrow Creation & Release Flow Guide](docs/escrow-creation-release-guide.md) — Step-by-step end-user guide for creating escrows and releasing milestone funds.
 - [Dispute Resolution Guide](docs/dispute-resolution-guide.md) — End-to-end guide on raising disputes, IPFS evidence submission, and arbiter rulings.
 - [Security Model Documentation](docs/security-model.md) — System threat model, access control matrix, and smart contract invariants.
