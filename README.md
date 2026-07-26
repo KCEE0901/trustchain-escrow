@@ -196,7 +196,11 @@ trustchain-escrow/
 │   ├── CONTRIBUTING.md                # → points at the root guide
 │   ├── SECURITY.md
 │   ├── configuration.md               # All env vars & config options
+│   ├── dispute-resolution-guide.md    # End-to-end dispute resolution process
+│   ├── escrow-creation-release-guide.md # Escrow creation & milestone release guide
 │   ├── event-schema.md                # On-chain event catalogue
+│   ├── production-deployment-guide.md # Production deployment & setup guide
+│   ├── security-model.md              # System security model & threat matrix
 │   └── webhooks.md                    # Webhook payloads & event types
 │
 ├── scripts/
@@ -309,7 +313,17 @@ behaviour.
 
 ## Security
 
-See [docs/SECURITY.md](docs/SECURITY.md) for the vulnerability disclosure policy.
+See [docs/security-model.md](docs/security-model.md) for the complete security model and threat architecture, and [docs/SECURITY.md](docs/SECURITY.md) for the vulnerability disclosure policy.
+
+---
+
+## Documentation Guides
+
+- [Escrow Creation & Release Flow Guide](docs/escrow-creation-release-guide.md) — Step-by-step end-user guide for creating escrows and releasing milestone funds.
+- [Dispute Resolution Guide](docs/dispute-resolution-guide.md) — End-to-end guide on raising disputes, IPFS evidence submission, and arbiter rulings.
+- [Security Model Documentation](docs/security-model.md) — System threat model, access control matrix, and smart contract invariants.
+- [Production Deployment Guide](docs/production-deployment-guide.md) — Deploying Soroban contracts, backend API, databases, and Docker services to production.
+- [Configuration Reference](docs/configuration.md) — Detailed environment variables and system settings.
 
 ---
 
