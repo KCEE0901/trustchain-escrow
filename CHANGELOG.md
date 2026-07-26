@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ProposalAlreadyCancelled` error variant (code 21) in `GovError` (#659)
 - Guard in `cancel_proposal` that returns `ProposalAlreadyCancelled` when the proposal is already in `Cancelled` state (#659)
 - Pause test coverage for `reject_milestone`, `release_funds`, `start_timelock`, `extend_lock_time`, and `process_recurring_payments` returning `ContractPaused` (#660)
+- Documentation: multi-tenant architecture and data isolation guarantees (#13)
+- Documentation: operational runbook for common tasks (#14)
+- Documentation: Stellar network integration and testnet setup (#15)
+- Documentation: changelog and versioning policy (#16)
 
 ## [2.0.0] - 2026-04-21
 

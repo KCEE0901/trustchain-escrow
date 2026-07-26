@@ -328,6 +328,10 @@ See [docs/security-model.md](docs/security-model.md) for the complete security m
 - [Security Model Documentation](docs/security-model.md) — System threat model, access control matrix, and smart contract invariants.
 - [Production Deployment Guide](docs/production-deployment-guide.md) — Deploying Soroban contracts, backend API, databases, and Docker services to production.
 - [Configuration Reference](docs/configuration.md) — Detailed environment variables and system settings.
+- [Multi-Tenant Architecture](docs/multi-tenant-architecture.md) — Tenant model, tenant resolution, data isolation guarantees, and audit chain integrity.
+- [Stellar Network Integration](docs/stellar-network-integration.md) — Local sandbox, testnet, and mainnet setup with contract deployment and wallet management.
+- [Operational Runbook](docs/runbooks/operational-runbook.md) — Common operational tasks including health checks, service restarts, database maintenance, contract upgrades, and scaling.
+- [Changelog and Versioning Policy](docs/versioning-policy.md) — SemVer policy, changelog format, and release process.
 
 ---
 
