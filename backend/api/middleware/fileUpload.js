@@ -45,19 +45,34 @@ const upload = multer({
 /**
  * Express error handler for multer errors.
  * Must be used as the last middleware in the upload chain.
+ * All errors are returned in the standard { error: { code, message } } envelope.
  */
 export function handleUploadError(err, _req, res, next) {
   if (!err) return next();
   if (err.code === 'LIMIT_FILE_SIZE') {
-    return res
-      .status(413)
-      .json({ error: `File size exceeds ${MAX_FILE_SIZE / (1024 * 1024)}MB limit` });
+    return res.status(413).json({
+      error: {
+        code: 'FILE_TOO_LARGE',
+        message: `File size exceeds the ${MAX_FILE_SIZE / (1024 * 1024)} MB limit.`,
+      },
+    });
   }
   if (err.code === 'LIMIT_FILE_COUNT') {
-    return res.status(400).json({ error: `Too many files. Maximum is ${MAX_FILES}` });
+    return res.status(400).json({
+      error: {
+        code: 'TOO_MANY_FILES',
+        message: `Too many files attached. Maximum allowed is ${MAX_FILES}.`,
+      },
+    });
   }
   if (err.code === 'LIMIT_FILE_TYPE') {
-    return res.status(400).json({ error: err.message });
+    return res.status(415).json({
+      error: {
+        code: 'UNSUPPORTED_MEDIA_TYPE',
+        message: err.message,
+        allowedTypes: [...ALLOWED_MIME_TYPES],
+      },
+    });
   }
   next(err);
 }
