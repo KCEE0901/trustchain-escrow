@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState } from 'react';
+import { readPreferences, writePreferences } from '../lib/preferences';
 
 const ThemeContext = createContext(null);
 
@@ -9,7 +10,7 @@ export function ThemeProvider({ children }) {
 
   // On mount: read localStorage or fall back to system preference
   useEffect(() => {
-    const stored = localStorage.getItem('theme');
+    const stored = readPreferences().theme;
     if (stored === 'dark' || stored === 'light') {
       setTheme(stored);
     } else {
@@ -26,7 +27,7 @@ export function ThemeProvider({ children }) {
     } else {
       root.classList.remove('dark');
     }
-    localStorage.setItem('theme', theme);
+    writePreferences({ theme });
   }, [theme]);
 
   const toggleTheme = () => setTheme((t) => (t === 'dark' ? 'light' : 'dark'));

@@ -34,7 +34,7 @@ function isPublicRoute(req) {
 
 // ── Shared per-user rate limiter (tier-aware) ─────────────────────────────────
 
-const perUserLimiter = createPerUserRateLimiter({ prefix: 'gw', adaptive: true });
+const perUserLimiter = createPerUserRateLimiter({ prefix: 'gw', adaptive: true, enforceIp: true });
 
 // ── Request ID ────────────────────────────────────────────────────────────────
 
