@@ -71,6 +71,16 @@ pub enum EcErr {
     TimelockNotExpired = 72,
     /// No timelock release time is configured on this escrow.
     TimelockNotSet = 73,
+
+    // ── Auto-expiry / extension / fee errors (#95-#98) ────────────────────
+    /// Escrow deadline has not yet passed.
+    DeadlineNotPassed = 100,
+    /// Escrow has no deadline set.
+    NoDeadlineSet = 101,
+    /// Fee has already been collected for this escrow.
+    FeeAlreadyCollected = 102,
+    /// Extension deadline must be later than current deadline.
+    ExtensionNotLater = 103,
 }
 
 /// Backward-compatible alias — existing code imports `EscrowError`; the oracle
