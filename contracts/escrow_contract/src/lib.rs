@@ -3353,6 +3353,135 @@ impl EscrowContract {
         Ok(())
     }
 
+    // ── Timelock Delayed Release ───────────────────────────────────────────────
+
+    /// Sets an absolute timelock release time for an escrow.
+    ///
+    /// Once set, `release_with_timelock` will only transfer funds after the
+    /// ledger timestamp reaches `release_time`.  Only the client (escrow creator)
+    /// may configure the timelock; the freelancer or arbiter cannot alter it.
+    ///
+    /// # Errors
+    /// - `TimelockReleasetimeInvalid` – `release_time` is not in the future.
+    /// - `TimelockAlreadySet`         – a release time is already configured.
+    /// - `E9`                         – escrow is not Active.
+    /// - `E3`                         – caller is not the client.
+    pub fn set_timelock(
+        env: Env,
+        caller: Address,
+        escrow_id: u64,
+        release_time: u64,
+    ) -> Result<(), EscrowError> {
+        caller.require_auth();
+        ContractStorage::require_initialized(&env)?;
+        ContractStorage::require_not_paused(&env)?;
+        ContractStorage::require_not_frozen(&env, escrow_id)?;
+
+        let meta = ContractStorage::load_escrow_meta_with_rent(&env, escrow_id)?;
+
+        if caller != meta.client {
+            return Err(EscrowError::E3);
+        }
+        if meta.status != EscrowStatus::Active {
+            return Err(EscrowError::E9);
+        }
+
+        let now = env.ledger().timestamp();
+        if release_time == 0 || release_time <= now {
+            return Err(EscrowError::TimelockReleasetimeInvalid);
+        }
+
+        // Reject if already set — prevents accidental overwrites.
+        let key = DataKey::TimelockReleaseTime(escrow_id);
+        if env.storage().persistent().has(&key) {
+            return Err(EscrowError::TimelockAlreadySet);
+        }
+
+        env.storage().persistent().set(&key, &release_time);
+        ContractStorage::bump_persistent_ttl(&env, &key);
+
+        events::emit_timelock_release_time_set(&env, escrow_id, &caller, release_time);
+        Ok(())
+    }
+
+    /// Releases funds for an approved milestone, enforcing the timelock.
+    ///
+    /// Behaves like `release_funds` but first checks that the current ledger
+    /// timestamp is at or past the `TimelockReleaseTime` stored for this escrow.
+    /// If no timelock is configured the call succeeds (no-op guard), allowing
+    /// this function to act as a universal gated release entry-point.
+    ///
+    /// # Errors
+    /// - `TimelockNotExpired` – current ledger time < configured release time.
+    /// - `TimelockNotSet`     – no timelock has been configured for this escrow.
+    /// - `E44`                – milestone has not been approved.
+    /// - `E9`                 – escrow is not Active.
+    /// - `E3`                 – caller is not the client or freelancer.
+    pub fn release_with_timelock(
+        env: Env,
+        caller: Address,
+        escrow_id: u64,
+        milestone_id: u32,
+    ) -> Result<(), EscrowError> {
+        caller.require_auth();
+        ContractStorage::require_initialized(&env)?;
+        ContractStorage::require_not_paused(&env)?;
+        ContractStorage::require_not_frozen(&env, escrow_id)?;
+
+        let meta = ContractStorage::load_escrow_meta_with_rent(&env, escrow_id)?;
+
+        if caller != meta.client && caller != meta.freelancer {
+            return Err(EscrowError::E3);
+        }
+        if meta.status != EscrowStatus::Active {
+            return Err(EscrowError::E9);
+        }
+
+        // Enforce timelock: must be configured and must have elapsed.
+        let key = DataKey::TimelockReleaseTime(escrow_id);
+        let release_time: u64 = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(EscrowError::TimelockNotSet)?;
+
+        let now = env.ledger().timestamp();
+        if now < release_time {
+            return Err(EscrowError::TimelockNotExpired);
+        }
+
+        // Load the target milestone and verify it is in Approved state.
+        let milestone = ContractStorage::load_milestone(&env, escrow_id, milestone_id)?;
+        if milestone.status != MS_APPROVED {
+            return Err(EscrowError::E44);
+        }
+
+        // Transfer approved amount to the freelancer.
+        let amount = milestone.amount;
+        let token_client = token::Client::new(&env, &meta.token);
+        token_client.transfer(&env.current_contract_address(), &meta.freelancer, &amount);
+
+        // Mark milestone as released and update meta balances.
+        let mut updated_milestone = milestone;
+        updated_milestone.status = MS_RELEASED;
+        updated_milestone.resolved_at = Some(now);
+        ContractStorage::save_milestone(&env, escrow_id, &updated_milestone);
+
+        let mut updated_meta = meta;
+        updated_meta.remaining_balance = updated_meta
+            .remaining_balance
+            .checked_sub(amount)
+            .unwrap_or(0);
+        updated_meta.released_count = updated_meta.released_count.saturating_add(1);
+        if updated_meta.released_count >= updated_meta.milestone_count {
+            updated_meta.status = EscrowStatus::Completed;
+        }
+        ContractStorage::save_escrow_meta(&env, &updated_meta);
+
+        events::emit_timelock_release(&env, escrow_id, milestone_id, &caller, amount);
+        Ok(())
+    }
+
     // ── Dispute Resolution ────────────────────────────────────────────────────
 
     /// Raises a dispute, freezing further fund releases.

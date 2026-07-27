@@ -449,3 +449,41 @@ pub fn emit_referral_payout(env: &Env, escrow_id: u64, referrer: &Address, amoun
         (referrer.clone(), amount),
     );
 }
+
+/// Emitted when a timelock release time is set on an escrow.
+///
+/// # Arguments
+/// * `escrow_id`    - The escrow ID
+/// * `caller`       - The address that set the timelock
+/// * `release_time` - Absolute ledger timestamp after which release is permitted
+pub fn emit_timelock_release_time_set(
+    env: &Env,
+    escrow_id: u64,
+    caller: &Address,
+    release_time: u64,
+) {
+    env.events().publish(
+        (symbol_short!("tl_set"), escrow_id),
+        (caller.clone(), release_time),
+    );
+}
+
+/// Emitted when funds are released via the timelock mechanism.
+///
+/// # Arguments
+/// * `escrow_id`    - The escrow ID
+/// * `milestone_id` - The milestone whose funds were released
+/// * `caller`       - Who triggered the release
+/// * `amount`       - Token amount transferred to the freelancer
+pub fn emit_timelock_release(
+    env: &Env,
+    escrow_id: u64,
+    milestone_id: u32,
+    caller: &Address,
+    amount: i128,
+) {
+    env.events().publish(
+        (symbol_short!("tl_rel"), escrow_id),
+        (milestone_id, caller.clone(), amount),
+    );
+}

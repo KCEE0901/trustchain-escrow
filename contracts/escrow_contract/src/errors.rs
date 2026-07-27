@@ -63,6 +63,14 @@ pub enum EcErr {
     OracleStaleFeed = 67,
     OracleInvalidPrice = 68,
     OraclePriceConversionFailed = 69,
+    /// Timelock release time is in the past or zero — must be a future timestamp.
+    TimelockReleasetimeInvalid = 70,
+    /// A timelock release time is already set for this escrow.
+    TimelockAlreadySet = 71,
+    /// Timelock release time has not yet been reached; release is blocked.
+    TimelockNotExpired = 72,
+    /// No timelock release time is configured on this escrow.
+    TimelockNotSet = 73,
 }
 
 /// Backward-compatible alias — existing code imports `EscrowError`; the oracle

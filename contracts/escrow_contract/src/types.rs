@@ -752,4 +752,6 @@ pub enum DataKey {
     OracleResolution(u64),
     /// Trusted oracle Ed25519 public key for fallback dispute resolution — value: BytesN<32>
     TrustedOracleKey,
+    /// Absolute ledger timestamp after which funds may be released — key: u64 (escrow_id), value: u64
+    TimelockReleaseTime(u64),
 }

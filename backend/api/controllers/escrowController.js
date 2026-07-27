@@ -411,6 +411,112 @@ const getSuccessRate = async (req, res) => {
   }
 };
 
+// ── #87: Escrow Search ────────────────────────────────────────────────────────
+
+/**
+ * GET /api/v1/escrows/search
+ *
+ * Full-text and filter-based escrow search.
+ *
+ * Query params:
+ *   q           - free-text term (matched against clientAddress, freelancerAddress)
+ *   status      - single or comma-separated: Active,Completed,Disputed,Cancelled
+ *   creator     - exact client (creator) Stellar address
+ *   arbitrator  - exact arbitrator Stellar address (matched against arbiterAddress)
+ *   dateFrom    - ISO date — createdAt >= dateFrom
+ *   dateTo      - ISO date — createdAt <= dateTo
+ *   minAmount   - minimum totalAmount (string, Prisma Decimal)
+ *   maxAmount   - maximum totalAmount (string, Prisma Decimal)
+ *   sortBy      - createdAt | totalAmount | status  (default: createdAt)
+ *   sortOrder   - asc | desc  (default: desc)
+ *   page        - default 1
+ *   limit       - default 20, max 100
+ */
+const searchEscrowsV1 = async (req, res) => {
+  try {
+    const { page, limit, skip } = parsePagination(req.query);
+    const {
+      q,
+      status,
+      creator,
+      arbitrator,
+      minAmount,
+      maxAmount,
+      dateFrom,
+      dateTo,
+      sortBy = 'createdAt',
+      sortOrder = 'desc',
+    } = req.query;
+
+    const where = {};
+
+    // Free-text match against address fields
+    if (q) {
+      const term = String(q).slice(0, 200).trim();
+      where.OR = [
+        { clientAddress: { contains: term, mode: 'insensitive' } },
+        { freelancerAddress: { contains: term, mode: 'insensitive' } },
+      ];
+    }
+
+    // Status filter (single or comma-separated)
+    if (status) {
+      const statuses = status
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const invalid = statuses.filter((s) => !VALID_ESCROW_STATUSES.has(s));
+      if (invalid.length > 0) {
+        return res.status(400).json({
+          error: 'Invalid status value(s)',
+          invalid,
+          allowed: [...VALID_ESCROW_STATUSES],
+        });
+      }
+      where.status = statuses.length === 1 ? statuses[0] : { in: statuses };
+    }
+
+    // Exact address filters
+    if (creator) where.clientAddress = creator;
+    if (arbitrator) where.arbiterAddress = arbitrator;
+
+    // Amount range
+    if (minAmount) where.totalAmount = { ...where.totalAmount, gte: String(minAmount) };
+    if (maxAmount) where.totalAmount = { ...where.totalAmount, lte: String(maxAmount) };
+
+    // Date range
+    if (dateFrom || dateTo) {
+      where.createdAt = {};
+      if (dateFrom) where.createdAt.gte = new Date(dateFrom);
+      if (dateTo) {
+        const end = new Date(dateTo);
+        end.setHours(23, 59, 59, 999);
+        where.createdAt.lte = end;
+      }
+    }
+
+    const resolvedSortBy = VALID_SORT_FIELDS.includes(sortBy) ? sortBy : 'createdAt';
+    const resolvedSortOrder = VALID_SORT_ORDERS.includes(sortOrder) ? sortOrder : 'desc';
+    const orderBy = { [resolvedSortBy]: resolvedSortOrder };
+
+    const [data, total] = await prisma.$transaction([
+      prisma.escrow.findMany({
+        where,
+        select: ESCROW_SUMMARY_SELECT,
+        skip,
+        take: limit,
+        orderBy,
+      }),
+      prisma.escrow.count({ where }),
+    ]);
+
+    res.json(buildPaginatedResponse(data, { total, page, limit }));
+  } catch (err) {
+    logControllerError('escrow.searchEscrowsV1', err, req);
+    res.status(500).json({ error: err.message });
+  }
+};
+
 export default {
   listEscrows,
   getEscrow,
@@ -422,6 +528,7 @@ export default {
   getActiveEscrows,
   getSuccessRate,
   invalidateStatsCaches,
+  searchEscrowsV1,
 };
 
 // ── Validation rule sets (used by escrowRoutes) ───────────────────────────────
