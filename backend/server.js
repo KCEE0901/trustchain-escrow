@@ -55,6 +55,7 @@ import { leaderboardRateLimit } from './middleware/rateLimit.js';
 import metricsMiddleware from './middleware/metricsMiddleware.js';
 import responseTime from './middleware/responseTime.js';
 import tracingMiddleware from './middleware/tracingMiddleware.js';
+import timeoutMiddleware from './middleware/timeout.js';
 import logger, { getLogger } from './config/logger.js';
 import emailService from './services/emailService.js';
 import complianceService from './services/complianceService.js';
@@ -89,6 +90,7 @@ app.use(sentryRequestHandler);
 
 app.use(helmet());
 app.use(compressionMiddleware);
+app.use(timeoutMiddleware);
 app.use(metricsMiddleware);
 app.use(responseTime);
 app.use(tracingMiddleware);
