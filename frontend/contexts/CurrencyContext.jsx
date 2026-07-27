@@ -43,6 +43,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { readPreferences, writePreferences } from '../lib/preferences';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -115,7 +116,7 @@ export function CurrencyProvider({ children }) {
   // ── Restore persisted currency on mount ───────────────────────────────────
   useEffect(() => {
     try {
-      const saved = localStorage.getItem('ste_currency');
+      const saved = readPreferences().currency;
       if (saved && SUPPORTED_CURRENCIES.some((c) => c.code === saved)) {
         _setCurrency(saved);
       }
@@ -163,11 +164,7 @@ export function CurrencyProvider({ children }) {
   const setCurrency = useCallback((code) => {
     if (!SUPPORTED_CURRENCIES.some((c) => c.code === code)) return;
     _setCurrency(code);
-    try {
-      localStorage.setItem('ste_currency', code);
-    } catch {
-      // ignore
-    }
+    writePreferences({ currency: code });
   }, []);
 
   // ── convert(usdcAmount) → number in selected currency ─────────────────────

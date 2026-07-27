@@ -20,6 +20,8 @@ export default {
       animation: {
         'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
         'fade-in': 'fadeIn 0.25s ease-out both',
+        'tx-success': 'txSuccess 0.7s ease-out both',
+        'tx-failure': 'txFailure 0.45s ease-out both',
       },
       keyframes: {
         fadeIn: {
@@ -29,6 +31,17 @@ export default {
         progress: {
           from: { width: '0%' },
           to: { width: '100%' },
+        },
+        txSuccess: {
+          '0%': { transform: 'scale(0.85)', opacity: '0' },
+          '60%': { transform: 'scale(1.08)', opacity: '1' },
+          '100%': { transform: 'scale(1)', opacity: '1' },
+        },
+        txFailure: {
+          '0%, 100%': { transform: 'translateX(0)' },
+          '25%': { transform: 'translateX(-3px)' },
+          '50%': { transform: 'translateX(3px)' },
+          '75%': { transform: 'translateX(-2px)' },
         },
       },
     },

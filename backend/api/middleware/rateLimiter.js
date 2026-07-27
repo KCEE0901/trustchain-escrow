@@ -246,8 +246,9 @@ export function createPerUserRateLimiter({
   message = 'Too many requests, please try again later.',
   max: maxOverride,
   adaptive = false,
+  enforceIp = false,
 } = {}) {
-  const keyGenerator = (req) => {
+  const userKeyGenerator = (req) => {
     if (req.user?.id) return `${prefix}:user:${req.user.id}`;
     if (req.headers['x-user-id']) return `${prefix}:user:${req.headers['x-user-id']}`;
     return `${prefix}:ip:${req.ip || 'unknown'}`;
@@ -255,14 +256,31 @@ export function createPerUserRateLimiter({
 
   // Static limiter (fixed max, no burst) — used mainly for testing
   if (maxOverride !== undefined) {
-    return createSlidingWindowRateLimiter({
-      windowMs: RATE_LIMIT_WINDOW_MS,
-      max: maxOverride,
-      prefix,
-      message,
-      keyGenerator,
-      adaptive,
-    });
+    return (req, res, next) => {
+      const userLimiter = createSlidingWindowRateLimiter({
+        windowMs: RATE_LIMIT_WINDOW_MS,
+        max: maxOverride,
+        prefix,
+        message,
+        keyGenerator: userKeyGenerator,
+        adaptive,
+      });
+      if (!enforceIp || !req.user?.id) return userLimiter(req, res, next);
+
+      const ipLimiter = createSlidingWindowRateLimiter({
+        windowMs: RATE_LIMIT_WINDOW_MS,
+        max: maxOverride,
+        prefix: `${prefix}:ip`,
+        message,
+        keyGenerator: (request) => `${prefix}:ip:${request.ip || 'unknown'}`,
+        adaptive,
+      });
+
+      return ipLimiter(req, res, (err) => {
+        if (err) return next(err);
+        return userLimiter(req, res, next);
+      });
+    };
   }
 
   // Dynamic — resolve tier limits on each request
@@ -271,15 +289,31 @@ export function createPerUserRateLimiter({
     const max = getLimitForTier(tier);
     const burstMax = getBurstLimitForTier(tier);
 
-    createSlidingWindowRateLimiter({
+    const userLimiter = createSlidingWindowRateLimiter({
       windowMs: RATE_LIMIT_WINDOW_MS,
       max,
       burstMax,
       prefix,
       message,
-      keyGenerator,
+      keyGenerator: userKeyGenerator,
       adaptive,
-    })(req, res, next);
+    });
+    if (!enforceIp || !req.user?.id) return userLimiter(req, res, next);
+
+    const ipLimiter = createSlidingWindowRateLimiter({
+      windowMs: RATE_LIMIT_WINDOW_MS,
+      max,
+      burstMax,
+      prefix: `${prefix}:ip`,
+      message,
+      keyGenerator: (request) => `${prefix}:ip:${request.ip || 'unknown'}`,
+      adaptive,
+    });
+
+    return ipLimiter(req, res, (err) => {
+      if (err) return next(err);
+      return userLimiter(req, res, next);
+    });
   };
 }
 

@@ -25,6 +25,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Button from '../../../components/ui/Button';
 import TemplateSelector from '../../../components/escrow/TemplateSelector';
 import StellarAddressInput from '../../../components/ui/StellarAddressInput';
+import TransactionState from '../../../components/ui/TransactionState';
 import XLMAmountInput from '../../../components/ui/XLMAmountInput';
 import templatesData from '../../../data/templates.json';
 import { useToast } from '../../../contexts/ToastContext';
@@ -89,6 +90,7 @@ export default function CreateEscrowPage() {
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const [transactionState, setTransactionState] = useState(null);
   const [templateNotice, setTemplateNotice] = useState('');
   const [appliedQueryTemplateId, setAppliedQueryTemplateId] = useState(null);
 
@@ -124,11 +126,13 @@ export default function CreateEscrowPage() {
   const handleSubmit = async () => {
     setIsSubmitting(true);
     setError(null);
+    setTransactionState(null);
     try {
       throw new Error('Not implemented — see Issue #33');
     } catch (err) {
       const message = err.message || 'Failed to create escrow';
       setError(message);
+      setTransactionState({ state: 'failure', message });
     } finally {
       setIsSubmitting(false);
     }
@@ -244,7 +248,12 @@ export default function CreateEscrowPage() {
         )}
         {currentStep === 3 && <StepReview formData={formData} />}
         {currentStep === 4 && (
-          <StepSign onSubmit={handleSubmit} isSubmitting={isSubmitting} error={error} />
+          <StepSign
+            onSubmit={handleSubmit}
+            isSubmitting={isSubmitting}
+            error={error}
+            transactionState={transactionState}
+          />
         )}
       </div>
 
@@ -470,7 +479,7 @@ function StepReview({ formData }) {
  * Step 4: Sign with Freighter.
  * TODO (contributor — Issue #33): build and sign the Soroban transaction
  */
-function StepSign({ error }) {
+function StepSign({ error, transactionState }) {
   return (
     <div className="space-y-4 text-center">
       <h2 className="text-lg font-semibold text-white">Sign & Submit</h2>
@@ -483,6 +492,12 @@ function StepSign({ error }) {
           {error}
         </div>
       )}
+      <TransactionState
+        state={transactionState?.state}
+        title={transactionState?.state === 'failure' ? 'Escrow transaction failed' : undefined}
+        message={transactionState?.message}
+        txHash={transactionState?.txHash}
+      />
       <p className="text-xs text-amber-400">
         🚧 Freighter integration is not yet implemented — see Issue #33
       </p>
