@@ -13,7 +13,21 @@ const ALLOWED_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
 const BATCH_ALLOWED_ROUTES = new Set(
   (
     process.env.BATCH_ALLOWED_ROUTES ||
-    '/api/escrows,/api/milestones,/api/disputes,/api/users,/api/reputation,/api/search'
+    [
+      '/api/escrows',
+      '/api/milestones',
+      '/api/disputes',
+      '/api/users',
+      '/api/reputation',
+      '/api/search',
+      '/api/v1/escrows',
+      '/api/v1/milestones',
+      '/api/v1/disputes',
+      '/api/v1/users',
+      '/api/v1/reputation',
+      '/api/v1/notifications',
+      '/api/v1/payments',
+    ].join(',')
   ).split(','),
 );
 
