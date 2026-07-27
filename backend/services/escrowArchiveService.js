@@ -1,4 +1,15 @@
-const ARCHIVE_RETENTION_DAYS = 365;
+/**
+ * Escrow Archive Service
+ *
+ * Handles scheduled and on-demand archival of completed escrows into
+ * time-partitioned archive tables. Supports configurable retention windows
+ * and dry-run mode for safe pre-flight checks.
+ *
+ * @module services/escrowArchiveService
+ */
+
+const ARCHIVE_RETENTION_DAYS = parseInt(process.env.ARCHIVE_RETENTION_DAYS || '365', 10);
+const ARCHIVE_BATCH_SIZE = parseInt(process.env.ARCHIVE_BATCH_SIZE || '500', 10);
 
 function getArchiveTableName(date = new Date()) {
   const value = new Date(date);
@@ -26,20 +37,40 @@ async function ensureArchivePartition(prisma, date = new Date()) {
   return { tableName, start, end };
 }
 
+/**
+ * Archive completed escrows older than the retention window.
+ *
+ * @param {import('@prisma/client').PrismaClient} prisma
+ * @param {Date} [olderThan]       - cutoff date (defaults to ARCHIVE_RETENTION_DAYS ago)
+ * @param {{ dryRun?: boolean, retentionDays?: number, batchSize?: number }} [options]
+ * @returns {Promise<{ archived: number, rows: Array, dryRun: boolean }>}
+ */
 async function archiveCompletedEscrows(
   prisma,
-  olderThan = new Date(Date.now() - ARCHIVE_RETENTION_DAYS * 24 * 60 * 60 * 1000),
+  olderThan,
+  { dryRun = false, retentionDays = ARCHIVE_RETENTION_DAYS, batchSize = ARCHIVE_BATCH_SIZE } = {},
 ) {
+  const cutoff = olderThan ?? new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+
   const rows = await prisma.escrow.findMany({
     where: {
       status: 'Completed',
-      createdAt: { lt: olderThan },
+      createdAt: { lt: cutoff },
     },
     orderBy: { createdAt: 'asc' },
-    take: 500,
+    take: batchSize,
   });
 
-  if (!rows.length) return { archived: 0, rows: [] };
+  if (!rows.length) return { archived: 0, rows: [], dryRun };
+
+  if (dryRun) {
+    const preview = rows.map((row) => ({
+      id: row.id,
+      tableName: getArchiveWindow(row.createdAt).tableName,
+      createdAt: row.createdAt,
+    }));
+    return { archived: preview.length, rows: preview, dryRun: true };
+  }
 
   const archived = [];
 
@@ -60,7 +91,37 @@ async function archiveCompletedEscrows(
     archived.push({ id: row.id, tableName, createdAt: row.createdAt });
   }
 
-  return { archived: archived.length, rows: archived };
+  return { archived: archived.length, rows: archived, dryRun: false };
+}
+
+/**
+ * Get statistics about escrows eligible for archival without moving them.
+ * Useful for dashboards and monitoring.
+ *
+ * @param {import('@prisma/client').PrismaClient} prisma
+ * @param {number} [retentionDays]
+ * @returns {Promise<{ eligible: number, oldestCreatedAt: Date|null, cutoffDate: Date }>}
+ */
+async function getArchivalStats(prisma, retentionDays = ARCHIVE_RETENTION_DAYS) {
+  const cutoffDate = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+
+  const [countResult, oldestResult] = await Promise.all([
+    prisma.escrow.count({
+      where: { status: 'Completed', createdAt: { lt: cutoffDate } },
+    }),
+    prisma.escrow.findFirst({
+      where: { status: 'Completed', createdAt: { lt: cutoffDate } },
+      orderBy: { createdAt: 'asc' },
+      select: { createdAt: true },
+    }),
+  ]);
+
+  return {
+    eligible: countResult,
+    oldestCreatedAt: oldestResult?.createdAt ?? null,
+    cutoffDate,
+    retentionDays,
+  };
 }
 
 async function listArchiveTables(prisma) {
@@ -77,18 +138,22 @@ async function listArchiveTables(prisma) {
 
 export {
   ARCHIVE_RETENTION_DAYS,
+  ARCHIVE_BATCH_SIZE,
   archiveCompletedEscrows,
   ensureArchivePartition,
   getArchiveTableName,
   getArchiveWindow,
+  getArchivalStats,
   listArchiveTables,
 };
 
 export default {
   ARCHIVE_RETENTION_DAYS,
+  ARCHIVE_BATCH_SIZE,
   archiveCompletedEscrows,
   ensureArchivePartition,
   getArchiveTableName,
   getArchiveWindow,
+  getArchivalStats,
   listArchiveTables,
 };

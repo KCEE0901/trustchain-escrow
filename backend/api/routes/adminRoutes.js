@@ -146,6 +146,11 @@ router.post('/flags', featureFlagController.create);
 router.patch('/flags/:key', featureFlagController.update);
 router.delete('/flags/:key', featureFlagController.destroy);
 
+// Tenant-level flag overrides
+router.get('/flags/tenants/:tenantId', featureFlagController.listForTenant);
+router.put('/flags/:key/tenants/:tenantId', featureFlagController.setTenantOverride);
+router.delete('/flags/:key/tenants/:tenantId', featureFlagController.removeTenantOverride);
+
 /**
  * @route  GET /api/admin/secrets/audit
  * @desc   Returns the in-process secrets access audit log.
@@ -209,6 +214,132 @@ router.delete('/cache', requireMfa, async (req, res) => {
     res.json({ ok: true, invalidated: 'all' });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Escrow Archival (scheduled job management) ────────────────────────────────
+
+/**
+ * @route  GET /api/admin/archival/stats
+ * @desc   Return statistics about escrows eligible for archival.
+ */
+router.get('/archival/stats', async (req, res) => {
+  try {
+    const { getArchivalStats } = await import('../../services/escrowArchiveService.js');
+    const { PrismaClient } = await import('@prisma/client');
+    const prisma = new PrismaClient();
+    const retentionDays = req.query.retentionDays ? parseInt(req.query.retentionDays, 10) : undefined;
+    const stats = await getArchivalStats(prisma, retentionDays);
+    await prisma.$disconnect();
+    res.json({ data: stats });
+  } catch (err) {
+    res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: err.message } });
+  }
+});
+
+/**
+ * @route  POST /api/admin/archival/run
+ * @desc   Trigger the archival job manually. Supports dry-run mode.
+ *         Body: { dryRun?: boolean, retentionDays?: number, batchSize?: number }
+ */
+router.post('/archival/run', requireMfa, async (req, res) => {
+  try {
+    const { archiveCompletedEscrows } = await import('../../services/escrowArchiveService.js');
+    const { PrismaClient } = await import('@prisma/client');
+    const prisma = new PrismaClient();
+
+    const { dryRun = false, retentionDays, batchSize } = req.body ?? {};
+    const result = await archiveCompletedEscrows(prisma, undefined, {
+      dryRun: Boolean(dryRun),
+      ...(retentionDays != null && { retentionDays: parseInt(retentionDays, 10) }),
+      ...(batchSize != null && { batchSize: parseInt(batchSize, 10) }),
+    });
+
+    await prisma.$disconnect();
+    res.json({ data: result });
+  } catch (err) {
+    res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: err.message } });
+  }
+});
+
+// ── 2FA Compliance ────────────────────────────────────────────────────────────
+
+/**
+ * @route  GET /api/admin/2fa/compliance
+ * @desc   List admin and arbiter accounts that do not yet have MFA enabled.
+ *         Useful for auditing 2FA adoption across privileged roles.
+ */
+router.get('/2fa/compliance', async (_req, res) => {
+  try {
+    const { PrismaClient } = await import('@prisma/client');
+    const prisma = new PrismaClient();
+
+    // Fetch users with Admin or Arbitrator roles who lack active MFA methods
+    const nonCompliant = await prisma.user.findMany({
+      where: {
+        role: { in: ['Admin', 'Arbitrator'] },
+        mfaMethods: { none: { isActive: true } },
+      },
+      select: { id: true, address: true, role: true, createdAt: true },
+      orderBy: { role: 'asc' },
+    });
+
+    await prisma.$disconnect();
+
+    res.json({
+      data: nonCompliant,
+      meta: {
+        nonCompliantCount: nonCompliant.length,
+        checkedRoles: ['Admin', 'Arbitrator'],
+        message:
+          nonCompliant.length === 0
+            ? 'All admin and arbiter accounts have 2FA enrolled.'
+            : `${nonCompliant.length} privileged account(s) lack active MFA methods.`,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: err.message } });
+  }
+});
+
+/**
+ * @route  POST /api/admin/2fa/enforce
+ * @desc   Enforce 2FA requirement for a specific privileged user account.
+ *         Sets a flag that blocks login until the user completes MFA setup.
+ */
+router.post('/2fa/enforce', requireMfa, async (req, res) => {
+  const { userId } = req.body ?? {};
+  if (!userId) {
+    return res.status(400).json({ error: { code: 'MISSING_FIELD', message: 'userId is required' } });
+  }
+
+  try {
+    const { PrismaClient } = await import('@prisma/client');
+    const prisma = new PrismaClient();
+
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      await prisma.$disconnect();
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'User not found' } });
+    }
+
+    if (!['Admin', 'Arbitrator'].includes(user.role)) {
+      await prisma.$disconnect();
+      return res.status(422).json({
+        error: { code: 'INVALID_ROLE', message: '2FA enforcement only applies to Admin and Arbitrator roles' },
+      });
+    }
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: { mfaEnforced: true },
+    });
+
+    await prisma.$disconnect();
+
+    res.json({ ok: true, userId, message: '2FA enforcement enabled for user' });
+  } catch (err) {
+    res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: err.message } });
   }
 });
 
