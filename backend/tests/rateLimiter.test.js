@@ -125,7 +125,7 @@ describe('per-user rate limiter', () => {
     await request(app).get('/test').set('x-user-id', 'user-block');
     const res = await request(app).get('/test').set('x-user-id', 'user-block');
     expect(res.status).toBe(429);
-    expect(res.body.code).toBe('RATE_LIMIT_EXCEEDED');
+    expect(res.body.error.code).toBe('RATE_LIMIT_EXCEEDED');
   });
 
   it('tracks different users independently', async () => {
@@ -203,7 +203,7 @@ describe('burst limiting', () => {
     await request(app).get('/').expect(200);
     await request(app).get('/').expect(200);
     const res = await request(app).get('/').expect(429);
-    expect(res.body.reason).toBe('burst');
+    expect(res.body.error.reason).toBe('burst');
   });
 });
 
