@@ -4,6 +4,9 @@ import authMiddleware from '../middleware/auth.js';
 
 const router = express.Router();
 
+/** POST /api/auth/login — password login, receive access + refresh tokens */
+router.post('/login', authController.login);
+
 /** POST /api/auth/nonce — request a challenge nonce */
 router.post('/nonce', authController.getNonce);
 
@@ -20,5 +23,6 @@ router.post('/logout', authController.logout);
 router.get('/sessions', authMiddleware, authController.listSessions);
 router.delete('/sessions/:id', authMiddleware, authController.revokeSession);
 router.delete('/sessions', authMiddleware, authController.revokeAllSessions);
+router.post('/revoke-all', authMiddleware, authController.revokeAllSessions);
 
 export default router;

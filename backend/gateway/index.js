@@ -21,6 +21,10 @@ const PUBLIC_ROUTES = [
   { method: 'POST', path: '/auth/register' },
   { method: 'POST', path: '/auth/refresh' },
   { method: 'POST', path: '/auth/logout' },
+  { method: 'POST', path: '/v1/auth/login' },
+  { method: 'POST', path: '/v1/auth/register' },
+  { method: 'POST', path: '/v1/auth/refresh' },
+  { method: 'POST', path: '/v1/auth/logout' },
   { method: 'GET', path: '/health' },
   { method: 'GET', path: '/metrics' },
   { method: 'GET', path: '/csrf-token' },
@@ -39,7 +43,9 @@ const perUserLimiter = createPerUserRateLimiter({ prefix: 'gw', adaptive: true, 
 // ── Request ID ────────────────────────────────────────────────────────────────
 
 function requestId(req, res, next) {
-  const id = req.headers['x-request-id'] || crypto.randomUUID();
+  const id =
+    req.id || req.headers['x-request-id'] || req.headers['x-correlation-id'] || crypto.randomUUID();
+  req.id = id;
   req.requestId = id;
   res.set('X-Request-Id', id);
   next();
