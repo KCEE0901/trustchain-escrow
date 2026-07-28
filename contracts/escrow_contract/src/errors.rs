@@ -71,16 +71,18 @@ pub enum EcErr {
     TimelockNotExpired = 72,
     /// No timelock release time is configured on this escrow.
     TimelockNotSet = 73,
-
-    // ── Auto-expiry / extension / fee errors (#95-#98) ────────────────────
-    /// Escrow deadline has not yet passed.
-    DeadlineNotPassed = 100,
-    /// Escrow has no deadline set.
-    NoDeadlineSet = 101,
-    /// Fee has already been collected for this escrow.
-    FeeAlreadyCollected = 102,
-    /// Extension deadline must be later than current deadline.
-    ExtensionNotLater = 103,
+    /// Multisig config is internally inconsistent: `weights` length does not match
+    /// `approvers`, a weight is zero, or `threshold` is zero or exceeds the total weight.
+    MultisigInvalidConfig = 74,
+    /// The caller is not among this escrow's multisig approvers.
+    MultisigNotApprover = 75,
+    /// This signer has already recorded an approval for this milestone.
+    MultisigDuplicateApproval = 76,
+    /// The approver list exceeds `MAX_BUYER_SIGNERS`.
+    MultisigTooManySigners = 77,
+    /// The escrow amount is at or above the high-value threshold, which requires a
+    /// multisig policy needing more than one signer.
+    MultisigRequiredForHighValue = 78,
 }
 
 /// Backward-compatible alias — existing code imports `EscrowError`; the oracle
