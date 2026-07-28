@@ -5,14 +5,13 @@ import './lib/sentry.js';
 import * as Sentry from '@sentry/node';
 
 import 'dotenv/config';
-import { randomUUID } from 'crypto';
 import { initSecrets } from './lib/secrets.js';
 import http from 'http';
 import compressionMiddleware from './middleware/compression.js';
 import cors from 'cors';
 import express from 'express';
 import helmet from 'helmet';
-import { requestLogger } from './lib/logger.js';
+import { assignRequestContext, httpRequestLogger } from './api/middleware/requestLogger.js';
 
 import cookieParser from 'cookie-parser';
 import {
@@ -69,6 +68,7 @@ import { syncFromPrisma, ensureIndex } from './services/reputationSearchService.
 import { createGateway } from './gateway/index.js';
 import queueDashboardRoutes from './api/routes/queueDashboardRoutes.js';
 import chatRoutes from './api/routes/chatRoutes.js';
+import v1Routes from './api/v1/index.js';
 
 // Attach Prisma query instrumentation (metrics + traces)
 attachPrismaMetrics(prisma);
@@ -94,14 +94,8 @@ app.use(compressionMiddleware);
 app.use(metricsMiddleware);
 app.use(responseTime);
 app.use(tracingMiddleware);
-app.use(requestLogger);
-app.use((req, res, next) => {
-  const requestId =
-    req.id || req.headers['x-request-id'] || req.headers['x-correlation-id'] || randomUUID();
-  req.id = requestId;
-  res.setHeader('X-Request-Id', requestId);
-  next();
-});
+app.use(assignRequestContext);
+app.use(httpRequestLogger);
 app.use(
   cors({
     origin: process.env.ALLOWED_ORIGINS?.split(',') || 'http://localhost:3000',
@@ -192,6 +186,7 @@ app.get('/api/csrf-token', generateCsrfToken);
 app.use('/api/health', healthRoutes);
 app.use('/ws/health', wsHealthRoutes);
 app.use('/api', tenantMiddleware);
+app.use('/api/v1', v1Routes);
 app.use('/api/auth', authRoutes);
 app.use('/api/tenant', tenantRoutes);
 app.use('/api/escrows', escrowRoutes);

@@ -11,11 +11,22 @@ import reputationRoutes from '../routes/reputationRoutes.js';
 import userRoutes from '../routes/userRoutes.js';
 import auditRoutes from '../routes/auditRoutes.js';
 import complianceRoutes from '../routes/complianceRoutes.js';
+import authRoutes from '../routes/authRoutes.js';
+import escrowController, { validateEscrowId } from '../controllers/escrowController.js';
+import { invalidateOn } from '../middleware/cache.js';
 
 const router = express.Router();
 
 // Apply v1 versioning to all routes in this router
 router.use(versioning('v1'));
+
+router.use('/auth', authRoutes);
+router.patch(
+  '/escrows/:id/status',
+  validateEscrowId,
+  invalidateOn({ tags: (req) => ['escrows', `escrow:${req.params.id}`] }),
+  escrowController.updateEscrowStatus,
+);
 
 router.use('/escrows', escrowRoutes);
 router.use('/users', userRoutes);

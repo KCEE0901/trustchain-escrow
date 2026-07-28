@@ -12,6 +12,7 @@ import prisma from '../../lib/prisma.js';
 import cache from '../../lib/cache.js';
 import { buildPaginatedResponse, parsePagination } from '../../lib/pagination.js';
 import { logControllerError } from '../../config/logger.js';
+import { transitionEscrowStatus } from '../../services/escrowService.js';
 import { submitTransaction } from '../../services/stellarService.js';
 import { xdr, scValToNative } from '@stellar/stellar-sdk';
 import {
@@ -226,7 +227,9 @@ const broadcastCreateEscrow = async (req, res) => {
       });
     }
 
-    return res.status(200).json({ hash: result.hash, escrowId: escrowId ? String(escrowId) : null });
+    return res
+      .status(200)
+      .json({ hash: result.hash, escrowId: escrowId ? String(escrowId) : null });
   } catch (err) {
     logControllerError('escrow.broadcastCreateEscrow', err, req);
     res.status(500).json({ error: err.message });
@@ -291,6 +294,40 @@ const getMilestone = async (req, res) => {
   } catch (err) {
     logControllerError('escrow.getMilestone', err, req);
     res.status(500).json({ error: err.message });
+  }
+};
+
+const updateEscrowStatus = async (req, res) => {
+  try {
+    const { status, reason } = req.body;
+    if (!status) {
+      return res.status(400).json({
+        error: { code: 'STATUS_REQUIRED', message: 'status is required' },
+      });
+    }
+
+    const escrow = await transitionEscrowStatus({
+      escrowId: req.params.id,
+      toStatus: status,
+      actorAddress: req.user?.address || String(req.user?.userId || 'system'),
+      reason,
+    });
+
+    return res.json(escrow);
+  } catch (err) {
+    if (err.message?.includes('Cannot convert')) {
+      return res.status(400).json({
+        error: { code: 'INVALID_ESCROW_ID', message: 'Invalid escrow id' },
+      });
+    }
+
+    const statusCode = err.statusCode || 500;
+    return res.status(statusCode).json({
+      error: {
+        code: err.code || (statusCode >= 500 ? 'INTERNAL_SERVER_ERROR' : 'REQUEST_ERROR'),
+        message: err.message,
+      },
+    });
   }
 };
 
@@ -408,6 +445,7 @@ export default {
   broadcastCreateEscrow,
   getMilestones,
   getMilestone,
+  updateEscrowStatus,
   onEscrowStatusChange,
   getTotalVolume,
   getActiveEscrows,

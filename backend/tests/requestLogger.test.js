@@ -1,12 +1,13 @@
 import { describe, it, expect } from '@jest/globals';
 import express from 'express';
 import request from 'supertest';
-import { requestLogger } from '../lib/logger.js';
+import { assignRequestContext, httpRequestLogger } from '../api/middleware/requestLogger.js';
 
 describe('requestLogger middleware', () => {
   it('assigns a unique request ID and exposes it in response headers', async () => {
     const app = express();
-    app.use(requestLogger);
+    app.use(assignRequestContext);
+    app.use(httpRequestLogger);
     app.get('/test', (req, res) => {
       res.json({ requestId: req.id });
     });
@@ -20,7 +21,8 @@ describe('requestLogger middleware', () => {
 
   it('honors a provided X-Request-Id header', async () => {
     const app = express();
-    app.use(requestLogger);
+    app.use(assignRequestContext);
+    app.use(httpRequestLogger);
     app.get('/test', (req, res) => {
       res.json({ requestId: req.id });
     });

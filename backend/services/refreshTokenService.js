@@ -9,6 +9,9 @@ import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import prisma from '../lib/prisma.js';
 import tokenBlacklistService from './tokenBlacklistService.js';
+import { createModuleLogger } from '../config/logger.js';
+
+const logger = createModuleLogger('refreshTokenService');
 
 const REFRESH_TOKEN_EXPIRY_DAYS = 7;
 const MAX_ACTIVE_TOKENS_PER_USER = 5;
@@ -90,7 +93,7 @@ async function createRefreshToken(user, deviceInfo = {}, ipAddress = null, userA
     },
   });
 
-  console.log(`[RefreshToken] Created token ${tokenId} for user ${user.id}`);
+  logger.info({ message: 'refresh_token_created', tokenId, userId: user.id });
 
   return {
     refreshToken,
@@ -200,7 +203,7 @@ async function rotateRefreshToken(
       { expiresIn: process.env.JWT_ACCESS_EXPIRATION || '15m' },
     );
 
-    console.log(`[RefreshToken] Rotated token for user ${tokenRecord.user.id}`);
+    logger.info({ message: 'refresh_token_rotated', userId: tokenRecord.user.id });
 
     return {
       accessToken,
@@ -208,7 +211,7 @@ async function rotateRefreshToken(
       expiresAt: newTokenData.expiresAt,
     };
   } catch (error) {
-    console.error('[RefreshToken] Rotation failed:', error.message);
+    logger.warn({ message: 'refresh_token_rotation_failed', error: error.message });
     throw error;
   }
 }
@@ -229,10 +232,10 @@ async function revokeRefreshToken(refreshToken, reason = 'logout') {
       data: { isActive: false },
     });
 
-    console.log(`[RefreshToken] Revoked token: ${reason}`);
+    logger.info({ message: 'refresh_token_revoked', reason });
     return true;
   } catch (error) {
-    console.error('[RefreshToken] Revocation failed:', error.message);
+    logger.warn({ message: 'refresh_token_revocation_failed', error: error.message });
     return false;
   }
 }
@@ -255,10 +258,10 @@ async function revokeAllUserTokens(userId, tenantId, reason = 'security') {
       data: { isActive: false },
     });
 
-    console.log(`[RefreshToken] Revoked all tokens for user ${userId}: ${reason}`);
+    logger.info({ message: 'refresh_tokens_revoked_for_user', userId, reason });
     return true;
   } catch (error) {
-    console.error('[RefreshToken] Mass revocation failed:', error.message);
+    logger.warn({ message: 'refresh_token_mass_revocation_failed', error: error.message });
     return false;
   }
 }
@@ -277,10 +280,10 @@ async function cleanupExpiredTokens(userId, tenantId) {
     });
 
     if (result.count > 0) {
-      console.log(`[RefreshToken] Cleaned up ${result.count} expired tokens for user ${userId}`);
+      logger.info({ message: 'refresh_tokens_cleaned_up', count: result.count, userId });
     }
   } catch (error) {
-    console.error('[RefreshToken] Cleanup failed:', error.message);
+    logger.warn({ message: 'refresh_token_cleanup_failed', error: error.message });
   }
 }
 

@@ -8,6 +8,8 @@ import { getLogger, requestContext } from '../../config/logger.js';
 export function assignRequestContext(req, res, next) {
   const requestId =
     (typeof req.headers['x-request-id'] === 'string' && req.headers['x-request-id'].trim()) ||
+    (typeof req.headers['x-correlation-id'] === 'string' &&
+      req.headers['x-correlation-id'].trim()) ||
     randomUUID();
 
   req.id = requestId;

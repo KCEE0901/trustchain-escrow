@@ -6,9 +6,12 @@
  */
 
 import crypto, { randomUUID } from 'crypto';
+import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { Keypair, StrKey } from '@stellar/stellar-sdk';
+import prisma from '../../lib/prisma.js';
 import sessionService from '../../services/sessionService.js';
+import refreshTokenService from '../../services/refreshTokenService.js';
 import { JWT_SECRET, JWT_ALGORITHM } from '../../config/secrets.js';
 
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h';
@@ -47,6 +50,56 @@ function getClientIp(req) {
   return req.headers['x-forwarded-for']?.split(',')[0]?.trim() ?? req.socket?.remoteAddress ?? '';
 }
 
+function error(res, status, code, message) {
+  return res.status(status).json({ error: { code, message } });
+}
+
+function signAccessToken(user) {
+  return jwt.sign(
+    {
+      userId: user.id,
+      tenantId: user.tenantId,
+      type: 'access',
+    },
+    process.env.JWT_ACCESS_SECRET || 'fallback_access_secret',
+    { expiresIn: process.env.JWT_ACCESS_EXPIRATION || '15m' },
+  );
+}
+
+export const login = async (req, res) => {
+  try {
+    const tenantId = req.headers['x-tenant-id'] || req.body.tenantId;
+    const { email, password } = req.body;
+
+    if (!tenantId || !email || !password) {
+      return error(res, 400, 'INVALID_REQUEST', 'tenant, email, and password are required');
+    }
+
+    const user = await prisma.user.findFirst({ where: { tenantId, email } });
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+      return error(res, 401, 'INVALID_CREDENTIALS', 'Invalid email or password');
+    }
+
+    const accessToken = signAccessToken(user);
+    const refresh = await refreshTokenService.createRefreshToken(
+      user,
+      { type: 'login' },
+      getClientIp(req),
+      req.headers['user-agent'],
+    );
+
+    return res.json({
+      accessToken,
+      refreshToken: refresh.refreshToken,
+      expiresAt: refresh.expiresAt,
+      userId: user.id,
+      tenantId: user.tenantId,
+    });
+  } catch (err) {
+    return error(res, 500, 'LOGIN_FAILED', err.message);
+  }
+};
+
 async function createSessionJti(address, req) {
   if (typeof sessionService?.createSession !== 'function') {
     return randomUUID();
@@ -64,7 +117,7 @@ export const getNonce = (req, res) => {
   const { address } = req.body;
 
   if (!address || !isValidStellarAddress(address)) {
-    return res.status(400).json({ error: 'Valid Stellar address required' });
+    return error(res, 400, 'INVALID_ADDRESS', 'Valid Stellar address required');
   }
 
   const nonce = generateNonce();
@@ -81,26 +134,31 @@ export const verifySignatureAndLogin = async (req, res) => {
   const { address, signature } = req.body;
 
   if (!address || !isValidStellarAddress(address)) {
-    return res.status(400).json({ error: 'Valid Stellar address required' });
+    return error(res, 400, 'INVALID_ADDRESS', 'Valid Stellar address required');
   }
   if (!signature || typeof signature !== 'string') {
-    return res.status(400).json({ error: 'Signature required' });
+    return error(res, 400, 'SIGNATURE_REQUIRED', 'Signature required');
   }
 
   const stored = nonceStore.get(address);
   if (!stored) {
-    return res.status(401).json({ error: 'No pending nonce for this address. Request a new one.' });
+    return error(
+      res,
+      401,
+      'NONCE_NOT_FOUND',
+      'No pending nonce for this address. Request a new one.',
+    );
   }
   if (Date.now() > stored.expiresAt) {
     nonceStore.delete(address);
-    return res.status(401).json({ error: 'Nonce expired. Request a new one.' });
+    return error(res, 401, 'NONCE_EXPIRED', 'Nonce expired. Request a new one.');
   }
 
   const valid = verifySignature(address, stored.message, signature);
   nonceStore.delete(address);
 
   if (!valid) {
-    return res.status(401).json({ error: 'Signature verification failed' });
+    return error(res, 401, 'SIGNATURE_INVALID', 'Signature verification failed');
   }
 
   const jti = await createSessionJti(address, req);
@@ -113,9 +171,23 @@ export const verifySignatureAndLogin = async (req, res) => {
 };
 
 export const refreshToken = async (req, res) => {
+  if (req.body?.refreshToken) {
+    try {
+      const tokens = await refreshTokenService.rotateRefreshToken(
+        req.body.refreshToken,
+        { type: 'explicit_refresh' },
+        getClientIp(req),
+        req.headers['user-agent'],
+      );
+      return res.json(tokens);
+    } catch (err) {
+      return error(res, 403, 'REFRESH_TOKEN_INVALID', err.message);
+    }
+  }
+
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Bearer token required' });
+    return error(res, 401, 'TOKEN_REQUIRED', 'Bearer token or refreshToken required');
   }
 
   try {
@@ -132,11 +204,15 @@ export const refreshToken = async (req, res) => {
 
     return res.json({ token, address: payload.address, expiresIn: JWT_EXPIRES_IN });
   } catch {
-    return res.status(401).json({ error: 'Invalid or expired token' });
+    return error(res, 401, 'TOKEN_INVALID', 'Invalid or expired token');
   }
 };
 
 export const logout = async (req, res) => {
+  if (req.body?.refreshToken) {
+    await refreshTokenService.revokeRefreshToken(req.body.refreshToken, 'logout');
+  }
+
   const authHeader = req.headers.authorization;
 
   if (authHeader?.startsWith('Bearer ')) {
@@ -155,47 +231,58 @@ export const logout = async (req, res) => {
 
 export const listSessions = async (req, res) => {
   try {
+    if (req.user?.userId) {
+      const sessions = await refreshTokenService.getUserActiveTokens(
+        req.user.userId,
+        req.user.tenantId,
+      );
+      return res.json({ sessions, data: sessions });
+    }
+
     const address = req.user?.address ?? req.user?.userId;
-    if (!address) return res.status(401).json({ error: 'Authentication required' });
+    if (!address) return error(res, 401, 'AUTH_REQUIRED', 'Authentication required');
 
     const sessions =
       typeof sessionService?.listSessions === 'function'
         ? await sessionService.listSessions(address)
         : [];
-    return res.json({ data: sessions });
+    return res.json({ sessions, data: sessions });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return error(res, 500, 'REQUEST_FAILED', err.message);
   }
 };
 
 export const revokeSession = async (req, res) => {
   try {
     const { id } = req.params;
-    if (!id) return res.status(400).json({ error: 'Session id required' });
+    if (!id) return error(res, 400, 'SESSION_ID_REQUIRED', 'Session id required');
     if (typeof sessionService?.revokeSession === 'function') {
       await sessionService.revokeSession(id);
     }
     return res.json({ ok: true });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return error(res, 500, 'REQUEST_FAILED', err.message);
   }
 };
 
 export const revokeAllSessions = async (req, res) => {
   try {
     const address = req.user?.address ?? req.user?.userId;
-    if (!address) return res.status(401).json({ error: 'Authentication required' });
+    if (!address) return error(res, 401, 'AUTH_REQUIRED', 'Authentication required');
 
-    if (typeof sessionService?.revokeAllSessions === 'function') {
+    if (req.user?.userId) {
+      await refreshTokenService.revokeAllUserTokens(req.user.userId, req.user.tenantId, 'security');
+    } else if (typeof sessionService?.revokeAllSessions === 'function') {
       await sessionService.revokeAllSessions(address);
     }
     return res.json({ ok: true });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return error(res, 500, 'REQUEST_FAILED', err.message);
   }
 };
 
 export default {
+  login,
   getNonce,
   verifySignatureAndLogin,
   refreshToken,
