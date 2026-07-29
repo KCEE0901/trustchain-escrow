@@ -4,6 +4,7 @@ const DEFAULT_PREFERENCES = {
   theme: null,
   currency: 'USD',
   reducedMotion: false,
+  notifications: null,
 };
 
 function canUseStorage() {
@@ -42,4 +43,8 @@ export function writePreferences(nextPreferences) {
   } catch {
     // Storage can be unavailable in private browsing or restricted environments.
   }
+}
+
+export function getDefaultPreferences() {
+  return { ...DEFAULT_PREFERENCES };
 }

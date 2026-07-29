@@ -128,6 +128,16 @@ function _getAdaptiveFactor() {
   return 1.0;
 }
 
+function sendRateLimitExceeded(res, { message, code = 'RATE_LIMIT_EXCEEDED', reason } = {}) {
+  return res.status(429).json({
+    error: {
+      code,
+      message,
+      ...(reason ? { reason } : {}),
+    },
+  });
+}
+
 // ── Public store accessors (backwards compat + testing) ───────────────────────
 
 /** Returns the shared SlidingWindowStore instance. Useful for tests / inspection. */
@@ -200,9 +210,7 @@ export function createSlidingWindowRateLimiter({
         res.set('Retry-After', String(Math.ceil(burstWindowMs / 1000)));
         res.set('X-RateLimit-Limit', String(effectiveMax));
         res.set('X-RateLimit-Remaining', '0');
-        return res
-          .status(429)
-          .json({ error: message, code: 'RATE_LIMIT_EXCEEDED', reason: 'burst' });
+        return sendRateLimitExceeded(res, { message, reason: 'burst' });
       }
       slidingStore.record(burstKey, burstWindowMs, now);
     }
@@ -219,7 +227,7 @@ export function createSlidingWindowRateLimiter({
       const retryAfterMs = oldest ? oldest + windowMs - now : windowMs;
       res.set('Retry-After', String(Math.max(1, Math.ceil(retryAfterMs / 1000))));
       res.set('X-RateLimit-Remaining', '0');
-      return res.status(429).json({ error: message, code: 'RATE_LIMIT_EXCEEDED' });
+      return sendRateLimitExceeded(res, { message });
     }
 
     slidingStore.record(key, windowMs, now);

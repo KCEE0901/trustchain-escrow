@@ -128,3 +128,61 @@
 .animate-slide-in {
   animation: slide-in 0.3s ease-out;
 }
+
+@keyframes tx-success {
+  0% {
+    transform: scale(0.9);
+    box-shadow: 0 0 0 0 rgb(16 185 129 / 0.35);
+  }
+  70% {
+    transform: scale(1.05);
+    box-shadow: 0 0 0 10px rgb(16 185 129 / 0);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgb(16 185 129 / 0);
+  }
+}
+
+@keyframes tx-failure {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20%,
+  60% {
+    transform: translateX(-3px);
+  }
+  40%,
+  80% {
+    transform: translateX(3px);
+  }
+}
+
+.animate-tx-success {
+  animation: tx-success 700ms ease-out;
+}
+
+.animate-tx-failure {
+  animation: tx-failure 450ms ease-in-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+.reduce-motion *,
+.reduce-motion *::before,
+.reduce-motion *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  scroll-behavior: auto !important;
+  transition-duration: 0.001ms !important;
+}
