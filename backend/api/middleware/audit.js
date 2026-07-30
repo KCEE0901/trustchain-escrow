@@ -31,13 +31,13 @@ const ROUTE_MAP = [
   // Escrow
   {
     method: 'POST',
-    pattern: /\/api\/escrows$/,
+    pattern: /\/api(?:\/v1)?\/escrows$/,
     category: AuditCategory.ESCROW,
     action: AuditAction.CREATE_ESCROW,
   },
   {
     method: 'PATCH',
-    pattern: /\/api\/escrows\/[^/]+\/cancel/,
+    pattern: /\/api(?:\/v1)?\/escrows\/[^/]+\/cancel/,
     category: AuditCategory.ESCROW,
     action: AuditAction.CANCEL_ESCROW,
   },
@@ -122,7 +122,7 @@ const ROUTE_MAP = [
 
 const ESCROW_STATE_CHANGE = {
   method: /^(POST|PUT|PATCH|DELETE)$/,
-  pattern: /^\/api\/escrows(\/|$)/,
+  pattern: /^\/api(?:\/v1)?\/escrows(\/|$)/,
   category: AuditCategory.ESCROW,
   action: AuditAction.ESCROW_STATE_CHANGE,
 };

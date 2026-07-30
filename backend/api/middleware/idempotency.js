@@ -32,6 +32,15 @@ function sendError(res, status, code, message) {
   return res.status(status).json({ error: { code, message } });
 }
 
+function normalizeStored(value) {
+  if (typeof value !== 'string') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
 export default function idempotencyMiddleware(req, res, next) {
   if (!isApiMutation(req) || isExcluded(req)) return next();
 
@@ -49,7 +58,8 @@ export default function idempotencyMiddleware(req, res, next) {
   const fingerprint = requestFingerprint(req);
 
   Promise.resolve(cache.get(cacheKey))
-    .then((stored) => {
+    .then((cached) => {
+      const stored = normalizeStored(cached);
       if (stored) {
         if (stored.fingerprint !== fingerprint) {
           return sendError(

@@ -35,9 +35,9 @@ export function parsePagination(query = {}) {
   };
 }
 
-export function buildPaginatedResponse(data, { page, limit, total }) {
+export function buildPaginatedResponse(data, { page, limit, total, cursor = null, skip = null }) {
   const totalPages = total === 0 ? 0 : Math.ceil(total / limit);
-  const currentOffset = (page - 1) * limit;
+  const currentOffset = Number.isInteger(skip) ? skip : (page - 1) * limit;
   const nextOffset = currentOffset + limit;
   const previousOffset = Math.max(0, currentOffset - limit);
 
@@ -48,7 +48,8 @@ export function buildPaginatedResponse(data, { page, limit, total }) {
     total,
     totalPages,
     hasNextPage: page < totalPages,
-    hasPreviousPage: page > DEFAULT_PAGE,
+    hasPreviousPage: currentOffset > 0,
+    cursor,
     nextCursor: nextOffset < total ? encodeCursor(nextOffset) : null,
     previousCursor: currentOffset > 0 ? encodeCursor(previousOffset) : null,
   };

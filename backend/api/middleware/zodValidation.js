@@ -5,9 +5,18 @@ const emptyBody = z.union([z.undefined(), z.null()]);
 const signedXdrSchema = z.object({
   signedXdr: z.string().trim().min(1).max(100_000),
 });
+const escrowStatusSchema = z.object({
+  status: z.string().trim().min(1).max(64),
+  reason: z.string().trim().max(1_000).optional(),
+});
 
 const ROUTE_SCHEMAS = [
-  { method: 'POST', pattern: /^\/api\/escrows\/broadcast$/, schema: signedXdrSchema },
+  { method: 'POST', pattern: /^\/api(?:\/v1)?\/escrows\/broadcast$/, schema: signedXdrSchema },
+  {
+    method: 'PATCH',
+    pattern: /^\/api(?:\/v1)?\/escrows\/[^/]+\/status$/,
+    schema: escrowStatusSchema,
+  },
 ];
 
 function schemaFor(req) {
