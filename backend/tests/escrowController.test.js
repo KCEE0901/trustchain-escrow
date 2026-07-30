@@ -126,6 +126,7 @@ describe('escrowController', () => {
         totalPages: 0,
         hasNextPage: false,
         hasPreviousPage: false,
+        cursor: null,
         nextCursor: null,
         previousCursor: null,
       });
