@@ -256,10 +256,13 @@ export function createPerUserRateLimiter({
   adaptive = false,
   enforceIp = false,
 } = {}) {
+  const getUserIdentity = (req) =>
+    req.user?.id ?? req.user?.userId ?? req.user?.address ?? req.headers['x-user-id'];
+
   const userKeyGenerator = (req) => {
-    if (req.user?.id) return `${prefix}:user:${req.user.id}`;
-    if (req.headers['x-user-id']) return `${prefix}:user:${req.headers['x-user-id']}`;
-    return `${prefix}:ip:${req.ip || 'unknown'}`;
+    const userIdentity = getUserIdentity(req);
+    if (userIdentity) return prefix + ':user:' + userIdentity;
+    return prefix + ':ip:' + (req.ip || 'unknown');
   };
 
   // Static limiter (fixed max, no burst) — used mainly for testing
@@ -273,7 +276,7 @@ export function createPerUserRateLimiter({
         keyGenerator: userKeyGenerator,
         adaptive,
       });
-      if (!enforceIp || !req.user?.id) return userLimiter(req, res, next);
+      if (!enforceIp || !getUserIdentity(req)) return userLimiter(req, res, next);
 
       const ipLimiter = createSlidingWindowRateLimiter({
         windowMs: RATE_LIMIT_WINDOW_MS,
@@ -306,7 +309,7 @@ export function createPerUserRateLimiter({
       keyGenerator: userKeyGenerator,
       adaptive,
     });
-    if (!enforceIp || !req.user?.id) return userLimiter(req, res, next);
+    if (!enforceIp || !getUserIdentity(req)) return userLimiter(req, res, next);
 
     const ipLimiter = createSlidingWindowRateLimiter({
       windowMs: RATE_LIMIT_WINDOW_MS,

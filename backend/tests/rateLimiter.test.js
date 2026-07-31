@@ -22,7 +22,7 @@ function buildApp({ userId, tier, max } = {}) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    if (userId || tier) req.user = { id: userId, tier };
+    if (userId || tier) req.user = { userId, tier };
     next();
   });
   app.use(createPerUserRateLimiter({ prefix: 'test', ...(max !== undefined && { max }) }));
