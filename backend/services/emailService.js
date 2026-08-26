@@ -5,6 +5,7 @@ import { __resetForTests, enqueueEvent, getQueueSnapshot } from '../queues/email
 import disputeRaisedTemplate from '../templates/emails/disputeRaised.js';
 import escrowStatusChangedTemplate from '../templates/emails/escrowStatusChanged.js';
 import milestoneCompletedTemplate from '../templates/emails/milestoneCompleted.js';
+import milestoneStateChangedTemplate from '../templates/emails/milestoneStateChanged.js';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -140,6 +141,27 @@ async function notifyDisputeRaised(payload) {
   return queueNotifications('dispute.raised', payload, disputeRaisedTemplate);
 }
 
+/**
+ * Sends email notifications when a milestone transitions state.
+ *
+ * This function is triggered whenever a milestone state changes (submitted, approved,
+ * released, rejected, or disputed). Both client and freelancer are notified with
+ * relevant details about the state transition.
+ *
+ * @param {object} payload - Email payload containing:
+ *   - recipients: array of {name, email, address} objects
+ *   - escrowId: ID of the escrow
+ *   - milestoneIndex: index of the milestone
+ *   - milestoneTitle: optional title of the milestone
+ *   - newState: new milestone state (Submitted, Approved, Released, Rejected, Disputed)
+ *   - previousState: previous milestone state
+ *   - dashboardUrl: URL to view the escrow
+ * @returns {Promise<{queued: number, accepted: array, skipped: array}>}
+ */
+async function notifyMilestoneStateChanged(payload) {
+  return queueNotifications('milestone.state_changed', payload, milestoneStateChangedTemplate);
+}
+
 function resetEmailServiceForTests() {
   preferences.clear();
   __resetForTests();
@@ -152,6 +174,7 @@ export {
   notifyDisputeRaised,
   notifyEscrowStatusChange,
   notifyMilestoneCompleted,
+  notifyMilestoneStateChanged,
 };
 
 export default {
@@ -163,5 +186,6 @@ export default {
   notifyDisputeRaised,
   notifyEscrowStatusChange,
   notifyMilestoneCompleted,
+  notifyMilestoneStateChanged,
   __resetForTests: resetEmailServiceForTests,
 };
