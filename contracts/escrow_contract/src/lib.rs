@@ -196,6 +196,11 @@ pub const DISPUTE_COOLDOWN_LEDGERS: u32 = 100;
 /// dispute is considered stale and can be force-resolved by governance.
 pub const DISPUTE_MAX_LEDGERS: u32 = 500;
 
+/// Timelock delay (in ledgers) between when a resolution is proposed and when
+/// it can be finalized. This prevents front-running attacks by committing the
+/// outcome before it becomes executable.
+pub const DISPUTE_RESOLUTION_TIMELOCK: u32 = 50;
+
 // ── Granular storage keys ─────────────────────────────────────────────────────
 // Separate keys for meta vs each milestone avoids deserialising the full
 // milestone list on every escrow-level operation.
@@ -301,6 +306,9 @@ pub struct EscrowMeta {
     /// Oracle price (USD, with PRICE_DECIMALS decimals) recorded when slippage
     /// protection was configured. Used as the reference for slippage checks.
     pub slippage_reference_price: i128,
+    /// Ledger timestamp when a pending dispute resolution becomes finalizable.
+    /// Used to implement timelock to prevent front-running of resolution outcomes.
+    pub dispute_resolution_finalize_ledger: Option<u64>,
 }
 
 // ── Storage helpers ───────────────────────────────────────────────────────────
@@ -2256,6 +2264,7 @@ impl EscrowContract {
                 multisig_threshold,
                 slippage_bps: 0,
                 slippage_reference_price: 0,
+                dispute_resolution_finalize_ledger: None,
             },
         );
 
@@ -4522,6 +4531,24 @@ impl EscrowContract {
                 }
             } else {
                 return Err(EscrowError::E10);
+            }
+
+            // Check if dispute resolution timelock has been satisfied
+            // This prevents front-running by enforcing a delay between resolution
+            // proposal and finalization, ensuring the outcome is committed before execution
+            if let Some(finalize_ledger) = meta.dispute_resolution_finalize_ledger {
+                let current_ledger = env.ledger().sequence();
+                if current_ledger < finalize_ledger {
+                    return Err(EscrowError::E64); // Reuse E64 for timelock expiration
+                }
+                // Timelock has expired, proceed with resolution
+            } else {
+                // No pending resolution yet - propose one and set the timelock
+                let current_ledger = env.ledger().sequence();
+                let finalize_ledger = current_ledger + DISPUTE_RESOLUTION_TIMELOCK as u64;
+                meta.dispute_resolution_finalize_ledger = Some(finalize_ledger);
+                ContractStorage::save_escrow_meta(&env, &meta);
+                return Ok(()); // Return after setting the timelock, caller must retry after timelock expires
             }
 
             let (client_payout, freelancer_payout, _collected_fee) =
