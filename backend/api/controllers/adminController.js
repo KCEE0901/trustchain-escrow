@@ -64,6 +64,10 @@ const getUserRateLimitUsage = (req, res) => {
   res.json({ userId, ...usage });
 };
 
+const ADMIN_STATUS_MESSAGES = {
+  NOT_FOUND: 'User not found.',
+};
+
 import cache from '../../lib/cache.js';
 import { buildPaginatedResponse, parsePagination } from '../../lib/pagination.js';
 
@@ -144,7 +148,7 @@ const getUserDetail = async (req, res) => {
     ]);
 
     if (!reputation) {
-      return res.status(404).json({ error: 'User not found.' });
+      return res.status(404).json({ error: ADMIN_STATUS_MESSAGES.NOT_FOUND });
     }
 
     const result = {
@@ -192,7 +196,7 @@ const suspendUser = async (req, res) => {
     });
 
     if (!result) {
-      return res.status(404).json({ error: 'User not found.' });
+      return res.status(404).json({ error: ADMIN_STATUS_MESSAGES.NOT_FOUND });
     }
 
     await cache.invalidatePrefix(`admin:user:${address}`);
@@ -234,7 +238,7 @@ const banUser = async (req, res) => {
     });
 
     if (!result) {
-      return res.status(404).json({ error: 'User not found.' });
+      return res.status(404).json({ error: ADMIN_STATUS_MESSAGES.NOT_FOUND });
     }
 
     await cache.invalidatePrefix(`admin:user:${address}`);
