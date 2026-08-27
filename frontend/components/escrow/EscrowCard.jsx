@@ -26,6 +26,7 @@ import CurrencyAmount from '../ui/CurrencyAmount';
 import { CopyButton } from '../ui/CopyButton';
 import EscrowCardSkeleton from '../ui/EscrowCardSkeleton';
 import { useI18n } from '../../i18n/index.jsx';
+import { useRef } from 'react';
 
 function getTimeRemaining(deadline) {
   if (!deadline) return null;
@@ -40,6 +41,7 @@ function getTimeRemaining(deadline) {
 
 export default function EscrowCard({ escrow, isLoading = false }) {
   const { t } = useI18n();
+  const cardRef = useRef(null);
   if (isLoading) return <EscrowCardSkeleton />;
   const {
     id,
@@ -169,6 +171,6 @@ export default function EscrowCard({ escrow, isLoading = false }) {
           You are {role === 'client' ? t('escrow.fields.client') : t('escrow.fields.freelancer')}
         </span>
       </div>
-    </article>
+    </Link>
   );
 }
