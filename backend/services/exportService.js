@@ -12,6 +12,31 @@ function toIso(value) {
 }
 
 /**
+ * Look up a single record by address, optionally scoped to a tenant.
+ *
+ * This helper removes the repeated pattern:
+ *
+ *   tenantId
+ *     ? await model.findFirst({ where: { address, tenantId } })
+ *     : await model.findUnique({ where: { address } });
+ *
+ * that previously appeared in exportKycStatus and exportReputation (and any
+ * future functions that follow the same shape).
+ *
+ * @template T
+ * @param {{ findFirst: Function, findUnique: Function }} model  — Prisma model delegate
+ * @param {string}      address   — Stellar public key
+ * @param {string|null} tenantId  — Optional tenant scope
+ * @returns {Promise<T|null>}
+ */
+async function findRecordByAddress(model, address, tenantId) {
+  if (tenantId) {
+    return model.findFirst({ where: { address, tenantId } });
+  }
+  return model.findUnique({ where: { address } });
+}
+
+/**
  * Export/Import Service for Stellar Trust Escrow
  * Handles data portability - export all user data and import data in standard formats
  */
@@ -135,11 +160,7 @@ class ExportService {
    * @returns {Promise<Object|null>} KYC record or null
    */
   async exportKycStatus(address, { tenantId } = {}) {
-    const kyc = tenantId
-      ? await prisma.kycVerification.findFirst({ where: { address, tenantId } })
-      : await prisma.kycVerification.findUnique({
-          where: { address },
-        });
+    const kyc = await findRecordByAddress(prisma.kycVerification, address, tenantId);
 
     if (!kyc) return null;
 
@@ -158,11 +179,7 @@ class ExportService {
    * @returns {Promise<Object|null>} Reputation record or null
    */
   async exportReputation(address, { tenantId } = {}) {
-    const reputation = tenantId
-      ? await prisma.reputationRecord.findFirst({ where: { address, tenantId } })
-      : await prisma.reputationRecord.findUnique({
-          where: { address },
-        });
+    const reputation = await findRecordByAddress(prisma.reputationRecord, address, tenantId);
 
     if (!reputation) return null;
 

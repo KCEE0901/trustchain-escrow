@@ -36,6 +36,12 @@ describe('useEscrow', () => {
     expect(useSWR).toHaveBeenCalledWith(null, expect.any(Function), expect.any(Object));
   });
 
+  it('passes null key to useSWR when id is empty string', () => {
+    renderHook(() => useEscrow(''));
+
+    expect(useSWR).toHaveBeenCalledWith(null, expect.any(Function), expect.any(Object));
+  });
+
   it('configures 30-second polling interval', () => {
     renderHook(() => useEscrow(1));
 
@@ -63,7 +69,7 @@ describe('useEscrow', () => {
 
     expect(result.current.escrow).toEqual(MOCK_ESCROW);
     expect(result.current.isLoading).toBe(false);
-    expect(result.current.error).toBeUndefined();
+    expect(result.current.error).toBeNull();
     expect(result.current.mutate).toBe(mockMutate);
   });
 
@@ -78,7 +84,7 @@ describe('useEscrow', () => {
     const { result } = renderHook(() => useEscrow(1));
 
     expect(result.current.isLoading).toBe(true);
-    expect(result.current.escrow).toBeUndefined();
+    expect(result.current.escrow).toBeNull();
   });
 
   it('returns error from SWR when fetch fails', () => {
@@ -93,7 +99,98 @@ describe('useEscrow', () => {
     const { result } = renderHook(() => useEscrow(1));
 
     expect(result.current.error).toBe(fetchError);
-    expect(result.current.escrow).toBeUndefined();
+    expect(result.current.escrow).toBeNull();
+  });
+
+  // ── Error message clarity (#223) ────────────────────────────────────────────
+
+  it('fetcher throws an error with HTTP status in the message on non-OK response', async () => {
+    // Extract the fetcher function passed to useSWR
+    renderHook(() => useEscrow(99));
+    const [, fetcherFn] = useSWR.mock.calls[0];
+
+    // Mock global fetch to return a 404
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      statusText: 'Not Found',
+      json: async () => ({ error: 'Escrow not found' }),
+    });
+
+    await expect(fetcherFn('http://localhost:4000/api/escrows/99')).rejects.toThrow(
+      /HTTP 404/,
+    );
+  });
+
+  it('fetcher error message includes server-provided reason (not just a generic message)', async () => {
+    renderHook(() => useEscrow(99));
+    const [, fetcherFn] = useSWR.mock.calls[0];
+
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      statusText: 'Forbidden',
+      json: async () => ({ error: 'Access denied' }),
+    });
+
+    await expect(fetcherFn('http://localhost:4000/api/escrows/99')).rejects.toThrow(
+      /Access denied/,
+    );
+  });
+
+  it('fetcher error message does NOT contain auth tokens or secrets', async () => {
+    renderHook(() => useEscrow(99));
+    const [, fetcherFn] = useSWR.mock.calls[0];
+
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      json: async () => ({
+        error: 'Unauthorized',
+        // These fields must never appear in the thrown error message
+        token: 'super-secret-jwt',
+        secret: 'top-secret',
+      }),
+    });
+
+    let thrownError;
+    try {
+      await fetcherFn('http://localhost:4000/api/escrows/99');
+    } catch (e) {
+      thrownError = e;
+    }
+
+    expect(thrownError).toBeDefined();
+    expect(thrownError.message).not.toContain('super-secret-jwt');
+    expect(thrownError.message).not.toContain('top-secret');
+  });
+
+  it('fetcher throws with path and status when body is not JSON', async () => {
+    renderHook(() => useEscrow(5));
+    const [, fetcherFn] = useSWR.mock.calls[0];
+
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: 'Internal Server Error',
+      json: async () => { throw new SyntaxError('Unexpected token'); },
+    });
+
+    await expect(fetcherFn('http://localhost:4000/api/escrows/5')).rejects.toThrow(
+      /HTTP 500/,
+    );
+  });
+
+  it('fetcher throws descriptive error on network failure', async () => {
+    renderHook(() => useEscrow(7));
+    const [, fetcherFn] = useSWR.mock.calls[0];
+
+    global.fetch = jest.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+
+    await expect(fetcherFn('http://localhost:4000/api/escrows/7')).rejects.toThrow(
+      /Network request failed.*\/api\/escrows\/7/,
+    );
   });
 });
 
