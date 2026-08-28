@@ -301,6 +301,8 @@ NODE_ENV="development"
 
 Generate secrets with: `openssl rand -hex 64`
 
+Escrow route flows also rely on `FRONTEND_URL` and `ESCROW_CONTRACT_ID` being populated for local integration work.
+
 Never reuse secrets between environments. Never commit `.env` files.
 
 ```bash
