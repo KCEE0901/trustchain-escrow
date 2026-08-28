@@ -71,6 +71,20 @@ coverage/
 **/test_snapshots/
 frontend/accessibility-reports/
 
+# Jest snapshot directories and individual snapshot files
+**/__snapshots__/
+**/*.snap
+
+# Test artifact output directory
+test-artifacts/
+
+# Playwright HTML reports and test results
+**/playwright-report/
+**/test-results/
+
+# Strayoutput file in frontend
+frontend/output.txt
+
 # ──────────────────────────────────────────────────────────────
 # Prisma generated
 # ──────────────────────────────────────────────────────────────
@@ -133,3 +147,13 @@ update-issues-drips.js
 update_all_drips_issues.sh
 /pr_body.md
 /pr_body.txt
+
+# ──────────────────────────────────────────────────────────────
+# Storybook
+# ──────────────────────────────────────────────────────────────
+**/.storybook-out/
+
+# ──────────────────────────────────────────────────────────────
+# TypeScript
+# ──────────────────────────────────────────────────────────────
+**/*.tsbuildinfo
