@@ -120,6 +120,12 @@ mod unit_coverage_tests {
         assert_eq!(t.client.escrow_count(), 0);
     }
 
+    #[test]
+    fn test_platform_treasury_defaults_to_admin() {
+        let t = setup();
+        assert_eq!(t.client.get_platform_treasury(), t.admin);
+    }
+
     // ═════════════════════════════════════════════════════════════════════════
     // 2. ESCROW CREATION TESTS
     // ═════════════════════════════════════════════════════════════════════════
