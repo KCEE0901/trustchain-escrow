@@ -16,13 +16,17 @@
 
 import Tooltip from './Tooltip';
 
+const EXCELLENT_SCORE_THRESHOLD = 500;
+const GOOD_SCORE_THRESHOLD = 250;
+const FAIR_SCORE_THRESHOLD = 100;
+
 export default function ReputationBadge({ score, size = 'md' }) {
   const color =
-    score >= 500
+    score >= EXCELLENT_SCORE_THRESHOLD
       ? 'text-amber-400 ring-amber-400/30'
-      : score >= 250
+      : score >= GOOD_SCORE_THRESHOLD
         ? 'text-purple-400 ring-purple-400/30'
-        : score >= 100
+        : score >= FAIR_SCORE_THRESHOLD
           ? 'text-indigo-400 ring-indigo-400/30'
           : 'text-gray-400 ring-gray-600/30';
 
@@ -34,9 +38,9 @@ export default function ReputationBadge({ score, size = 'md' }) {
         : 'w-12 h-12 text-base';
 
   const getTier = (score) => {
-    if (score >= 500) return 'Excellent';
-    if (score >= 250) return 'Good';
-    if (score >= 100) return 'Fair';
+    if (score >= EXCELLENT_SCORE_THRESHOLD) return 'Excellent';
+    if (score >= GOOD_SCORE_THRESHOLD) return 'Good';
+    if (score >= FAIR_SCORE_THRESHOLD) return 'Fair';
     return 'New';
   };
 
