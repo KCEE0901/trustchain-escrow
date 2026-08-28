@@ -221,6 +221,34 @@ export default function WalletLedger() {
     setExpandedId((prev) => (prev === id ? null : id));
   };
 
+  const handleKeyDown = (e, opId, index) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      toggleExpand(opId);
+    } else if (e.key === 'Escape') {
+      if (expandedId === opId) {
+        e.preventDefault();
+        setExpandedId(null);
+      }
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      const nextBtn = document.querySelector(`[data-tx-index="${index + 1}"]`);
+      if (nextBtn) nextBtn.focus();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      const prevBtn = document.querySelector(`[data-tx-index="${index - 1}"]`);
+      if (prevBtn) prevBtn.focus();
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      const firstBtn = document.querySelector('[data-tx-index="0"]');
+      if (firstBtn) firstBtn.focus();
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      const lastBtn = document.querySelector(`[data-tx-index="${operations.length - 1}"]`);
+      if (lastBtn) lastBtn.focus();
+    }
+  };
+
   if (!isConnected) {
     return (
       <div
@@ -275,6 +303,8 @@ export default function WalletLedger() {
             >
               <button
                 onClick={() => toggleExpand(op.id)}
+                onKeyDown={(e) => handleKeyDown(e, op.id, index)}
+                data-tx-index={index}
                 className="w-full text-left bg-gray-900/50 border border-gray-800 rounded-xl p-4 transition-all duration-200 hover:border-indigo-500/40 hover:shadow-[0_0_15px_rgba(99,102,241,0.15)] animate-fade-in focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
                 aria-expanded={isExpanded}
                 aria-controls={`tx-detail-${op.id}`}

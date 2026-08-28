@@ -11,6 +11,31 @@ const router = express.Router();
 router.use(authMiddleware);
 
 /**
+ * Middleware to append loading state capability headers.
+ */
+router.use((req, res, next) => {
+  res.setHeader('X-Loading-State-Supported', 'skeleton,spinner');
+  next();
+});
+
+/**
+ * @route  GET /api/escrows/status/loading-state
+ * @desc   Returns metadata and skeleton schema configuration for client-side loading states.
+ */
+router.get('/status/loading-state', (req, res) => {
+  res.status(200).json({
+    loadingState: {
+      type: 'skeleton',
+      variants: ['card', 'list', 'detail'],
+      recommendedPlaceholderCount: 3,
+      animation: 'pulse',
+      preventLayoutShift: true,
+      hasCacheAvailable: false,
+    },
+  });
+});
+
+/**
  * @route  GET /api/escrows
  */
 router.get(
