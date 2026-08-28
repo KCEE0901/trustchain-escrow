@@ -27,6 +27,7 @@ const VALID_DISPUTE_SORT_FIELDS = new Set(['raisedAt', 'resolvedAt', 'id']);
 const VALID_SORT_ORDERS = new Set(['asc', 'desc']);
 
 const DISPUTE_MAX_LIMIT = 50;
+const VALIDATION_ERROR_STATUS = 400;
 
 const listDisputes = async (req, res) => {
   try {
@@ -48,13 +49,19 @@ const listDisputes = async (req, res) => {
     const resolvedSortOrder = VALID_SORT_ORDERS.has(sortDir) ? sortDir : 'desc';
 
     if (dateFrom && isNaN(Date.parse(dateFrom))) {
-      return res.status(400).json({ error: 'dateFrom must be a valid ISO date string' });
+      return res
+        .status(VALIDATION_ERROR_STATUS)
+        .json({ error: 'dateFrom must be a valid ISO date string' });
     }
     if (dateTo && isNaN(Date.parse(dateTo))) {
-      return res.status(400).json({ error: 'dateTo must be a valid ISO date string' });
+      return res
+        .status(VALIDATION_ERROR_STATUS)
+        .json({ error: 'dateTo must be a valid ISO date string' });
     }
     if (dateFrom && dateTo && new Date(dateFrom) > new Date(dateTo)) {
-      return res.status(400).json({ error: 'dateFrom must not be after dateTo' });
+      return res
+        .status(VALIDATION_ERROR_STATUS)
+        .json({ error: 'dateFrom must not be after dateTo' });
     }
 
     const where = {
