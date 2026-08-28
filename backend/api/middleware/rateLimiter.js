@@ -117,6 +117,7 @@ let _adaptiveErrorRate = 0;
  * Update the current server error rate (0–1).
  * Call this from your error handler or a metrics collector.
  * @param {number} errorRate - fraction of requests that resulted in 5xx (0–1)
+ * @returns {void}
  */
 export function updateAdaptiveLoad(errorRate) {
   _adaptiveErrorRate = Math.max(0, Math.min(1, errorRate));
@@ -130,7 +131,11 @@ function _getAdaptiveFactor() {
 
 // ── Public store accessors (backwards compat + testing) ───────────────────────
 
-/** Returns the shared SlidingWindowStore instance. Useful for tests / inspection. */
+/**
+ * Return the shared sliding-window store instance.
+ * Useful for lightweight inspection and tests that need direct access to counters.
+ * @returns {SlidingWindowStore}
+ */
 export function getUsageStore() {
   return slidingStore;
 }
