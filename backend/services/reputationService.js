@@ -9,6 +9,13 @@ import prisma from '../lib/prisma.js';
 
 // ── Read Operations ──────────────────────────────────────────────────────────
 
+/**
+ * Fetch the reputation record for a single Stellar address.
+ *
+ * @param {string} address - Stellar public key to look up.
+ * @returns {Promise<Object|null>} The reputation record, or null if the
+ *   address has no record yet.
+ */
 const getReputationByAddress = async (address) => {
   const record = await prisma.reputationRecord.findUnique({
     where: { address },
@@ -16,6 +23,12 @@ const getReputationByAddress = async (address) => {
   return record || null;
 };
 
+/**
+ * Map a numeric reputation score to its badge tier.
+ *
+ * @param {number|string} score - Total reputation score.
+ * @returns {'NEW'|'TRUSTED'|'VERIFIED'|'EXPERT'|'ELITE'} Badge tier name.
+ */
 const getBadge = (score) => {
   const s = Number(score);
   if (s >= BADGE_THRESHOLDS.ELITE) return 'ELITE';
@@ -25,11 +38,27 @@ const getBadge = (score) => {
   return 'NEW';
 };
 
+/**
+ * Compute the completion rate as a percentage of completed vs disputed work.
+ *
+ * @param {number} completed - Number of completed escrows.
+ * @param {number} disputed - Number of disputed escrows.
+ * @returns {number} Completion rate percentage (0-100). Returns 0 if there
+ *   is no history (completed + disputed === 0).
+ */
 const computeCompletionRate = (completed, disputed) => {
   const total = Number(completed) + Number(disputed);
   return total === 0 ? 0 : (Number(completed) / total) * 100;
 };
 
+/**
+ * Fetch a page of the reputation leaderboard, ranked by total score.
+ *
+ * @param {number} [limit=20] - Number of records to return per page.
+ * @param {number} [page=1] - 1-indexed page number.
+ * @returns {Promise<Array<Object>>} Reputation records ordered by
+ *   totalScore descending.
+ */
 const getLeaderboard = async (limit = 20, page = 1) => {
   const skip = (page - 1) * limit;
   return prisma.reputationRecord.findMany({
@@ -39,6 +68,13 @@ const getLeaderboard = async (limit = 20, page = 1) => {
   });
 };
 
+/**
+ * Compute an address's percentile rank among all reputation records.
+ *
+ * @param {string} address - Stellar public key to rank.
+ * @returns {Promise<number>} Percentile rank (0-100), rounded to the
+ *   nearest integer. Returns 0 if the address has no record.
+ */
 const getPercentileRank = async (address) => {
   const result = await prisma.$queryRaw`
     WITH Ranked AS (
@@ -62,6 +98,7 @@ const getPercentileRank = async (address) => {
  * @param {'client'|'freelancer'} role - Address role in escrow
  * @param {BigInt} escrowId - Escrow ID for idempotency
  * @param {string} tenantId - Tenant context
+ * @returns {Promise<void>}
  */
 const recordEscrowCompletion = async (address, role, escrowId, tenantId) => {
   // Score delta: +10 for freelancer, +5 for client
@@ -104,6 +141,7 @@ const recordEscrowCompletion = async (address, role, escrowId, tenantId) => {
  * @param {boolean} won - True if dispute won, false if lost
  * @param {BigInt} escrowId - Escrow ID for idempotency
  * @param {string} tenantId - Tenant context
+ * @returns {Promise<void>}
  */
 const recordDisputeOutcome = async (address, won, escrowId, tenantId) => {
   const scoreDelta = won ? 15 : -5;
@@ -162,6 +200,7 @@ const recordDisputeOutcome = async (address, won, escrowId, tenantId) => {
  * @param {boolean} wasAtFault - True if address was at fault for cancellation
  * @param {BigInt} escrowId - Escrow ID for idempotency
  * @param {string} tenantId - Tenant context
+ * @returns {Promise<void>}
  */
 const recordEscrowCancellation = async (address, wasAtFault, escrowId, tenantId) => {
   if (!wasAtFault) return;
@@ -209,6 +248,7 @@ const recordEscrowCancellation = async (address, wasAtFault, escrowId, tenantId)
  * Used for corrections after bugs or audits.
  *
  * @param {string} tenantId - Tenant context (optional, all if not specified)
+ * @returns {Promise<void>}
  */
 const recalculateFromEventHistory = async (tenantId) => {
   const where = tenantId ? { tenantId } : {};
