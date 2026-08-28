@@ -343,3 +343,161 @@ describe('MFA Middleware', () => {
     });
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Edge-case additions — issues #217
+// Appended below the original test suite; no existing tests were modified.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('requireMfa — token edge cases', () => {
+  let req, res, next;
+
+  beforeEach(() => {
+    req = {
+      user: { userId: 1, address: 'GTEST123', tenantId: 'tenant-123' },
+      tenant: { id: 'tenant-123' },
+      headers: {},
+      ip: '127.0.0.1',
+      get: jest.fn((h) => (h === 'User-Agent' ? 'TestAgent/1.0' : null)),
+    };
+    res = {
+      status: jest.fn().mockReturnThis(),
+      json: jest.fn().mockReturnThis(),
+    };
+    next = jest.fn();
+    jest.clearAllMocks();
+  });
+
+  it('should return 403 with mfaRequired:true when x-mfa-token is an empty string', async () => {
+    mfaService.requiresMfa.mockResolvedValue(true);
+    cache.get.mockResolvedValue(null);
+    req.headers['x-mfa-token'] = '';
+
+    await requireMfa(req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ mfaRequired: true }),
+    );
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('should return 403 when x-mfa-token is a non-string value (number)', async () => {
+    mfaService.requiresMfa.mockResolvedValue(true);
+    cache.get.mockResolvedValue(null);
+    req.headers['x-mfa-token'] = 12345;
+
+    await requireMfa(req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('should return 403 when x-mfa-token header is completely absent', async () => {
+    mfaService.requiresMfa.mockResolvedValue(true);
+    cache.get.mockResolvedValue(null);
+    // Deliberately no x-mfa-token key set on headers
+
+    await requireMfa(req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ mfaRequired: true }),
+    );
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('should return 403 with "Invalid or expired MFA token" for a malformed JWT string', async () => {
+    mfaService.requiresMfa.mockResolvedValue(true);
+    cache.get.mockResolvedValue(null);
+    req.headers['x-mfa-token'] = 'not.a.jwt';
+
+    await requireMfa(req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: expect.stringMatching(/invalid or expired mfa token/i),
+        mfaRequired: true,
+      }),
+    );
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('should return 403 with "Invalid MFA token" when token type is "access" instead of "mfa"', async () => {
+    const wrongTypeToken = jwt.sign(
+      { userId: 1, tenantId: 'tenant-123', type: 'access', method: 'TOTP' },
+      process.env.MFA_JWT_SECRET || process.env.JWT_SECRET,
+      { algorithm: 'HS256', expiresIn: '30m' },
+    );
+
+    mfaService.requiresMfa.mockResolvedValue(true);
+    cache.get.mockResolvedValue(null);
+    req.headers['x-mfa-token'] = wrongTypeToken;
+
+    await requireMfa(req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: expect.stringMatching(/invalid mfa token/i),
+        mfaRequired: true,
+      }),
+    );
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('should still require MFA when cache returns a session with verified:false', async () => {
+    mfaService.requiresMfa.mockResolvedValue(true);
+    cache.get.mockResolvedValue({ verified: false, userId: 1, tenantId: 'tenant-123' });
+
+    await requireMfa(req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ mfaRequired: true }),
+    );
+    expect(next).not.toHaveBeenCalled();
+  });
+});
+
+describe('requireMfaForHighValue — threshold boundary cases', () => {
+  let req, res, next;
+
+  beforeEach(() => {
+    req = {
+      user: { userId: 1, address: 'GTEST123', tenantId: 'tenant-123' },
+      tenant: { id: 'tenant-123' },
+      headers: {},
+      body: {},
+      params: {},
+      ip: '127.0.0.1',
+      get: jest.fn((h) => (h === 'User-Agent' ? 'TestAgent/1.0' : null)),
+    };
+    res = {
+      status: jest.fn().mockReturnThis(),
+      json: jest.fn().mockReturnThis(),
+    };
+    next = jest.fn();
+    jest.clearAllMocks();
+    process.env.MFA_HIGH_VALUE_THRESHOLD = '10000';
+  });
+
+  it('should skip MFA when amount is zero (below threshold)', async () => {
+    req.body = { amount: '0' };
+
+    await requireMfaForHighValue(req, res, next);
+
+    expect(next).toHaveBeenCalled();
+    expect(mfaService.requiresMfa).not.toHaveBeenCalled();
+  });
+
+  it('should skip MFA when amount equals the threshold exactly (not strictly greater)', async () => {
+    req.body = { amount: '10000' };
+
+    await requireMfaForHighValue(req, res, next);
+
+    expect(next).toHaveBeenCalled();
+    expect(mfaService.requiresMfa).not.toHaveBeenCalled();
+  });
+});
