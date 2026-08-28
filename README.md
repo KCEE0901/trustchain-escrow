@@ -241,6 +241,8 @@ docker compose up -d
 # Configure environment
 cp backend/.env.example backend/.env
 cp frontend/.env.example frontend/.env.local
+# Optional: enable the real-time streaming indexer (backend/services/streamingIndexer.js)
+# by setting STREAMING_INDEXER_ENABLED=true and STREAMING_INDEXER_ACCOUNT in backend/.env
 # Optional: NEXT_PUBLIC_XLM_RATE_* vars in frontend/.env.local configure the
 # live rate polling in frontend/hooks/useLiveXlmRate.js
 
