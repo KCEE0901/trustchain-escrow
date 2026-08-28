@@ -8,7 +8,7 @@ mod tests {
 
     use crate::{
         FundPayload, GovernanceContract, GovernanceContractClient, ParameterPayload,
-        ProposalPayload, ProposalStatus, ProposalType,
+        ProposalPayload, ProposalStatus, ProposalType, Storage,
     };
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -1135,5 +1135,14 @@ mod tests {
         // Attempt to re-vote after extending lock should fail
         let result = client.try_cast_vote(&voter, &id, &true);
         assert!(result.is_err(), "Expected AlreadyVoted error");
+    }
+
+    // ── Issue #248: panic path for invalid input ───────────────────────────────
+
+    #[test]
+    #[should_panic]
+    fn test_admin_unwrap_panics_on_uninitialized_contract() {
+        let env = Env::default();
+        Storage::admin(&env).unwrap();
     }
 }

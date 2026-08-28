@@ -32,7 +32,6 @@ pub mod arbitrators;
 mod errors;
 mod events;
 pub mod incentives;
-mod tests;
 mod types;
 
 pub use errors::GovError;
@@ -50,6 +49,8 @@ use stellar_trust_shared::{
 // ── Storage helpers ───────────────────────────────────────────────────────────
 
 struct Storage;
+
+mod tests;
 
 impl Storage {
     /// Bump instance TTL using shared config constants from `stellar_trust_shared`.

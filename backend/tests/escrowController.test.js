@@ -371,4 +371,85 @@ describe('escrowController — cache behaviour', () => {
       expect(res.json).toHaveBeenCalledWith(fixtures.escrows[0]);
     });
   });
+
+  describe('edge cases', () => {
+    it('defaults invalid sortBy to createdAt', async () => {
+      const req = { query: { sortBy: 'invalidField' } };
+      const res = createMockRes();
+
+      await escrowController.listEscrows(req, res);
+
+      expect(prismaMock.escrow.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orderBy: { createdAt: 'desc' },
+        }),
+      );
+    });
+
+    it('defaults invalid sortOrder to desc', async () => {
+      const req = { query: { sortOrder: 'sideways' } };
+      const res = createMockRes();
+
+      await escrowController.listEscrows(req, res);
+
+      expect(prismaMock.escrow.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orderBy: { createdAt: 'desc' },
+        }),
+      );
+    });
+
+    it('defaults negative page to 1', async () => {
+      const req = { query: { page: '-1' } };
+      const res = createMockRes();
+
+      await escrowController.listEscrows(req, res);
+
+      expect(prismaMock.escrow.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          skip: 0,
+        }),
+      );
+    });
+
+    it('returns 500 on getEscrow DB error', async () => {
+      const req = { params: { id: '1' } };
+      const res = createMockRes();
+      prismaMock.escrow.findUnique.mockRejectedValue(new Error('DB down'));
+
+      await escrowController.getEscrow(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(res.body.error).toBe('DB down');
+    });
+
+    it('returns 404 for non-numeric milestoneId', async () => {
+      const req = { params: { id: '1', milestoneId: 'abc' } };
+      const res = createMockRes();
+
+      await escrowController.getMilestone(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it('returns 500 on getMilestones DB error', async () => {
+      const req = { params: { id: '1' }, query: {} };
+      const res = createMockRes();
+      prismaMock.$transaction.mockRejectedValue(new Error('DB down'));
+
+      await escrowController.getMilestones(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(res.body.error).toBe('DB down');
+    });
+
+    it('returns 400 when signedXdr is not a string', async () => {
+      const req = { body: { signedXdr: 12345 } };
+      const res = createMockRes();
+
+      await escrowController.broadcastCreateEscrow(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+  });
 });
