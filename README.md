@@ -301,6 +301,8 @@ NODE_ENV="development"
 
 Generate secrets with: `openssl rand -hex 64`
 
+The auth and validation middleware also expect `JWT_ALGORITHM` to match your token issuer configuration.
+
 Never reuse secrets between environments. Never commit `.env` files.
 
 ```bash
