@@ -301,6 +301,8 @@ NODE_ENV="development"
 
 Generate secrets with: `openssl rand -hex 64`
 
+For escrow-service backed flows, make sure `ESCROW_CONTRACT_ID` and `SOROBAN_RPC_URL` are set together.
+
 Never reuse secrets between environments. Never commit `.env` files.
 
 ```bash
