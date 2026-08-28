@@ -10,20 +10,40 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAdminStore } from '../../../store/app-store';
 import { adminFetch } from '../../../store/admin';
+import { useFocusTrap } from '../../../hooks/useFocusTrap';
 
 function ResolveModal({ dispute, onClose, onConfirm }) {
   const [clientAmount, setClientAmount] = useState('');
   const [freelancerAmount, setFreelancerAmount] = useState('');
   const [notes, setNotes] = useState('');
 
+  const isOpen = Boolean(dispute);
+  const trapRef = useFocusTrap(isOpen);
+
+  // Close on Escape key — matches the shared Modal component's behavior.
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const handler = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [isOpen, onClose]);
+
   if (!dispute) return null;
 
   const totalAmount = dispute.escrow?.totalAmount || '?';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="card w-full max-w-lg mx-4">
-        <h3 className="text-lg font-semibold text-white mb-1">Resolve Dispute #{dispute.id}</h3>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="resolve-dispute-title"
+    >
+      <div className="absolute inset-0" onClick={onClose} aria-hidden="true" />
+      <div ref={trapRef} tabIndex={-1} className="card w-full max-w-lg mx-4 relative focus:outline-none">
+        <h3 id="resolve-dispute-title" className="text-lg font-semibold text-white mb-1">Resolve Dispute #{dispute.id}</h3>
         <p className="text-sm text-gray-400 mb-1">
           Escrow ID: <span className="font-mono">{dispute.escrowId?.toString()}</span>
         </p>
@@ -69,14 +89,14 @@ function ResolveModal({ dispute, onClose, onConfirm }) {
         <div className="flex gap-2 justify-end">
           <button
             onClick={onClose}
-            className="px-4 py-2 rounded-lg text-sm text-gray-400 hover:text-white transition-colors"
+            className="px-4 py-2 rounded-lg text-sm text-gray-400 hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-900"
           >
             Cancel
           </button>
           <button
             onClick={() => onConfirm({ clientAmount, freelancerAmount, notes })}
             disabled={!clientAmount || !freelancerAmount}
-            className="px-4 py-2 rounded-lg text-sm font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            className="px-4 py-2 rounded-lg text-sm font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-900 disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Confirm Resolution
           </button>

@@ -37,6 +37,7 @@ import ReputationBadge from '../../../components/ui/ReputationBadge';
 import CurrencyAmount from '../../../components/ui/CurrencyAmount';
 import TransactionHash from '../../../components/ui/TransactionHash';
 import Avatar from '../../../components/ui/Avatar';
+import { EscrowDetailSkeleton } from '../../../components/ui/Skeleton';
 import {
   buildApproveMilestoneTx,
   buildSubmitMilestoneTx,
@@ -204,11 +205,7 @@ export default function EscrowDetailPage({ params }) {
   };
 
   if (isLoading && !fetchedEscrow) {
-    return (
-      <div className="flex items-center justify-center min-h-[40vh] text-gray-400">
-        Loading escrow…
-      </div>
-    );
+    return <EscrowDetailSkeleton />;
   }
 
   return (
