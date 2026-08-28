@@ -157,7 +157,17 @@ router.delete('/flags/:key/tenants/:tenantId', featureFlagController.removeTenan
  *         Wire to a SIEM or persistent store in production.
  */
 router.get('/secrets/audit', (_req, res) => {
-  res.json({ data: getAuditLog() });
+  const data = getAuditLog();
+  res.json({
+    data,
+    meta: {
+      empty: data.length === 0,
+      message:
+        data.length === 0
+          ? 'No secrets access has been recorded yet. Entries appear here once a secret is read or rotated.'
+          : `${data.length} secrets access event(s) recorded.`,
+    },
+  });
 });
 
 /**

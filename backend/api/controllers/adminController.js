@@ -25,6 +25,22 @@ function stableStringify(obj) {
   );
 }
 
+/**
+ * Appends a friendly, actionable empty-state message to a paginated response
+ * when the current page has no rows, so admin list views never render a bare
+ * empty table with no explanation. Mirrors the `meta.message` convention
+ * already used by the `/2fa/compliance` endpoint.
+ *
+ * @param {{ data: unknown[] }} result — response built by buildPaginatedResponse
+ * @param {string} emptyMessage — copy shown when `data` is empty
+ */
+function withEmptyState(result, emptyMessage) {
+  if (result.data.length === 0) {
+    result.meta = { ...(result.meta || {}), empty: true, message: emptyMessage };
+  }
+  return result;
+}
+
 // Mutable runtime overrides (resets on server restart)
 const runtimeTierLimits = { ...TIER_LIMITS };
 
@@ -115,7 +131,12 @@ const listUsers = async (req, res) => {
       prisma.reputationRecord.count({ where }),
     ]);
 
-    const result = buildPaginatedResponse(users, { total, page, limit });
+    const result = withEmptyState(
+      buildPaginatedResponse(users, { total, page, limit }),
+      search
+        ? `No users match "${search}". Try a different address or clear the search filter.`
+        : 'No users found yet. Users appear here once they interact with an escrow.',
+    );
     await cache.set(cacheKey, result, 30);
     res.json(result);
   } catch (err) {
@@ -287,7 +308,14 @@ const listDisputes = async (req, res) => {
       prisma.dispute.count({ where }),
     ]);
 
-    const result = buildPaginatedResponse(disputes, { total, page, limit });
+    const result = withEmptyState(
+      buildPaginatedResponse(disputes, { total, page, limit }),
+      resolved === 'true'
+        ? 'No resolved disputes yet.'
+        : resolved === 'false'
+          ? 'No open disputes right now — nothing needs your attention.'
+          : 'No disputes have been raised yet.',
+    );
     await cache.set(cacheKey, result, 15);
     res.json(result);
   } catch (err) {
@@ -440,7 +468,10 @@ const getAuditLogs = async (req, res) => {
       prisma.adminAuditLog.count(),
     ]);
 
-    const result = buildPaginatedResponse(logs, { total, page, limit });
+    const result = withEmptyState(
+      buildPaginatedResponse(logs, { total, page, limit }),
+      'No admin actions have been logged yet. Actions taken from this dashboard will appear here.',
+    );
     await cache.set(cacheKey, result, 15);
     res.json(result);
   } catch (err) {
