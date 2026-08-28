@@ -13,13 +13,21 @@ import {
 const router = express.Router();
 router.use(authMiddleware);
 
+const withRouteError = (label, handler) => async (req, res, next) => {
+  try {
+    return await handler(req, res, next);
+  } catch (error) {
+    return res.status(500).json({ error: `Unable to ${label}: ${error.message}` });
+  }
+};
+
 // ── List / Get ────────────────────────────────────────────────────────────────
 
 router.get(
   '/',
   validate(disputeListQueryRules),
   cacheResponse({ ttl: TTL.LIST, tags: ['disputes'] }),
-  disputeController.listDisputes,
+  withRouteError('list disputes', disputeController.listDisputes),
 );
 
 router.get(
