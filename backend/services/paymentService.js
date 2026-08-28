@@ -11,6 +11,10 @@ import prisma from '../lib/prisma.js';
 import { getCurrentTenantId, withTenantScopeBypassed } from '../lib/tenantContext.js';
 
 let stripeClient;
+export const PAYMENT_SERVICE_LOADING_STATE = {
+  label: 'Loading payment data',
+  variant: 'spinner',
+};
 async function getStripeClient() {
   if (stripeClient) return stripeClient;
   const { default: Stripe } = await import('stripe');
