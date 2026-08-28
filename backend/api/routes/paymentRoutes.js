@@ -10,6 +10,33 @@ import { authorizeBodyAddress, authorizeParamAddress } from '../middleware/autho
 
 const router = express.Router();
 
+/**
+ * Accessibility contract for clients rendering these payment endpoints.
+ *
+ * Every route below is consumed by icon-only controls in the frontend
+ * payment UI (checkout button, refund action, status refresh, close/dismiss
+ * icons on toasts and modals). None of these routes render markup
+ * themselves — this file is pure Express routing/JSON — but the response
+ * shape is documented here so consuming components know which field to use
+ * as the accessible label instead of leaving an icon-only control unlabeled.
+ *
+ * Consuming components MUST set `aria-label` (or `aria-labelledby`) on any
+ * icon-only button/link that triggers one of these routes:
+ *
+ *   - POST /checkout            -> aria-label="Pay with card" (or similar,
+ *                                   describing the checkout action, not just
+ *                                   "Pay")
+ *   - GET  /status/:sessionId   -> aria-label="Refresh payment status"
+ *   - GET  /:address            -> aria-label="View payment history"
+ *   - POST /:paymentId/refund   -> aria-label="Refund payment" — this is a
+ *                                   destructive/financial action, so the
+ *                                   label should be unambiguous and paired
+ *                                   with a visible confirmation step.
+ *
+ * See ACCESSIBILITY_PAYMENTS.md at the repo root for the full audit of
+ * icon-only controls in the payment flow and their fixes.
+ */
+
 const captureRawBody = (req, _res, next) => {
   let data = '';
   req.on('data', (chunk) => (data += chunk));

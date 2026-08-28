@@ -26,10 +26,16 @@ export function Toast({ message, type = 'info', duration = 4000, onClose }) {
     <div
       className={`flex items-start gap-3 rounded-lg border px-4 py-3 shadow-md text-sm ${STYLES[type]}`}
     >
-      <span className="font-bold">{ICONS[type]}</span>
+      <span className="font-bold" aria-hidden="true">
+        {ICONS[type]}
+      </span>
       <span className="flex-1">{message}</span>
-      <button onClick={onClose} className="ml-2 opacity-60 hover:opacity-100">
-        ✕
+      <button
+        onClick={onClose}
+        aria-label="Dismiss notification"
+        className="ml-2 opacity-60 hover:opacity-100"
+      >
+        <span aria-hidden="true">✕</span>
       </button>
     </div>
   );
