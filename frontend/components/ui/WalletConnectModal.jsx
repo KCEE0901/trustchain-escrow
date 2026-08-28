@@ -19,6 +19,7 @@ import { useEffect, useState } from 'react';
 import Modal from './Modal';
 import Spinner from './Spinner';
 import { cn } from '../../lib/utils';
+import { canSelectWalletOption, FREIGHTER_WALLET_ID } from '../../lib/wallet';
 
 export const SUPPORTED_WALLETS = [
   {
@@ -70,26 +71,26 @@ export default function WalletConnectModal({ isOpen, onClose, wallet, onConnecte
   }, [isOpen]);
 
   useEffect(() => {
-    if (connectingId === 'freighter' && wallet?.isConnected) {
+    if (connectingId === FREIGHTER_WALLET_ID && wallet?.isConnected) {
       setConnectingId(null);
-      onConnected?.('freighter');
+      onConnected?.(FREIGHTER_WALLET_ID);
       onClose();
     }
   }, [connectingId, wallet?.isConnected, onConnected, onClose]);
 
   useEffect(() => {
-    if (connectingId === 'freighter' && wallet?.error) {
+    if (connectingId === FREIGHTER_WALLET_ID && wallet?.error) {
       setLocalError(wallet.error);
       setConnectingId(null);
     }
   }, [connectingId, wallet?.error]);
 
   const handleSelect = async (walletOption) => {
-    if (!walletOption.available || connectingId) return;
+    if (!canSelectWalletOption(walletOption, connectingId)) return;
     setLocalError(null);
 
-    if (walletOption.id === 'freighter') {
-      setConnectingId('freighter');
+    if (walletOption.id === FREIGHTER_WALLET_ID) {
+      setConnectingId(FREIGHTER_WALLET_ID);
       await wallet?.connect?.();
       return;
     }
@@ -113,13 +114,14 @@ export default function WalletConnectModal({ isOpen, onClose, wallet, onConnecte
       <ul className="space-y-2" aria-label="Available wallets">
         {SUPPORTED_WALLETS.map((walletOption) => {
           const isConnectingThis = connectingId === walletOption.id;
+          const canSelectThis = canSelectWalletOption(walletOption, connectingId);
           return (
             <li key={walletOption.id}>
               <button
                 type="button"
                 onClick={() => handleSelect(walletOption)}
-                disabled={!walletOption.available || Boolean(connectingId)}
-                aria-disabled={!walletOption.available || Boolean(connectingId)}
+                disabled={!canSelectThis}
+                aria-disabled={!canSelectThis}
                 className={cn(
                   'flex w-full items-center gap-3 rounded-xl border p-3 text-left transition-colors',
                   'focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500',
