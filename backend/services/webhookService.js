@@ -34,7 +34,7 @@ async function createSubscription({ url, eventTypes, createdBy }) {
       url: String(url).trim(),
       eventTypes,
       secret: subscriptionSecret,
-      createdBy: createdBy || null,
+      createdBy: createdBy ?? null,
       isActive: true,
     },
     select: {
@@ -51,7 +51,7 @@ async function createSubscription({ url, eventTypes, createdBy }) {
 
 async function listSubscriptions({ createdBy }) {
   return prisma.webhookSubscription.findMany({
-    where: { createdBy },
+    where: { createdBy: createdBy ?? null },
     orderBy: { createdAt: 'desc' },
     select: {
       id: true,
@@ -66,16 +66,17 @@ async function listSubscriptions({ createdBy }) {
 
 async function deleteSubscription({ id, createdBy }) {
   const deleted = await prisma.webhookSubscription.deleteMany({
-    where: { id, createdBy },
+    where: { id, createdBy: createdBy ?? null },
   });
   return deleted.count > 0;
 }
 
 async function getDeliveryHistory({ subscriptionId, createdBy, page = 1, limit = 30 }) {
   const skip = (page - 1) * limit;
+  const normalizedCreatedBy = createdBy ?? null;
   const [deliveries, total] = await Promise.all([
     prisma.webhookDelivery.findMany({
-      where: { subscription: { id: subscriptionId, createdBy } },
+      where: { subscription: { id: subscriptionId, createdBy: normalizedCreatedBy } },
       orderBy: { createdAt: 'desc' },
       skip,
       take: limit,
@@ -91,7 +92,7 @@ async function getDeliveryHistory({ subscriptionId, createdBy, page = 1, limit =
       },
     }),
     prisma.webhookDelivery.count({
-      where: { subscription: { id: subscriptionId, createdBy } },
+      where: { subscription: { id: subscriptionId, createdBy: normalizedCreatedBy } },
     }),
   ]);
 

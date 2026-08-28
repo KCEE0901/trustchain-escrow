@@ -84,6 +84,13 @@ export default async function tenantMiddleware(req, res, next) {
 
     return runWithTenantContext(tenant, () => next());
   } catch (err) {
-    return next(err);
+    const wrapped = new Error(
+      `Tenant resolution failed (x-tenant-id=${req.headers['x-tenant-id'] || 'none'}, ` +
+        `x-tenant-slug=${req.headers['x-tenant-slug'] || 'none'}, ` +
+        `host=${req.headers['x-forwarded-host'] || req.headers.host || 'none'}): ${err.message}`,
+    );
+    wrapped.statusCode = err.statusCode || 500;
+    wrapped.cause = err;
+    return next(wrapped);
   }
 }
