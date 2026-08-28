@@ -191,6 +191,33 @@ mod fuzz_tests {
         assert!(valid_result.is_ok(), "Should accept minimum valid amount");
     }
 
+    #[test]
+    fn fuzz_create_escrow_with_small_valid_amounts() {
+        let valid_amounts: [i128; 3] = [1, 2, 10];
+
+        for &amount in &valid_amounts {
+            let t = setup();
+            let client_addr = Address::generate(&t.env);
+            let freelancer = Address::generate(&t.env);
+            mint_for_escrow(&t.env, &t.token_id, &client_addr, amount + 100, 0);
+
+            let result = t.client.try_create_escrow(
+                &client_addr,
+                &freelancer,
+                &t.token_id,
+                &amount,
+                &hash(&t.env, 9),
+                &None,
+                &None,
+                &None,
+                &None,
+                &no_multisig(&t.env),
+            );
+
+            assert!(result.is_ok(), "Should accept valid amount {amount}");
+        }
+    }
+
     // ═════════════════════════════════════════════════════════════════════════
     // 3. RAPID CREATE-CANCEL CYCLES
     // ═════════════════════════════════════════════════════════════════════════
