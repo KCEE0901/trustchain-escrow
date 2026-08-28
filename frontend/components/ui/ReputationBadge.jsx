@@ -41,11 +41,20 @@ export default function ReputationBadge({ score, size = 'md' }) {
   };
 
   const tooltipContent = `${getTier(score)} • Score: ${score}`;
+  const handleKeyDown = (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      event.currentTarget.click?.();
+    }
+  };
 
   return (
     <Tooltip content={tooltipContent} position="top">
       <div
         className={`${sizeClass} ${color} rounded-full ring-2 flex items-center justify-center font-bold cursor-help`}
+        role="button"
+        tabIndex={0}
+        onKeyDown={handleKeyDown}
         aria-label={`Reputation: ${getTier(score)} (${score} points)`}
       >
         {score}
