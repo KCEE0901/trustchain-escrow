@@ -69,6 +69,7 @@ Thumbs.db
 coverage/
 .nyc_output/
 **/test_snapshots/
+test-artifacts/
 frontend/accessibility-reports/
 
 # ──────────────────────────────────────────────────────────────
