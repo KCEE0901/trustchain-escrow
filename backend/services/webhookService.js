@@ -71,11 +71,15 @@ async function deleteSubscription({ id, createdBy }) {
   return deleted.count > 0;
 }
 
+function subscriptionScopeWhere(subscriptionId, createdBy) {
+  return { subscription: { id: subscriptionId, createdBy } };
+}
+
 async function getDeliveryHistory({ subscriptionId, createdBy, page = 1, limit = 30 }) {
   const skip = (page - 1) * limit;
   const [deliveries, total] = await Promise.all([
     prisma.webhookDelivery.findMany({
-      where: { subscription: { id: subscriptionId, createdBy } },
+      where: subscriptionScopeWhere(subscriptionId, createdBy),
       orderBy: { createdAt: 'desc' },
       skip,
       take: limit,
@@ -91,7 +95,7 @@ async function getDeliveryHistory({ subscriptionId, createdBy, page = 1, limit =
       },
     }),
     prisma.webhookDelivery.count({
-      where: { subscription: { id: subscriptionId, createdBy } },
+      where: subscriptionScopeWhere(subscriptionId, createdBy),
     }),
   ]);
 

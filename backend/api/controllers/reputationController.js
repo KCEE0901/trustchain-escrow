@@ -111,8 +111,8 @@ const search = async (req, res) => {
  */
 const recalculate = async (req, res) => {
   try {
-    const user = req.user || req.auth || {};
-    const userRole = user.role || 'user';
+    const user = req.user ?? req.auth ?? {};
+    const userRole = user.role ?? 'user';
 
     // Admin-only check
     if (userRole !== 'admin' && userRole !== 'superadmin') {
