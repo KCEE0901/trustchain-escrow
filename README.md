@@ -273,6 +273,12 @@ Docker Compose, and the ops scripts — is catalogued in
 [docs/configuration.md](docs/configuration.md), along with defaults, startup
 validation rules, and per-environment recommendations.
 
+`backend/api/middleware/auth.js` (Bearer JWT verification) depends on
+`JWT_SECRET`, documented in `backend/.env.example` right above the other JWT
+secrets. `JWT_ALGORITHM` is a fixed constant (`HS256`) set in
+`backend/config/secrets.js`, not an environment variable, so it has no
+`.env.example` entry.
+
 ---
 
 ## API Overview
