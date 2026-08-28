@@ -10,11 +10,35 @@
 import prisma from '../lib/prisma.js';
 import { getCurrentTenantId, withTenantScopeBypassed } from '../lib/tenantContext.js';
 
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+/** API version specified for Stripe SDK requests */
+const DEFAULT_STRIPE_API_VERSION = '2024-04-10';
+
+/** Number of cents in 1 USD (used for fiat conversion) */
+const CENTS_PER_USD = 100;
+
+/** Default max number of payment records returned per query page */
+const DEFAULT_ADDRESS_PAYMENTS_LIMIT = 50;
+
+/** Default skip offset for paginated payment queries */
+const DEFAULT_ADDRESS_PAYMENTS_SKIP = 0;
+
+/** Decimal precision for formatted XLM crypto amounts */
+const XLM_DECIMAL_PRECISION = 7;
+
+/** Horizon orderbook bid query limit */
+const HORIZON_ORDERBOOK_LIMIT = 1;
+
+// ── Module State & Helper Functions ──────────────────────────────────────────
+
 let stripeClient;
 async function getStripeClient() {
   if (stripeClient) return stripeClient;
   const { default: Stripe } = await import('stripe');
-  stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2024-04-10' });
+  stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY, {
+    apiVersion: DEFAULT_STRIPE_API_VERSION,
+  });
   return stripeClient;
 }
 
@@ -26,7 +50,7 @@ const STELLAR_HORIZON = process.env.STELLAR_HORIZON_URL || 'https://horizon-test
  */
 async function getXlmUsdPrice() {
   const res = await fetch(
-    `${STELLAR_HORIZON}/order_book?selling_asset_type=native&buying_asset_type=credit_alphanum4&buying_asset_code=USDC&buying_asset_issuer=${process.env.USDC_ISSUER}&limit=1`,
+    `${STELLAR_HORIZON}/order_book?selling_asset_type=native&buying_asset_type=credit_alphanum4&buying_asset_code=USDC&buying_asset_issuer=${process.env.USDC_ISSUER}&limit=${HORIZON_ORDERBOOK_LIMIT}`,
   );
   if (!res.ok) throw new Error('Failed to fetch XLM price');
   const { bids } = await res.json();
@@ -44,7 +68,7 @@ async function getXlmUsdPrice() {
  */
 async function createCheckoutSession({ address, amountUsd, escrowId }) {
   const stripe = await getStripeClient();
-  const amountCents = Math.round(amountUsd * 100);
+  const amountCents = Math.round(amountUsd * CENTS_PER_USD);
   const tenantId = getCurrentTenantId();
 
   const session = await stripe.checkout.sessions.create({
@@ -122,7 +146,10 @@ async function getById(paymentId) {
  * Get payments for a Stellar address — paginated with a safe default limit.
  * Uses the @@index([address, createdAt(sort: Desc)]) composite index.
  */
-async function getByAddress(address, { take = 50, skip = 0 } = {}) {
+async function getByAddress(
+  address,
+  { take = DEFAULT_ADDRESS_PAYMENTS_LIMIT, skip = DEFAULT_ADDRESS_PAYMENTS_SKIP } = {},
+) {
   return prisma.payment.findMany({
     where: { address },
     orderBy: { createdAt: 'desc' },
@@ -185,8 +212,8 @@ async function handleWebhook(rawBody, signature) {
       let amountCrypto = null;
       try {
         const xlmPrice = await getXlmUsdPrice();
-        const usd = session.amount_total / 100;
-        amountCrypto = (usd / xlmPrice).toFixed(7) + ' XLM';
+        const usd = session.amount_total / CENTS_PER_USD;
+        amountCrypto = (usd / xlmPrice).toFixed(XLM_DECIMAL_PRECISION) + ' XLM';
       } catch {
         // non-fatal — conversion is informational
       }
