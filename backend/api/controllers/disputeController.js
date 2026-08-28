@@ -28,6 +28,12 @@ const VALID_SORT_ORDERS = new Set(['asc', 'desc']);
 
 const DISPUTE_MAX_LIMIT = 50;
 
+/**
+ * List disputes for the current tenant with cursor pagination and optional filters.
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @returns {Promise<import('express').Response|void>}
+ */
 const listDisputes = async (req, res) => {
   try {
     const { take, parsedCursor, sortField, sortDir } = parseCursorPagination(
@@ -122,6 +128,12 @@ const listDisputes = async (req, res) => {
   }
 };
 
+/**
+ * Fetch a single dispute by escrow id for the current tenant.
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @returns {Promise<import('express').Response|void>}
+ */
 const getDispute = async (req, res) => {
   try {
     const { escrowId } = req.params;
