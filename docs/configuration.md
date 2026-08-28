@@ -32,6 +32,7 @@ Related reading:
   - [Event indexer](#event-indexer)
   - [Webhooks](#webhooks)
   - [WebSockets](#websockets)
+  - [Server-Sent Events streaming](#server-sent-events-streaming)
   - [Rate limiting](#rate-limiting)
   - [Response caching](#response-caching)
   - [Search (Elasticsearch)](#search-elasticsearch)
@@ -368,6 +369,19 @@ Full behaviour is documented in [docs/webhooks.md](webhooks.md).
 | `WS_HEARTBEAT_INTERVAL_MS`           | `30000` | Ping interval for liveness detection.                             |
 | `WS_MAX_CONNECTIONS`                 | `100`   | Concurrent connection cap.                                        |
 | `WS_ESCROW_SUBSCRIBE_REQUIRE_PARTY`  | `false` | When `true`, only escrow participants may subscribe to that escrow's stream. Recommended in production. |
+
+### Server-Sent Events streaming
+
+Read by `backend/api/routes/streamRoutes.js`, an HTTP fallback for clients (e.g. dashboards behind proxies that strip the `Upgrade` header) that cannot use the WebSocket gateway.
+
+| Variable                       | Default | Description                                                                 |
+| ------------------------------ | ------- | ----------------------------------------------------------------------------- |
+| `STREAM_HEARTBEAT_INTERVAL_MS` | `15000` | Heartbeat comment interval, keeps the connection alive through proxies.       |
+| `STREAM_POLL_INTERVAL_MS`      | `3000`  | Poll cadence for new `ContractEvent` rows on the escrow stream.               |
+| `STREAM_MAX_CONNECTIONS`       | `200`   | Concurrent SSE connection cap, bounds DB polling load.                        |
+| `STREAM_BACKLOG_LIMIT`         | `20`    | Recent events replayed immediately on connect, before live polling begins.    |
+| `STREAM_REQUIRE_AUTH`          | `true`  | When `true`, `/api/stream/escrow/:escrowId` requires a valid session.         |
+| `STREAM_CORS_ORIGIN`           | unset   | Origin allowed to open the stream; falls back to `ALLOWED_ORIGINS`.           |
 
 ### Rate limiting
 
