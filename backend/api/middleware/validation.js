@@ -26,6 +26,7 @@ export function validate(chains) {
     }));
     return res.status(400).json({
       error: 'Validation failed',
+      message: 'Unable to process request: validation failed for one or more fields.',
       details,
     });
   };
