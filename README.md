@@ -241,6 +241,8 @@ docker compose up -d
 # Configure environment
 cp backend/.env.example backend/.env
 cp frontend/.env.example frontend/.env.local
+# Optional: NEXT_PUBLIC_XLM_RATE_* vars in frontend/.env.local configure the
+# live rate polling in frontend/hooks/useLiveXlmRate.js
 
 # Run migrations
 npm run db:migrate -w backend
