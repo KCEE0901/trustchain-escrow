@@ -200,9 +200,15 @@ export function createSlidingWindowRateLimiter({
         res.set('Retry-After', String(Math.ceil(burstWindowMs / 1000)));
         res.set('X-RateLimit-Limit', String(effectiveMax));
         res.set('X-RateLimit-Remaining', '0');
-        return res
-          .status(429)
-          .json({ error: message, code: 'RATE_LIMIT_EXCEEDED', reason: 'burst' });
+        return res.status(429).json({
+          error: message,
+          code: 'RATE_LIMIT_EXCEEDED',
+          reason: 'burst',
+          aria: {
+            label: 'Rate limit exceeded: too many requests in a short burst. Please wait before retrying.',
+            role: 'alert',
+          },
+        });
       }
       slidingStore.record(burstKey, burstWindowMs, now);
     }
@@ -219,7 +225,14 @@ export function createSlidingWindowRateLimiter({
       const retryAfterMs = oldest ? oldest + windowMs - now : windowMs;
       res.set('Retry-After', String(Math.max(1, Math.ceil(retryAfterMs / 1000))));
       res.set('X-RateLimit-Remaining', '0');
-      return res.status(429).json({ error: message, code: 'RATE_LIMIT_EXCEEDED' });
+      return res.status(429).json({
+        error: message,
+        code: 'RATE_LIMIT_EXCEEDED',
+        aria: {
+          label: `Rate limit exceeded: you have sent too many requests. Please wait and try again. Limit resets in the next window.`,
+          role: 'alert',
+        },
+      });
     }
 
     slidingStore.record(key, windowMs, now);

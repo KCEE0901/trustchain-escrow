@@ -94,4 +94,18 @@ router.get(
   escrowController.getEscrow,
 );
 
+// Route-level error handler — catches any error thrown by middleware or controllers
+// on this router and returns a structured response with context.
+router.use((err, req, res, next) => {
+  const route = `${req.method} ${req.path}`;
+  const status = err.status ?? err.statusCode ?? 500;
+  const message = err.message || 'An unexpected error occurred';
+  console.error(`[escrowRoutes] Error on ${route}:`, err);
+  res.status(status).json({
+    error: `Escrow route error on ${route}: ${message}`,
+    code: err.code ?? 'ESCROW_ROUTE_ERROR',
+    ...(err.details ? { details: err.details } : {}),
+  });
+});
+
 export default router;

@@ -5,7 +5,7 @@
  * Links to the full Escrow Details page.
  *
  * @param {object} props
- * @param {object} props.escrow
+ * @param {object} [props.escrow]
  * @param {number}  props.escrow.id
  * @param {string}  props.escrow.title
  * @param {string}  props.escrow.status         — EscrowStatus
@@ -15,14 +15,14 @@
  * @param {'client'|'freelancer'} props.escrow.role
  * @param {string}  [props.escrow.transactionHash]
  * @param {string|number} [props.escrow.deadline] — ISO date or timestamp
+ * @param {boolean} [props.isLoading]
  */
 
+import { useRef } from 'react';
 import Link from 'next/link';
-import { AlertTriangle, Clock } from 'lucide-react';
+import { AlertTriangle, Clock, FolderOpen } from 'lucide-react';
 import Badge from '../ui/Badge';
 import CurrencyAmount from '../ui/CurrencyAmount';
-// CopyButton is a named export, not a default one — importing it as default
-// made this component crash whenever an escrow had a transaction hash.
 import { CopyButton } from '../ui/CopyButton';
 import EscrowCardSkeleton from '../ui/EscrowCardSkeleton';
 import { useI18n } from '../../i18n/index.jsx';
@@ -38,9 +38,40 @@ function getTimeRemaining(deadline) {
   return `${hours} hour${hours === 1 ? '' : 's'} left`;
 }
 
+// ── Empty state ───────────────────────────────────────────────────────────────
+
+function EscrowCardEmpty() {
+  return (
+    <div
+      className="card flex flex-col items-center justify-center py-10 text-center"
+      aria-label="No escrow data"
+    >
+      <FolderOpen
+        size={40}
+        className="text-gray-300 dark:text-gray-600 mb-3"
+        aria-hidden="true"
+      />
+      <p className="text-gray-500 dark:text-gray-400 font-medium mb-1">
+        No escrow found
+      </p>
+      <p className="text-sm text-gray-400 dark:text-gray-500">
+        This escrow may have been removed or is not yet available.
+      </p>
+    </div>
+  );
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
+
 export default function EscrowCard({ escrow, isLoading = false }) {
   const { t } = useI18n();
+  const cardRef = useRef(null);
+
   if (isLoading) return <EscrowCardSkeleton />;
+
+  // Empty state — no data provided
+  if (!escrow) return <EscrowCardEmpty />;
+
   const {
     id,
     title,
@@ -59,14 +90,13 @@ export default function EscrowCard({ escrow, isLoading = false }) {
   const remaining = getTimeRemaining(deadline);
 
   const handleKeyDown = (event) => {
-    // Activate on Enter or Space key
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
       cardRef.current?.click();
     }
   };
 
-  const stopLinkNavigation = (event) => event.preventDefault();
+  const stopLinkNavigation = (event) => event.stopPropagation();
 
   return (
     <Link
@@ -106,7 +136,7 @@ export default function EscrowCard({ escrow, isLoading = false }) {
         <Badge status={status} size="sm" />
       </div>
 
-      {/* Amount — converted to user's selected currency */}
+      {/* Amount */}
       <CurrencyAmount amount={totalAmount} showUsdc size="md" className="mb-3" />
 
       {/* Milestone Progress Bar */}
@@ -169,6 +199,6 @@ export default function EscrowCard({ escrow, isLoading = false }) {
           You are {role === 'client' ? t('escrow.fields.client') : t('escrow.fields.freelancer')}
         </span>
       </div>
-    </article>
+    </Link>
   );
 }
