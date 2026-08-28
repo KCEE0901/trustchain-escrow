@@ -21,3 +21,13 @@ export default function NotificationBell({ isLoading = false }) {
     </button>
   );
 }
+
+/**
+ * Resolve the bell label shown to assistive technology.
+ *
+ * @param {{ unreadCount?: number }} props
+ * @returns {string}
+ */
+export function getNotificationBellLabel({ unreadCount = 0 } = {}) {
+  return unreadCount > 0 ? `Open notifications (${unreadCount} unread)` : 'Open notifications';
+}
