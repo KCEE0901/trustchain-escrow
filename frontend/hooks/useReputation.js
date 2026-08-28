@@ -44,11 +44,13 @@ export function getBadgeFromScore(score) {
  * TODO (contributor — Issue #39): replace stub with SWR fetch
  */
 export function useReputation(address) {
-  // TODO: implement
+  const errorMessage = address
+    ? 'Unable to load reputation: reputation lookup is not implemented yet'
+    : null;
   return {
     reputation: null,
     badge: 'NEW',
     isLoading: false,
-    error: address ? new Error('useReputation not implemented — see Issue #39') : null,
+    error: errorMessage ? new Error(errorMessage) : null,
   };
 }
