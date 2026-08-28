@@ -4,6 +4,11 @@ import kycService from '../../services/kycService.js';
 import { getAuthenticatedWalletAddress } from '../middleware/authorization.js';
 
 const STELLAR_ADDRESS_RE = /^G[A-Z2-7]{55}$/;
+const PAYMENT_EMPTY_STATE = {
+  title: 'No payments found',
+  description: 'This wallet has no payment history yet.',
+  action: 'Create a checkout session or widen the selected wallet context.',
+};
 
 function requireOwnedWallet(req, res) {
   const walletAddress = getAuthenticatedWalletAddress(req);
@@ -82,7 +87,7 @@ const listByAddress = async (req, res) => {
         .json({ error: 'Forbidden: cannot access another wallet payment history.' });
     }
     const payments = await paymentService.getByAddress(address);
-    res.json(payments);
+    res.json(payments.length === 0 ? { data: payments, emptyState: PAYMENT_EMPTY_STATE } : payments);
   } catch (err) {
     logControllerError('payment.listByAddress', err, req);
     res.status(500).json({ error: err.message });
