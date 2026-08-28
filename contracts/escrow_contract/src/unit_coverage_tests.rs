@@ -229,6 +229,14 @@ mod unit_coverage_tests {
     }
 
     #[test]
+    #[should_panic]
+    fn test_get_escrow_panics_for_missing_id() {
+        let t = setup();
+        let missing_id = 999_u64;
+        let _ = t.client.get_escrow(&missing_id);
+    }
+
+    #[test]
     fn test_create_escrow_with_arbiter_same_as_client_rejected() {
         let t = setup();
         let client_addr = Address::generate(&t.env);
