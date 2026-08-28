@@ -11,10 +11,13 @@ import { auditTransitionMiddleware } from '../../services/escrowAuditService.js'
 const router = express.Router();
 router.use(authMiddleware);
 
-// Stricter rate limit for batch endpoints — 10 requests per minute per user
+// Stricter rate limit for batch endpoints — 10 requests per minute per user.
+const BATCH_ROUTE_WINDOW_MS = 60_000;
+// Batch release/status should stay narrow to avoid hammering escrow RPC reads.
+const BATCH_ROUTE_MAX_REQUESTS = 10;
 const batchRateLimit = createSlidingWindowRateLimiter({
-  windowMs: 60_000,
-  max: 10,
+  windowMs: BATCH_ROUTE_WINDOW_MS,
+  max: BATCH_ROUTE_MAX_REQUESTS,
   prefix: 'batch-escrow',
   message: 'Too many batch requests. Please wait before retrying.',
 });
