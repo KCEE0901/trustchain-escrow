@@ -15,21 +15,43 @@ function requireOwnedWallet(req, res) {
   return walletAddress;
 }
 
+/**
+ * Shared validation used by every handler that takes a Stellar `address` and
+ * must confirm it (a) is well-formed and (b) belongs to the authenticated
+ * caller. Centralizing this avoids the format/ownership checks drifting out
+ * of sync across handlers.
+ *
+ * On failure this writes the appropriate 400/403 response itself and
+ * returns null; callers should `return` immediately when that happens.
+ *
+ * @param {object} req - Express request.
+ * @param {object} res - Express response.
+ * @param {string} address - Stellar address supplied by the caller (params or body).
+ * @returns {string|null} The validated wallet address, or null if a response was already sent.
+ */
+function requireOwnedAddress(req, res, address) {
+  const walletAddress = requireOwnedWallet(req, res);
+  if (!walletAddress) return null;
+
+  if (!address || !STELLAR_ADDRESS_RE.test(address)) {
+    res.status(400).json({ error: 'Valid Stellar address required' });
+    return null;
+  }
+  if (address !== walletAddress) {
+    res.status(403).json({ error: 'Forbidden: cannot access another wallet.' });
+    return null;
+  }
+
+  return walletAddress;
+}
+
 /** POST /api/payments/checkout — create a Stripe checkout session. */
 const createCheckout = async (req, res) => {
   try {
     const { address, amountUsd, escrowId } = req.body;
-    const walletAddress = requireOwnedWallet(req, res);
+    const walletAddress = requireOwnedAddress(req, res, address);
     if (!walletAddress) return;
 
-    if (!address || !STELLAR_ADDRESS_RE.test(address)) {
-      return res.status(400).json({ error: 'Valid Stellar address required' });
-    }
-    if (address !== walletAddress) {
-      return res
-        .status(403)
-        .json({ error: 'Forbidden: cannot create checkout for another wallet.' });
-    }
     if (!amountUsd || typeof amountUsd !== 'number' || amountUsd <= 0) {
       return res.status(400).json({ error: 'amountUsd must be a positive number' });
     }
@@ -70,17 +92,9 @@ const getStatus = async (req, res) => {
 const listByAddress = async (req, res) => {
   try {
     const { address } = req.params;
-    const walletAddress = requireOwnedWallet(req, res);
+    const walletAddress = requireOwnedAddress(req, res, address);
     if (!walletAddress) return;
 
-    if (!STELLAR_ADDRESS_RE.test(address)) {
-      return res.status(400).json({ error: 'Invalid Stellar address' });
-    }
-    if (address !== walletAddress) {
-      return res
-        .status(403)
-        .json({ error: 'Forbidden: cannot access another wallet payment history.' });
-    }
     const payments = await paymentService.getByAddress(address);
     res.json(payments);
   } catch (err) {
