@@ -17,6 +17,14 @@ import { dbConnectionsTotal } from '../lib/metrics.js';
 
 const RELAYER_FEE_BUFFER = 1000; // Additional stroops for fee estimation buffer
 
+// Ed25519 signatures are 64 bytes; hex-encoded that's 128 characters. Used to
+// reject malformed meta-transaction signatures before submission.
+const ED25519_SIGNATURE_HEX_LENGTH = 128;
+
+// Seconds a built transaction remains valid before the network rejects it as
+// expired. Kept short so a stale meta-transaction can't be replayed later.
+const TRANSACTION_TIMEOUT_SECONDS = 30;
+
 /**
  * Relayer service for executing meta-transactions
  */
@@ -92,7 +100,7 @@ export class TransactionRelayer {
     }
 
     // Validate signature format (64 bytes for Ed25519)
-    if (metaTx.signature.length !== 128) {
+    if (metaTx.signature.length !== ED25519_SIGNATURE_HEX_LENGTH) {
       // Hex encoded
       throw new Error('Invalid signature format');
     }
@@ -172,7 +180,7 @@ export class TransactionRelayer {
     );
 
     // Set timeout and build
-    return transaction.setTimeout(30).build();
+    return transaction.setTimeout(TRANSACTION_TIMEOUT_SECONDS).build();
   }
 
   /**
