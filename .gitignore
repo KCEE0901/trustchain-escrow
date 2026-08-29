@@ -69,7 +69,14 @@ Thumbs.db
 coverage/
 .nyc_output/
 **/test_snapshots/
+**/__snapshots__/
+*.snap
 frontend/accessibility-reports/
+test-results/
+playwright-report/
+.playwright/
+jest_cache/
+.jest-cache/
 
 # ──────────────────────────────────────────────────────────────
 # Prisma generated
