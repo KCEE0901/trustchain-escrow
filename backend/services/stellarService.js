@@ -24,15 +24,31 @@ const getServer = () =>
  *
  * @param {string} signedXdr — base64-encoded signed Stellar transaction
  * @returns {Promise<{ hash: string, status: string, errorResultXdr?: string }>}
+ * @throws {Error} with a descriptive message when submission or deserialization fails
  */
 const submitTransaction = async (signedXdr) => {
   return withSpan(
     'stellarService.submitTransaction',
     { 'stellar.network': NETWORK },
     async (span) => {
-      const server = getServer();
-      const tx = new Transaction(signedXdr, NETWORK_PASSPHRASE);
-      const sendResult = await server.sendTransaction(tx);
+      let tx;
+      try {
+        tx = new Transaction(signedXdr, NETWORK_PASSPHRASE);
+      } catch (err) {
+        throw new Error(
+          `stellarService.submitTransaction: failed to deserialize signed XDR — ${err.message}`,
+        );
+      }
+
+      let sendResult;
+      try {
+        const server = getServer();
+        sendResult = await server.sendTransaction(tx);
+      } catch (err) {
+        throw new Error(
+          `stellarService.submitTransaction: RPC request to ${RPC_URL} failed — ${err.message}`,
+        );
+      }
 
       span.setAttribute('stellar.tx.hash', sendResult.hash);
 
@@ -42,13 +58,24 @@ const submitTransaction = async (signedXdr) => {
           hash: sendResult.hash,
           status: 'FAILED',
           errorResultXdr: sendResult.errorResultXdr,
+          message: `Transaction rejected by the Stellar network (hash: ${sendResult.hash}). ` +
+            `Check errorResultXdr for the specific failure code.`,
         };
       }
 
       const hash = sendResult.hash;
+      const server = getServer();
       for (let i = 0; i < 30; i++) {
         await new Promise((r) => setTimeout(r, 2000));
-        const result = await server.getTransaction(hash);
+        let result;
+        try {
+          result = await server.getTransaction(hash);
+        } catch (err) {
+          throw new Error(
+            `stellarService.submitTransaction: failed to poll transaction status for hash ${hash} ` +
+              `(attempt ${i + 1}/30) — ${err.message}`,
+          );
+        }
         if (result.status !== 'NOT_FOUND') {
           const status = result.status === 'SUCCESS' ? 'SUCCESS' : 'FAILED';
           span.setAttribute('stellar.tx.status', status);
@@ -58,7 +85,12 @@ const submitTransaction = async (signedXdr) => {
       }
 
       span.setAttribute('stellar.tx.status', 'TIMEOUT');
-      return { hash, status: 'TIMEOUT' };
+      return {
+        hash,
+        status: 'TIMEOUT',
+        message: `Transaction ${hash} was submitted but did not reach a final state after 30 polling attempts (60 s). ` +
+          `It may still be included in a future ledger — check the Stellar network directly using the hash.`,
+      };
     },
   );
 };
@@ -69,6 +101,7 @@ const submitTransaction = async (signedXdr) => {
  * @param {number} startLedger — start scanning from this ledger sequence
  * @param {string} contractId  — the escrow contract address
  * @returns {Promise<Array>} array of raw Soroban event objects
+ * @throws {Error} with a descriptive message when the RPC call fails
  */
 const getContractEvents = async (startLedger, contractId) => {
   return withSpan(
@@ -79,10 +112,18 @@ const getContractEvents = async (startLedger, contractId) => {
     },
     async (span) => {
       const server = getServer();
-      const response = await server.getEvents({
-        startLedger,
-        filters: [{ type: 'contract', contractIds: [contractId] }],
-      });
+      let response;
+      try {
+        response = await server.getEvents({
+          startLedger,
+          filters: [{ type: 'contract', contractIds: [contractId] }],
+        });
+      } catch (err) {
+        throw new Error(
+          `stellarService.getContractEvents: failed to fetch events for contract ${contractId} ` +
+            `starting at ledger ${startLedger} from ${RPC_URL} — ${err.message}`,
+        );
+      }
       const events = response.events ?? [];
       span.setAttribute('stellar.events.count', events.length);
       return events;
@@ -94,11 +135,19 @@ const getContractEvents = async (startLedger, contractId) => {
  * Gets the current ledger sequence number.
  *
  * @returns {Promise<number>}
+ * @throws {Error} with a descriptive message when the RPC call fails
  */
 const getLatestLedger = async () => {
   return withSpan('stellarService.getLatestLedger', {}, async (span) => {
     const server = getServer();
-    const health = await server.getLatestLedger();
+    let health;
+    try {
+      health = await server.getLatestLedger();
+    } catch (err) {
+      throw new Error(
+        `stellarService.getLatestLedger: failed to retrieve latest ledger from ${RPC_URL} — ${err.message}`,
+      );
+    }
     span.setAttribute('stellar.latest_ledger', health.sequence);
     return health.sequence;
   });
