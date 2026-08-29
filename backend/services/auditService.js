@@ -16,6 +16,23 @@ const auditLogger = createModuleLogger('auditService');
 
 // ── Categories & Actions ──────────────────────────────────────────────────────
 
+/**
+ * @typedef {object} AuditLogEntry
+ * @property {string} id
+ * @property {string} category - one of {@link AuditCategory}
+ * @property {string} action - one of {@link AuditAction}
+ * @property {string} actor - Stellar address, "admin", or "system"
+ * @property {string|null} resourceId
+ * @property {object|null} metadata
+ * @property {number|null} statusCode
+ * @property {string|null} ipAddress
+ * @property {Date} createdAt
+ */
+
+/**
+ * Enumeration of top-level audit log categories used to group related actions.
+ * @type {Record<string, string>}
+ */
 export const AuditCategory = {
   AUTH: 'AUTH',
   ESCROW: 'ESCROW',
@@ -27,6 +44,10 @@ export const AuditCategory = {
   REPORTING: 'REPORTING',
 };
 
+/**
+ * Enumeration of specific audit actions recorded across all categories.
+ * @type {Record<string, string>}
+ */
 export const AuditAction = {
   // Auth
   LOGIN: 'LOGIN',
@@ -83,6 +104,7 @@ export const AuditAction = {
  * @param {object} [entry.metadata]
  * @param {number} [entry.statusCode]
  * @param {string} [entry.ipAddress]
+ * @returns {Promise<void>} resolves once the write attempt completes (success or logged failure)
  */
 export async function log(entry) {
   try {
@@ -120,6 +142,15 @@ export async function log(entry) {
 /**
  * Builds a Prisma `where` clause from the standard audit log filter shape.
  * Reused by search() and exportCsv() to avoid logic drift.
+ *
+ * @param {object} [filters]
+ * @param {string} [filters.category]
+ * @param {string} [filters.action]
+ * @param {string} [filters.actor]
+ * @param {string} [filters.resourceId]
+ * @param {string} [filters.from] - ISO date string
+ * @param {string} [filters.to] - ISO date string
+ * @returns {object} Prisma-compatible where clause
  */
 function buildWhereClause({ category, action, actor, resourceId, from, to } = {}) {
   const where = {};
@@ -149,7 +180,7 @@ function buildWhereClause({ category, action, actor, resourceId, from, to } = {}
  * @param {string}  [filters.to]     - ISO date string
  * @param {number}  [filters.page=1]
  * @param {number}  [filters.limit=50]
- * @returns {{ data: AuditLog[], total: number, page: number, limit: number, pages: number }}
+ * @returns {Promise<{ data: AuditLogEntry[], total: number, page: number, limit: number, pages: number }>}
  */
 export async function search(filters = {}) {
   const page = Math.max(1, parseInt(filters.page) || 1);
@@ -189,7 +220,7 @@ const CSV_COLUMNS = [
  * Capped at 10 000 rows to prevent memory exhaustion.
  *
  * @param {object} filters - same shape as search() filters (page/limit ignored)
- * @returns {string} CSV content
+ * @returns {Promise<string>} CSV content
  */
 export async function exportCsv(filters = {}) {
   const where = buildWhereClause(filters);
@@ -220,7 +251,7 @@ export async function exportCsv(filters = {}) {
  * Intended to be called by a scheduled job (e.g. cron).
  *
  * @param {number} retentionDays
- * @returns {number} count of deleted records
+ * @returns {Promise<number>} count of deleted records
  */
 export async function purgeOldRecords(retentionDays) {
   const cutoff = new Date();
@@ -233,4 +264,9 @@ export async function purgeOldRecords(retentionDays) {
   return count;
 }
 
+/**
+ * Default export bundling all audit service functions and enums for
+ * consumers that prefer a single namespaced import.
+ * @type {{ log: log, search: search, exportCsv: exportCsv, purgeOldRecords: purgeOldRecords, AuditCategory: object, AuditAction: object }}
+ */
 export default { log, search, exportCsv, purgeOldRecords, AuditCategory, AuditAction };
