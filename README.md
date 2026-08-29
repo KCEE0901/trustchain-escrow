@@ -241,6 +241,8 @@ docker compose up -d
 # Configure environment
 cp backend/.env.example backend/.env
 cp frontend/.env.example frontend/.env.local
+# See backend/.env.example for audit service settings
+# (AUDIT_EXPORT_ROW_LIMIT, AUDIT_RETENTION_DAYS, AUDIT_REDACT_ACTOR_IN_EXPORT)
 
 # Run migrations
 npm run db:migrate -w backend

@@ -14,6 +14,18 @@ import { withSpan } from '../lib/tracing.js';
 
 const auditLogger = createModuleLogger('auditService');
 
+// Maximum rows returned by exportCsv(); overridable for environments with
+// tighter memory constraints. See .env.example for details.
+const EXPORT_ROW_LIMIT = parseInt(process.env.AUDIT_EXPORT_ROW_LIMIT, 10) || 10_000;
+
+// Default retention window (days) used when purgeOldRecords() is called
+// without an explicit argument, e.g. from the scheduled cron job.
+const DEFAULT_RETENTION_DAYS = parseInt(process.env.AUDIT_RETENTION_DAYS, 10) || 365;
+
+// Set to 'true' to redact the `actor` field in exported CSVs (useful when
+// exports are shared outside the org and actor identity must stay internal).
+const REDACT_ACTOR_IN_EXPORT = process.env.AUDIT_REDACT_ACTOR_IN_EXPORT === 'true';
+
 // ── Categories & Actions ──────────────────────────────────────────────────────
 
 export const AuditCategory = {
@@ -196,7 +208,7 @@ export async function exportCsv(filters = {}) {
 
   const rows = await prisma.auditLog.findMany({
     where,
-    take: 10_000,
+    take: EXPORT_ROW_LIMIT,
     orderBy: { createdAt: 'desc' },
     select: {
       id: true,
@@ -210,7 +222,11 @@ export async function exportCsv(filters = {}) {
     },
   });
 
-  return stringify(rows, { header: true, columns: CSV_COLUMNS });
+  const output = REDACT_ACTOR_IN_EXPORT
+    ? rows.map((row) => ({ ...row, actor: '[redacted]' }))
+    : rows;
+
+  return stringify(output, { header: true, columns: CSV_COLUMNS });
 }
 
 // ── Retention ─────────────────────────────────────────────────────────────────
@@ -219,10 +235,11 @@ export async function exportCsv(filters = {}) {
  * Delete audit records older than `retentionDays` days.
  * Intended to be called by a scheduled job (e.g. cron).
  *
- * @param {number} retentionDays
+ * @param {number} [retentionDays=DEFAULT_RETENTION_DAYS] - falls back to
+ *   AUDIT_RETENTION_DAYS (see .env.example) when not provided
  * @returns {number} count of deleted records
  */
-export async function purgeOldRecords(retentionDays) {
+export async function purgeOldRecords(retentionDays = DEFAULT_RETENTION_DAYS) {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - retentionDays);
 
