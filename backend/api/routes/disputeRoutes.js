@@ -14,6 +14,26 @@ import {
 const router = express.Router();
 router.use(authMiddleware);
 
+// ── Shared guard: require a non-empty :id param ───────────────────────────────
+//
+// Standardised null/undefined check: all param presence guards in this file
+// use `=== null || === undefined` (or its shorthand `=== null`/`=== undefined`)
+// exclusively — never `== null`, `!value`, or truthy checks — so the behaviour
+// is predictable for values such as `0` or `""`.
+//
+function requireId(paramName = 'id') {
+  return (req, res, next) => {
+    const value = req.params[paramName];
+    if (value === null || value === undefined || value === '') {
+      return res.status(400).json({
+        error: 'Validation failed',
+        details: [{ field: paramName, message: `${paramName} param is required`, location: 'params' }],
+      });
+    }
+    return next();
+  };
+}
+
 // ── List / Get ────────────────────────────────────────────────────────────────
 
 router.get(
@@ -43,6 +63,7 @@ router.get(
 
 router.post(
   '/:id/evidence',
+  requireId('id'),
   invalidateOn({ tags: (req) => [`dispute:${req.params.id}`, 'disputes'] }),
   disputeController.uploadEvidence,
   disputeController.postEvidence,
@@ -51,6 +72,7 @@ router.post(
 
 router.get(
   '/:id/evidence',
+  requireId('id'),
   cacheResponse({
     ttl: TTL.DETAIL,
     tags: (req) => [`dispute:${req.params.id}`],
@@ -62,6 +84,7 @@ router.get(
 
 router.post(
   '/:id/resolve/auto',
+  requireId('id'),
   invalidateOn({
     tags: (req) => [`dispute:${req.params.id}`, `escrow:${req.params.id}`, 'disputes', 'escrows'],
   }),
@@ -70,6 +93,7 @@ router.post(
 
 router.get(
   '/:id/resolve/recommendation',
+  requireId('id'),
   cacheResponse({
     ttl: TTL.DETAIL,
     tags: (req) => [`dispute:${req.params.id}`],
@@ -86,6 +110,7 @@ router.get(
  */
 router.post(
   '/:id/resolve',
+  requireId('id'),
   checkPermission(ROLES.ARBITRATOR, 'resolve_dispute'),
   requireMfa,
   invalidateOn({
@@ -98,12 +123,14 @@ router.post(
 
 router.post(
   '/:id/appeals',
+  requireId('id'),
   invalidateOn({ tags: (req) => [`dispute:${req.params.id}`, 'disputes'] }),
   disputeController.postAppeal,
 );
 
 router.patch(
   '/appeals/:appealId',
+  requireId('appealId'),
   requireMfa,
   invalidateOn({ tags: ['disputes'] }),
   disputeController.patchAppeal,

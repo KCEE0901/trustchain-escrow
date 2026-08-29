@@ -71,6 +71,15 @@ coverage/
 **/test_snapshots/
 frontend/accessibility-reports/
 
+# Jest snapshot files generated during test runs
+**/__snapshots__/
+# Test artifact output directories
+test-artifacts/
+# Playwright test results / traces / screenshots
+playwright-report/
+test-results/
+**/.playwright/
+
 # ──────────────────────────────────────────────────────────────
 # Prisma generated
 # ──────────────────────────────────────────────────────────────
@@ -133,3 +142,21 @@ update-issues-drips.js
 update_all_drips_issues.sh
 /pr_body.md
 /pr_body.txt
+
+# ──────────────────────────────────────────────────────────────
+# Storybook build output
+# ──────────────────────────────────────────────────────────────
+storybook-static/
+
+# ──────────────────────────────────────────────────────────────
+# Temporary / editor swap files
+# ──────────────────────────────────────────────────────────────
+*.tmp
+*.bak
+*.backup
+
+# ──────────────────────────────────────────────────────────────
+# PR description temp files
+# ──────────────────────────────────────────────────────────────
+/pr_description_*.md
+REPUTATION_WRITE_IMPLEMENTATION.md

@@ -2,6 +2,24 @@
  * ReputationBadge Component
  *
  * Displays a numerical reputation score with a color-coded ring and hover tooltip.
+ * Score data is fetched from the backend API and, optionally, verified directly
+ * against the Soroban reputation contract on the configured Stellar network.
+ *
+ * ## Environment variables (set in `frontend/.env.local`)
+ *
+ * | Variable                        | Required | Description                                                        |
+ * |---------------------------------|----------|--------------------------------------------------------------------|
+ * | `NEXT_PUBLIC_API_URL`           | yes      | Backend REST API base URL (e.g. `http://localhost:4000`).         |
+ * |                                 |          | Used by API clients that supply the `score` prop to this component.|
+ * | `NEXT_PUBLIC_STELLAR_NETWORK`   | yes      | Stellar network: `"testnet"` or `"mainnet"`.                      |
+ * |                                 |          | Determines the network passphrase when resolving on-chain scores.  |
+ * | `NEXT_PUBLIC_SOROBAN_RPC_URL`   | yes      | Soroban RPC endpoint for querying reputation contract state.       |
+ * |                                 |          | Testnet default: `https://soroban-testnet.stellar.org`.            |
+ * | `NEXT_PUBLIC_CONTRACT_ADDRESS`  | yes      | Deployed escrow/reputation contract address on the chosen network. |
+ *
+ * All four variables are declared with example values in `frontend/.env.example`.
+ * Copy that file to `frontend/.env.local` and fill in your values before running
+ * the development server.
  *
  * @param {object} props
  * @param {number} props.score  — 0–1000+
