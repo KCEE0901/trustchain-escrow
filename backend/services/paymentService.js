@@ -21,6 +21,17 @@ async function getStripeClient() {
 const STELLAR_HORIZON = process.env.STELLAR_HORIZON_URL || 'https://horizon-testnet.stellar.org';
 
 /**
+ * Standard null/undefined presence check used throughout this module.
+ * Prefer this over `== null`, `!== undefined`, or truthy checks so that
+ * falsy-but-valid values (0, '', false) are never mistaken for "absent".
+ * @param {*} value
+ * @returns {boolean}
+ */
+function isPresent(value) {
+  return value !== null && value !== undefined;
+}
+
+/**
  * Fetch the current XLM/USD price from Stellar DEX via Horizon.
  * Returns price as a float (USD per 1 XLM).
  */
@@ -30,7 +41,7 @@ async function getXlmUsdPrice() {
   );
   if (!res.ok) throw new Error('Failed to fetch XLM price');
   const { bids } = await res.json();
-  if (!bids?.length) throw new Error('No bids in order book');
+  if (!isPresent(bids) || bids.length === 0) throw new Error('No bids in order book');
   return parseFloat(bids[0].price);
 }
 
@@ -65,8 +76,8 @@ async function createCheckoutSession({ address, amountUsd, escrowId }) {
     ],
     metadata: {
       address,
-      escrowId: escrowId?.toString() ?? '',
-      tenantId: tenantId ?? '',
+      escrowId: isPresent(escrowId) ? escrowId.toString() : '',
+      tenantId: isPresent(tenantId) ? tenantId : '',
     },
     success_url: `${process.env.FRONTEND_URL}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${process.env.FRONTEND_URL}/payment/cancel`,
@@ -75,7 +86,7 @@ async function createCheckoutSession({ address, amountUsd, escrowId }) {
   const payment = await prisma.payment.create({
     data: {
       address,
-      escrowId: escrowId ? BigInt(escrowId) : null,
+      escrowId: isPresent(escrowId) ? BigInt(escrowId) : null,
       stripeSessionId: session.id,
       amountFiat: amountCents,
       status: 'Pending',
@@ -180,7 +191,9 @@ async function handleWebhook(rawBody, signature) {
   switch (event.type) {
     case 'checkout.session.completed': {
       const session = event.data.object;
-      const tenantId = session.metadata?.tenantId || getCurrentTenantId();
+      const tenantId = isPresent(session.metadata?.tenantId)
+        ? session.metadata.tenantId
+        : getCurrentTenantId();
       // Compute crypto equivalent
       let amountCrypto = null;
       try {
@@ -193,7 +206,7 @@ async function handleWebhook(rawBody, signature) {
 
       const where = {
         stripeSessionId: session.id,
-        ...(tenantId ? { tenantId } : {}),
+        ...(isPresent(tenantId) ? { tenantId } : {}),
       };
 
       await withTenantScopeBypassed(() =>
@@ -213,11 +226,13 @@ async function handleWebhook(rawBody, signature) {
     case 'checkout.session.expired':
     case 'payment_intent.payment_failed': {
       const obj = event.data.object;
-      const tenantId = obj.metadata?.tenantId || getCurrentTenantId();
+      const tenantId = isPresent(obj.metadata?.tenantId)
+        ? obj.metadata.tenantId
+        : getCurrentTenantId();
       const where =
         obj.object === 'checkout.session'
-          ? { stripeSessionId: obj.id, ...(tenantId ? { tenantId } : {}) }
-          : { stripePaymentIntent: obj.id, ...(tenantId ? { tenantId } : {}) };
+          ? { stripeSessionId: obj.id, ...(isPresent(tenantId) ? { tenantId } : {}) }
+          : { stripePaymentIntent: obj.id, ...(isPresent(tenantId) ? { tenantId } : {}) };
       return withTenantScopeBypassed(() =>
         prisma.payment.updateMany({ where, data: { status: 'Failed' } }),
       );
@@ -225,7 +240,7 @@ async function handleWebhook(rawBody, signature) {
 
     case 'charge.refunded': {
       const refundId = event.data.object.refunds?.data?.[0]?.id;
-      if (refundId) {
+      if (isPresent(refundId)) {
         return withTenantScopeBypassed(() =>
           prisma.payment.updateMany({
             where: { refundId },
