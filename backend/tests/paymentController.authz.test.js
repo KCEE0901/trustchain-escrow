@@ -110,4 +110,37 @@ describe('paymentController authorization', () => {
     expect(res.status).toHaveBeenCalledWith(404);
     expect(paymentServiceMock.refund).not.toHaveBeenCalled();
   });
+
+  it('processes keyboard navigation commands (Enter, Escape, Tab)', () => {
+    expect(paymentController.processKeyboardCommand('Enter', { payload: 'submitData' })).toEqual({
+      handled: true,
+      actionType: 'submit',
+      result: 'submitData',
+    });
+
+    expect(paymentController.processKeyboardCommand('Escape')).toEqual({
+      handled: true,
+      actionType: 'cancel',
+      result: null,
+    });
+
+    expect(paymentController.processKeyboardCommand('Tab', { shiftKey: true })).toEqual({
+      handled: true,
+      actionType: 'nextFocus',
+      result: { shiftKey: true },
+    });
+  });
+
+  it('handles keyboard endpoint requests in handleKeyPress', async () => {
+    const req = { body: { key: 'Enter', actionContext: { payload: 'test' } } };
+    const res = createMockRes();
+
+    await paymentController.handleKeyPress(req, res);
+
+    expect(res.json).toHaveBeenCalledWith({
+      handled: true,
+      actionType: 'submit',
+      result: 'test',
+    });
+  });
 });
