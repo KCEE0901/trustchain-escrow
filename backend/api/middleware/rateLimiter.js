@@ -109,6 +109,25 @@ class SlidingWindowStore {
 // Module-level shared store (single instance per process).
 const slidingStore = new SlidingWindowStore();
 
+// ── Shared key generation ─────────────────────────────────────────────────────
+
+/**
+ * Build the default rate-limit key generator for a given prefix.
+ * Resolves, in order: authenticated user id, `x-user-id` header, client IP.
+ * Shared by createSlidingWindowRateLimiter and createPerUserRateLimiter so
+ * the key-formatting rules can't drift between the two factories.
+ *
+ * @param {string} prefix - key namespace, e.g. 'sliding' or 'api'
+ * @returns {(req: import('express').Request) => string}
+ */
+function buildDefaultKeyGenerator(prefix) {
+  return (req) => {
+    if (req.user?.id) return `${prefix}:user:${req.user.id}`;
+    if (req.headers['x-user-id']) return `${prefix}:user:${req.headers['x-user-id']}`;
+    return `${prefix}:ip:${req.ip || 'unknown'}`;
+  };
+}
+
 // ── Adaptive load tracking ────────────────────────────────────────────────────
 
 let _adaptiveErrorRate = 0;
@@ -180,12 +199,7 @@ export function createSlidingWindowRateLimiter({
   message = 'Too many requests, please try again later.',
   keyGenerator,
 } = {}) {
-  const defaultKeyGen = (req) => {
-    if (req.user?.id) return `${prefix}:user:${req.user.id}`;
-    if (req.headers['x-user-id']) return `${prefix}:user:${req.headers['x-user-id']}`;
-    return `${prefix}:ip:${req.ip || 'unknown'}`;
-  };
-  const getKey = keyGenerator || defaultKeyGen;
+  const getKey = keyGenerator || buildDefaultKeyGenerator(prefix);
 
   return (req, res, next) => {
     const now = Date.now();
@@ -247,11 +261,7 @@ export function createPerUserRateLimiter({
   max: maxOverride,
   adaptive = false,
 } = {}) {
-  const keyGenerator = (req) => {
-    if (req.user?.id) return `${prefix}:user:${req.user.id}`;
-    if (req.headers['x-user-id']) return `${prefix}:user:${req.headers['x-user-id']}`;
-    return `${prefix}:ip:${req.ip || 'unknown'}`;
-  };
+  const keyGenerator = buildDefaultKeyGenerator(prefix);
 
   // Static limiter (fixed max, no burst) — used mainly for testing
   if (maxOverride !== undefined) {
