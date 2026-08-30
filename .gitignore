@@ -69,6 +69,11 @@ Thumbs.db
 coverage/
 .nyc_output/
 **/test_snapshots/
+# Jest inline / toMatchSnapshot snapshots
+**/__snapshots__/
+# Playwright test artifacts
+test-results/
+playwright-report/
 frontend/accessibility-reports/
 
 # ──────────────────────────────────────────────────────────────
