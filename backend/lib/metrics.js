@@ -153,6 +153,32 @@ export const activeEscrowsGauge = new client.Gauge({
   registers: [register],
 });
 
+// ── Indexer Lag Metrics ───────────────────────────────────────────────────────
+
+export const indexerLatestLedger = new client.Gauge({
+  name: 'indexer_latest_ledger',
+  help: 'Latest ledger sequence reported by the Stellar network',
+  registers: [register],
+});
+
+export const indexerProcessedLedger = new client.Gauge({
+  name: 'indexer_processed_ledger',
+  help: 'Last ledger sequence processed by the escrow indexer',
+  registers: [register],
+});
+
+export const indexerLedgerLag = new client.Gauge({
+  name: 'indexer_ledger_lag',
+  help: 'Number of ledgers the escrow indexer is behind the latest ledger',
+  registers: [register],
+});
+
+export const indexerLagAlert = new client.Gauge({
+  name: 'indexer_lag_alert',
+  help: '1 when indexer lag exceeds INDEXER_LAG_ALERT_THRESHOLD, otherwise 0',
+  registers: [register],
+});
+
 // ── Circuit Breaker Metrics ───────────────────────────────────────────────────
 
 export const circuitBreakerState = new client.Gauge({

@@ -1,6 +1,13 @@
 import prisma from '../../lib/prisma.js';
 import { DEFAULT_TENANT_SLUG, runWithTenantContext } from '../../lib/tenantContext.js';
 
+export function isDefaultTenantFallbackAllowed() {
+  if (process.env.ALLOW_DEFAULT_TENANT_FALLBACK !== undefined) {
+    return process.env.ALLOW_DEFAULT_TENANT_FALLBACK === 'true';
+  }
+  return process.env.NODE_ENV !== 'production';
+}
+
 function extractHostname(req) {
   const forwardedHost = req.headers['x-forwarded-host'];
   const rawHost = Array.isArray(forwardedHost)
@@ -49,6 +56,8 @@ async function findTenant(req) {
     return null;
   }
 
+  if (!isDefaultTenantFallbackAllowed()) return undefined;
+
   return prisma.tenant.findFirst({
     where: { slug: DEFAULT_TENANT_SLUG },
     select: {
@@ -69,6 +78,10 @@ async function findTenant(req) {
 export default async function tenantMiddleware(req, res, next) {
   try {
     const tenant = await findTenant(req);
+
+    if (tenant === undefined) {
+      return res.status(400).json({ error: 'Tenant identifier required' });
+    }
 
     if (!tenant) {
       return res.status(404).json({ error: 'Tenant not found' });

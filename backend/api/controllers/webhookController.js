@@ -1,4 +1,5 @@
 import webhookService from '../../services/webhookService.js';
+import { parsePagination } from '../../lib/pagination.js';
 
 const MAX_EVENT_TYPES = 20;
 const ALLOWED_SCHEMES = ['https:'];
@@ -72,8 +73,7 @@ const deleteSubscription = async (req, res) => {
 
 const getDeliveries = async (req, res) => {
   try {
-    const page = Number(req.query.page || 1);
-    const limit = Math.min(Number(req.query.limit || 30), 100);
+    const { page, limit } = parsePagination({ limit: 30, ...req.query });
 
     const result = await webhookService.getDeliveryHistory({
       subscriptionId: req.params.id,
