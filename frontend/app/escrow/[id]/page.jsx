@@ -37,6 +37,7 @@ import ReputationBadge from '../../../components/ui/ReputationBadge';
 import CurrencyAmount from '../../../components/ui/CurrencyAmount';
 import TransactionHash from '../../../components/ui/TransactionHash';
 import Avatar from '../../../components/ui/Avatar';
+import { CopyButton } from '../../../components/ui/CopyButton';
 import {
   buildApproveMilestoneTx,
   buildSubmitMilestoneTx,
@@ -220,7 +221,15 @@ export default function EscrowDetailPage({ params }) {
             <h1 className="text-2xl font-bold text-white">{escrow.title}</h1>
             <Badge status={escrow.status} />
           </div>
-          <p className="text-gray-400 text-sm">Escrow #{id}</p>
+          <p className="text-gray-400 text-sm flex items-center gap-1.5">
+            Escrow #{id}
+            <CopyButton
+              text={id}
+              label="escrow ID"
+              aria-label="Copy escrow ID"
+              size="sm"
+            />
+          </p>
           <StellarExpertLink
             txHash={escrow.txHash}
             network={process.env.NEXT_PUBLIC_STELLAR_NETWORK}

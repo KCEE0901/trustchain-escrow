@@ -18,12 +18,14 @@
  */
 
 import Link from 'next/link';
+import { useRef } from 'react';
 import { AlertTriangle, Clock } from 'lucide-react';
 import Badge from '../ui/Badge';
 import CurrencyAmount from '../ui/CurrencyAmount';
 // CopyButton is a named export, not a default one — importing it as default
 // made this component crash whenever an escrow had a transaction hash.
 import { CopyButton } from '../ui/CopyButton';
+import Progress from '../ui/Progress';
 import EscrowCardSkeleton from '../ui/EscrowCardSkeleton';
 import { useI18n } from '../../i18n/index.jsx';
 
@@ -40,6 +42,7 @@ function getTimeRemaining(deadline) {
 
 export default function EscrowCard({ escrow, isLoading = false }) {
   const { t } = useI18n();
+  const cardRef = useRef(null);
   if (isLoading) return <EscrowCardSkeleton />;
   const {
     id,
@@ -110,25 +113,18 @@ export default function EscrowCard({ escrow, isLoading = false }) {
       <CurrencyAmount amount={totalAmount} showUsdc size="md" className="mb-3" />
 
       {/* Milestone Progress Bar */}
-      <div>
-        <div className="flex justify-between text-xs text-gray-600 dark:text-gray-400 mb-1">
-          <span>{t('escrow.fields.milestones')}</span>
-          <span>{milestoneProgress}</span>
-        </div>
-        <div
-          className="w-full h-2 bg-gray-200 dark:bg-gray-800 rounded-full overflow-hidden shadow-inner"
-          role="progressbar"
-          aria-valuenow={progressPct}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-label={`Milestone progress: ${milestoneProgress}`}
-        >
-          <div
-            className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full transition-all duration-500 ease-out"
-            style={{ width: `${progressPct}%` }}
+      {total > 0 && (
+        <div className="mb-3">
+          <Progress
+            value={done}
+            max={total}
+            label={`Milestone progress: ${milestoneProgress}`}
           />
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            {done} of {total} milestones complete
+          </p>
         </div>
-      </div>
+      )}
 
       {/* Time remaining */}
       {remaining && (
@@ -169,6 +165,6 @@ export default function EscrowCard({ escrow, isLoading = false }) {
           You are {role === 'client' ? t('escrow.fields.client') : t('escrow.fields.freelancer')}
         </span>
       </div>
-    </article>
+    </Link>
   );
 }
