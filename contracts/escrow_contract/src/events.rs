@@ -568,3 +568,39 @@ pub fn emit_dex_swap(
         (token_in.clone(), token_out.clone(), amount_in),
     );
 }
+
+// ── Token whitelist (#209) ────────────────────────────────────────────────
+
+/// Emitted when a token is added to the approved whitelist.
+///
+/// # Arguments
+/// * `admin`  - The admin address that performed the action
+/// * `token`  - The token contract address added to the whitelist
+pub fn emit_token_whitelist_added(env: &Env, admin: &Address, token: &Address) {
+    env.events().publish(
+        (ev::TOKEN_WHITELIST_ADDED,),
+        (admin.clone(), token.clone(), true),
+    );
+}
+
+/// Emitted when a token is removed from the approved whitelist.
+///
+/// # Arguments
+/// * `admin`  - The admin address that performed the action
+/// * `token`  - The token contract address removed from the whitelist
+pub fn emit_token_whitelist_removed(env: &Env, admin: &Address, token: &Address) {
+    env.events().publish(
+        (ev::TOKEN_WHITELIST_REMOVED,),
+        (admin.clone(), token.clone(), false),
+    );
+}
+
+/// Emitted when whitelist enforcement is toggled on or off.
+///
+/// # Arguments
+/// * `admin`   - The admin address that performed the action
+/// * `enabled` - `true` if whitelist is now enforced, `false` if disabled
+pub fn emit_token_whitelist_set(env: &Env, admin: &Address, enabled: bool) {
+    env.events()
+        .publish((ev::TOKEN_WHITELIST_SET,), (admin.clone(), enabled));
+}

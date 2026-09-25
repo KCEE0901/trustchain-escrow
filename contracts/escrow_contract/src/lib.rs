@@ -59,6 +59,7 @@ mod arbiter_allowlist_tests;
 mod arbiter_reputation_tests;
 mod arbiter_validation_tests;
 mod auto_expiry;
+mod auto_expiry_tests;
 mod batch_add_milestones_cap_tests;
 mod batch_approve_release_e2e_tests;
 mod bridge;
@@ -79,6 +80,7 @@ mod lock_time_enforcement_tests;
 mod max_escrow_amount_tests;
 mod meta_snapshot_tests;
 mod module_registration_tests;
+mod multi_asset_fee_tests;
 mod multisig_lifecycle_tests;
 mod multisig_threshold_tests;
 mod nft;
@@ -5455,6 +5457,7 @@ impl EscrowContract {
         caller.require_auth();
         ContractStorage::require_admin(&env, &caller)?;
         ContractStorage::add_approved_token(&env, &token);
+        events::emit_token_whitelist_added(&env, &caller, &token);
         Ok(())
     }
 
@@ -5471,6 +5474,7 @@ impl EscrowContract {
         caller.require_auth();
         ContractStorage::require_admin(&env, &caller)?;
         ContractStorage::remove_approved_token(&env, &token);
+        events::emit_token_whitelist_removed(&env, &caller, &token);
         Ok(())
     }
 
@@ -5488,6 +5492,7 @@ impl EscrowContract {
         caller.require_auth();
         ContractStorage::require_admin(&env, &caller)?;
         ContractStorage::set_token_whitelist_enabled(&env, enabled);
+        events::emit_token_whitelist_set(&env, &caller, enabled);
         Ok(())
     }
 
