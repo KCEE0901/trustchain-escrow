@@ -226,12 +226,21 @@ app.use('/api-docs', docsRouter);
 
 // ── 404 handler ───────────────────────────────────────────────────────────────
 app.use((req, res) => {
+  const requestId = req?.id || req?.headers?.['x-request-id'] || 'unknown';
   getLogger().warn({
     message: 'http_not_found',
     method: req.method,
     path: req.originalUrl?.split('?')[0],
+    requestId,
   });
-  res.status(404).json({ error: 'Route not found' });
+  res.setHeader('X-Request-ID', requestId);
+  res.status(404).json({
+    error: {
+      code: 'NOT_FOUND',
+      message: 'Route not found',
+      requestId,
+    },
+  });
 });
 
 // ── Sentry error handler — must be before the generic error handler ───────────
@@ -242,18 +251,25 @@ app.use(sentryErrorHandler);
 
 app.use((err, req, res, _next) => {
   const statusCode = err.statusCode || 500;
+  const requestId = req?.id || req?.headers?.['x-request-id'] || 'unknown';
 
   // Attach Sentry event ID to response so support can correlate reports
   const sentryId = res.sentry;
-  const body = { error: err.message || 'Internal server error' };
-  if (sentryId) body.errorId = sentryId;
+  const body = {
+    error: {
+      message: err.message || 'Internal server error',
+      requestId,
+      code: err.code || (statusCode >= 500 ? 'INTERNAL_ERROR' : 'REQUEST_ERROR'),
+    },
+  };
+  if (sentryId) body.error.errorId = sentryId;
 
   const log = req?.log || logger;
   log.error(
     {
       err,
       statusCode,
-      requestId: req?.id,
+      requestId,
       route: req?.path || 'unknown',
       userId: req?.user?.userId,
     },
@@ -264,6 +280,8 @@ app.use((err, req, res, _next) => {
     Sentry.captureException(err);
   }
 
+  // Include X-Request-ID header in error responses
+  res.setHeader('X-Request-ID', requestId);
   errorsTotal.inc({ type: err.name || 'Error', route: req?.path || 'unknown' });
   res.status(statusCode).json(body);
 });
