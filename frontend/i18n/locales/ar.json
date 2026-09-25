@@ -14,7 +14,11 @@
       "active": "نشط",
       "completed": "مكتمل",
       "disputed": "متنازع عليه",
-      "cancelled": "ملغى"
+      "expired": "منتهي الصلاحية",
+      "cancelled": "ملغى",
+      "pending": "قيد الانتظار",
+      "funded": "مُموَّل",
+      "resolved": "تمت تسويته"
     },
     "fields": {
       "client": "العميل",

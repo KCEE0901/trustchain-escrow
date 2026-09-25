@@ -14,7 +14,11 @@
       "active": "活跃",
       "completed": "已完成",
       "disputed": "争议中",
-      "cancelled": "已取消"
+      "expired": "已过期",
+      "cancelled": "已取消",
+      "pending": "待处理",
+      "funded": "已注资",
+      "resolved": "已解决"
     },
     "fields": {
       "client": "客户",

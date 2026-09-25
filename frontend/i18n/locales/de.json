@@ -14,7 +14,11 @@
       "active": "Aktiv",
       "completed": "Abgeschlossen",
       "disputed": "Streitig",
-      "cancelled": "Abgebrochen"
+      "expired": "Abgelaufen",
+      "cancelled": "Abgebrochen",
+      "pending": "Ausstehend",
+      "funded": "Finanziert",
+      "resolved": "Gelöst"
     },
     "fields": {
       "client": "Auftraggeber",

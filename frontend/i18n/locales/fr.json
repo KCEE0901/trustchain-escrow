@@ -14,7 +14,11 @@
       "active": "Actif",
       "completed": "Terminé",
       "disputed": "En Litige",
-      "cancelled": "Annulé"
+      "expired": "Expiré",
+      "cancelled": "Annulé",
+      "pending": "En attente",
+      "funded": "Financé",
+      "resolved": "Résolu"
     },
     "fields": {
       "client": "Client",

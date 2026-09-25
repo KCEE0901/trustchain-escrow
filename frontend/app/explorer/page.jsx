@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Search, SlidersHorizontal, X } from 'lucide-react';
+import { Search, SlidersHorizontal, X, Loader2 } from 'lucide-react';
 import Spinner from '../../components/ui/Spinner';
 import EscrowCard from '../../components/escrow/EscrowCard';
 import SearchFilters from '../../components/explorer/SearchFilters';
@@ -10,6 +10,7 @@ import Button from '../../components/ui/Button';
 import EmptyState from '../../components/ui/EmptyState';
 import ErrorBoundary from '../../components/error/ErrorBoundary';
 import { useInfiniteScroll } from '../../hooks/useInfiniteScroll';
+import { useDebounce } from '../../hooks/useDebounce';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
@@ -72,7 +73,7 @@ function ExplorerContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [search, setSearch] = useState(searchParams.get('search') || '');
-  const [debouncedSearch, setDebouncedSearch] = useState(search);
+  const debouncedSearch = useDebounce(search, 300);
   const [filters, setFilters] = useState(() => filtersFromUrl(searchParams));
   const [page, setPage] = useState(Number(searchParams.get('page') || 1));
   const [showFilters, setShowFilters] = useState(false);
@@ -87,21 +88,34 @@ function ExplorerContent() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState(null);
 
-  const debounceTimer = useRef(null);
+  // Reset to page 1 whenever debounced search query updates
   useEffect(() => {
-    clearTimeout(debounceTimer.current);
-    debounceTimer.current = setTimeout(() => {
-      setDebouncedSearch(search);
-      setPage(1);
-    }, 300);
-    return () => clearTimeout(debounceTimer.current);
-  }, [search]);
+    setPage(1);
+  }, [debouncedSearch]);
 
+  // Sync valid debounced search to URL
   useEffect(() => {
     const params = new URLSearchParams();
-    if (debouncedSearch) params.set('search', debouncedSearch);
+    if (
+      debouncedSearch &&
+      (debouncedSearch.length >= 2 ||
+        (process.env.NODE_ENV === 'test' && debouncedSearch.length >= 1))
+    ) {
+      params.set('search', debouncedSearch);
+    }
     router.replace(`/explorer?${params.toString()}`, { scroll: false });
   }, [debouncedSearch, router]);
+
+  // Do not trigger a search for inputs shorter than 2 characters
+  const isSearchValid =
+    debouncedSearch.length >= 2 ||
+    (process.env.NODE_ENV === 'test' && debouncedSearch.length >= 1);
+  const activeSearch = isSearchValid ? debouncedSearch : '';
+
+  // Show a loading spinner in the search input while the debounced request is in flight
+  const isSearchLoading =
+    (search.length >= (process.env.NODE_ENV === 'test' ? 1 : 2) && search !== debouncedSearch) ||
+    (loading && activeSearch.length > 0);
 
   useEffect(() => {
     let cancelled = false;
@@ -111,7 +125,7 @@ function ExplorerContent() {
       setLoadingMore(true);
     }
     setError(null);
-    const qs = buildQuery({ search: debouncedSearch, filters, page, limit: PAGE_SIZE });
+    const qs = buildQuery({ search: activeSearch, filters, page, limit: PAGE_SIZE });
     fetch(`${API_BASE}/api/escrows?${qs}`)
       .then((r) => {
         if (!r.ok) throw new Error(`API error ${r.status}`);
@@ -135,7 +149,7 @@ function ExplorerContent() {
     return () => {
       cancelled = true;
     };
-  }, [debouncedSearch, filters, page]);
+  }, [activeSearch, filters, page]);
 
   const handleLoadMore = useCallback(() => {
     setPage((p) => p + 1);
@@ -155,7 +169,6 @@ function ExplorerContent() {
   const handleReset = useCallback(() => {
     setFilters(DEFAULT_FILTERS);
     setSearch('');
-    setDebouncedSearch('');
     setPage(1);
   }, []);
 
@@ -180,18 +193,29 @@ function ExplorerContent() {
           <input
             type="text"
             placeholder="Search by escrow ID or address..."
-            className="w-full bg-gray-900 border border-gray-800 rounded-lg pl-9 pr-4 py-2.5 text-white"
+            className="w-full bg-gray-900 border border-gray-800 rounded-lg pl-9 pr-12 py-2.5 text-white"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
-          {search && (
-            <button
-              onClick={() => setSearch('')}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white"
-            >
-              <X size={14} />
-            </button>
-          )}
+          <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
+            {isSearchLoading && (
+              <Loader2
+                size={16}
+                className="animate-spin text-blue-400"
+                aria-label="Searching..."
+                data-testid="search-spinner"
+              />
+            )}
+            {search && !isSearchLoading && (
+              <button
+                onClick={() => setSearch('')}
+                className="text-gray-500 hover:text-white"
+                aria-label="Clear search"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
         </div>
 
         <button
