@@ -343,4 +343,22 @@ router.post('/2fa/enforce', requireMfa, async (req, res) => {
   }
 });
 
+// ── Role Management ────────────────────────────────────────────────────────────
+
+/**
+ * @route  POST /api/admin/users/:address/grant-role
+ * @desc   Grant a role to a user. Logs the action in the arbitrator audit log for compliance.
+ * @body   { role: 'admin' | 'superadmin' | 'user' }
+ * @security Requires MFA verification
+ */
+router.post('/users/:address/grant-role', requireMfa, adminController.grantRole);
+
+/**
+ * @route  POST /api/admin/users/:address/revoke-role
+ * @desc   Revoke a role from a user (sets role to 'user'). Logs the action in the arbitrator audit log for compliance.
+ * @body   { role?: 'admin' | 'superadmin' } — role being revoked (optional, for logging)
+ * @security Requires MFA verification
+ */
+router.post('/users/:address/revoke-role', requireMfa, adminController.revokeRole);
+
 export default router;

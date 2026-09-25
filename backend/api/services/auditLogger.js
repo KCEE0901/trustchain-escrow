@@ -34,6 +34,11 @@ export const ArbitratorAction = {
   RESOLUTION_ISSUED: 'RESOLUTION_ISSUED',
 };
 
+export const AdminAction = {
+  ROLE_GRANT: 'ROLE_GRANT',
+  ROLE_REVOKE: 'ROLE_REVOKE',
+};
+
 // ── Hash chain helpers ────────────────────────────────────────────────────────
 
 /** Genesis hash used when there is no previous entry. */
@@ -246,4 +251,4 @@ export async function queryLogs(filters = {}) {
   return { data, total, page, limit, pages: Math.ceil(total / limit) };
 }
 
-export default { logArbitratorAction, validateChain, queryLogs, ArbitratorAction };
+export default { logArbitratorAction, validateChain, queryLogs, ArbitratorAction, AdminAction };
