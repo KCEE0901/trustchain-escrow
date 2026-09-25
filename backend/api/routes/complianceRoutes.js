@@ -7,6 +7,9 @@ router.use(adminAuth);
 
 router.get('/reports/:type', complianceController.generateReport);
 router.get('/reports/:type/export', complianceController.exportReport);
+router.post('/reports/:type/export-jobs', complianceController.startExportJob);
+router.get('/export-jobs/:id', complianceController.getExportJob);
+router.get('/export-jobs/:id/download', complianceController.downloadExportJob);
 router.get('/schedules', complianceController.listSchedules);
 router.post('/schedules', complianceController.createSchedule);
 router.post('/schedules/:id/run', complianceController.runSchedule);
