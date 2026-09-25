@@ -134,5 +134,20 @@ describe('EscrowDetailPage', () => {
       await waitFor(() => expect(mockMutate).toHaveBeenCalledTimes(1));
       expect(screen.getByTestId('last-refreshed')).toHaveTextContent(/Last updated:/);
     });
+
+    it('renders skeleton loading screen with aria-busy="true" when data is fetching', () => {
+      const useEscrowModule = require('../../hooks/useEscrow');
+      jest.spyOn(useEscrowModule, 'useEscrow').mockReturnValueOnce({
+        escrow: null,
+        isLoading: true,
+        error: null,
+        mutate: mockMutate,
+      });
+
+      renderWithAppProviders(<EscrowDetailPage params={params} />);
+      const skeletonContainer = screen.getByTestId('escrow-detail-skeleton');
+      expect(skeletonContainer).toBeInTheDocument();
+      expect(skeletonContainer).toHaveAttribute('aria-busy', 'true');
+    });
   });
 });

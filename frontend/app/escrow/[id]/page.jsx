@@ -20,7 +20,8 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
+import EscrowDetailLoading from './loading';
 import { useEscrow } from '../../../hooks/useEscrow';
 import { useRelativeTime } from '../../../hooks/useRelativeTime';
 import { useWallet } from '../../../hooks/useWallet';
@@ -204,11 +205,7 @@ export default function EscrowDetailPage({ params }) {
   };
 
   if (isLoading && !fetchedEscrow) {
-    return (
-      <div className="flex items-center justify-center min-h-[40vh] text-gray-400">
-        Loading escrow…
-      </div>
-    );
+    return <EscrowDetailLoading />;
   }
 
   return (

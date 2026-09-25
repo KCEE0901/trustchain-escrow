@@ -4,12 +4,15 @@ import { useState, useEffect, Suspense } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import EscrowCard from '../../components/escrow/EscrowCard';
+import EscrowSearchFilters from '../../components/escrow/EscrowSearchFilters';
 import ReputationBadge from '../../components/ui/ReputationBadge';
 import Button from '../../components/ui/Button';
 import CardSkeleton from '../../components/ui/CardSkeleton';
+import EmptyState from '../../components/ui/EmptyState';
 import PageTransition from '../../components/layout/PageTransition';
 import ErrorBoundary from '../../components/error/ErrorBoundary';
 import DashboardTour from '../../components/onboarding/DashboardTour';
+import { useEscrowFilter } from '../../hooks/useEscrowFilter';
 import { usePerformance } from '../../hooks/usePerformance';
 import { useI18n } from '../../i18n/index.jsx';
 import { useWalletStore } from '../../store/app-store';
@@ -49,6 +52,7 @@ export default function DashboardPage() {
   const [escrowsLoading, setEscrowsLoading] = useState(true);
   const [reputation, setReputation] = useState(null);
   const { measureAsync } = usePerformance('DashboardPage');
+  const { filters, filtered, setFilter, resetFilters, activeCount } = useEscrowFilter(escrows);
 
   useEffect(() => {
     if (!address) router.replace('/');
@@ -57,15 +61,20 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!address) return;
     setEscrowsLoading(true);
-    measureAsync('fetch-escrows', () =>
-      fetch(`${API_BASE}/api/users/${address}/escrows?status=Active&limit=6`)
+    measureAsync('fetch-escrows', () => {
+      const params = new URLSearchParams();
+      if (filters.status) params.set('status', filters.status);
+      params.set('limit', '50');
+      const queryString = params.toString();
+      const endpoint = `${API_BASE}/api/users/${address}/escrows?${queryString}`;
+      return fetch(endpoint)
         .then((r) => r.json())
         .then((data) => {
           setEscrows(Array.isArray(data?.escrows) ? data.escrows : []);
         })
-        .catch(() => setEscrows([])),
-    ).finally(() => setEscrowsLoading(false));
-  }, [measureAsync, address]);
+        .catch(() => setEscrows([]));
+    }).finally(() => setEscrowsLoading(false));
+  }, [measureAsync, address, filters.status]);
 
   useEffect(() => {
     if (!address) return;
@@ -129,7 +138,18 @@ export default function DashboardPage() {
           </section>
 
           <section aria-label="Active escrow agreements" data-tour="disputes">
-            <h2 className="text-lg font-semibold text-white mb-4">Your Active Escrows</h2>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+              <h2 className="text-lg font-semibold text-white">Your Active Escrows</h2>
+            </div>
+
+            <EscrowSearchFilters
+              filters={filters}
+              setFilter={setFilter}
+              resetFilters={resetFilters}
+              activeCount={activeCount}
+              className="mb-6"
+            />
+
             {escrowsLoading ? (
               <div className="grid gap-4 md:grid-cols-2">
                 <CardSkeleton />
@@ -137,12 +157,26 @@ export default function DashboardPage() {
                 <CardSkeleton />
               </div>
             ) : escrows.length === 0 ? (
-              <div className="card text-center py-10">
-                <p className="text-gray-400 font-medium">No active escrows yet.</p>
-              </div>
+              <EmptyState
+                title="No escrows yet"
+                description={
+                  filters.role === 'contractor' || filters.role === 'freelancer'
+                    ? "You don't have any contractor escrows yet. Share your wallet address or invite a client to create an escrow for your work."
+                    : "Create your first milestone-based escrow to safely hire talent or work with clients with guaranteed on-chain payouts."
+                }
+                actionLabel="+ Create Escrow"
+                actionHref="/escrow/create"
+              />
+            ) : filtered.length === 0 ? (
+              <EmptyState
+                title="No matching escrows found"
+                description="Try adjusting or clearing your search and filter criteria."
+                actionLabel="Clear Filters"
+                onAction={resetFilters}
+              />
             ) : (
               <div className="grid gap-4 md:grid-cols-2" role="list">
-                {escrows.map((escrow) => (
+                {filtered.map((escrow) => (
                   <div key={escrow.id} role="listitem">
                     <EscrowCard escrow={escrow} />
                   </div>

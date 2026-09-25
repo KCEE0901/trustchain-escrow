@@ -37,6 +37,8 @@ export default function EscrowSearchFilters({
   const maxId = useId();
   const fromId = useId();
   const toId = useId();
+  const roleId = useId();
+  const sortId = useId();
   const panelId = useId();
 
   const handleAdvancedKeyDown = (event) => {
@@ -204,6 +206,38 @@ export default function EscrowSearchFilters({
             onChange={(e) => setFilter('dateTo', e.target.value)}
             className={inputClasses}
           />
+        </div>
+        <div>
+          <label htmlFor={roleId} className={labelClasses}>
+            Role
+          </label>
+          <select
+            id={roleId}
+            value={filters.role || ''}
+            onChange={(e) => setFilter('role', e.target.value)}
+            className={inputClasses}
+          >
+            <option value="">All roles</option>
+            <option value="client">Client</option>
+            <option value="contractor">Contractor</option>
+          </select>
+        </div>
+        <div>
+          <label htmlFor={sortId} className={labelClasses}>
+            Sort by
+          </label>
+          <select
+            id={sortId}
+            value={filters.sort || ''}
+            onChange={(e) => setFilter('sort', e.target.value)}
+            className={inputClasses}
+          >
+            <option value="">Default</option>
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+            <option value="amount_desc">Highest amount</option>
+            <option value="amount_asc">Lowest amount</option>
+          </select>
         </div>
       </div>
 

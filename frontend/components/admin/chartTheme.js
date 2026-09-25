@@ -29,7 +29,8 @@
  * assignment, so filtering or reordering never repaints a series.
  */
 
-import { useEffect, useState } from 'react';
+import { useContext, useEffect, useState } from 'react';
+import { ThemeContext } from '../../contexts/ThemeContext';
 
 /** Fixed slot order. A series keeps its hue regardless of value or position. */
 export const SERIES_KEYS = ['active', 'completed', 'disputed', 'other'];
@@ -75,20 +76,22 @@ export const CHART_THEME = {
 };
 
 /**
- * Tracks the `dark` class that ThemeProvider stamps on `<html>`.
+ * Tracks the theme state from ThemeContext and falls back to the `dark` class
+ * stamped on `<html>`.
  *
- * Reading the class rather than the React context keeps the chart components
- * usable anywhere — Storybook, isolated tests, a future admin shell — without
- * requiring a provider, while still recolouring live when the user toggles.
+ * Subscribing to ThemeContext enables immediate re-render on theme toggle, while
+ * reading the DOM class keeps chart components usable in isolation (e.g. tests).
  *
  * @returns {boolean}
  */
 export function useIsDarkTheme() {
-  const [isDark, setIsDark] = useState(false);
+  const themeContext = useContext(ThemeContext);
+  const [isDarkClass, setIsDarkClass] = useState(false);
 
   useEffect(() => {
+    if (typeof document === 'undefined') return undefined;
     const root = document.documentElement;
-    const read = () => setIsDark(root.classList.contains('dark'));
+    const read = () => setIsDarkClass(root.classList.contains('dark'));
 
     read();
 
@@ -98,7 +101,11 @@ export function useIsDarkTheme() {
     return () => observer.disconnect();
   }, []);
 
-  return isDark;
+  if (themeContext && themeContext.theme) {
+    return themeContext.theme === 'dark';
+  }
+
+  return isDarkClass;
 }
 
 /**

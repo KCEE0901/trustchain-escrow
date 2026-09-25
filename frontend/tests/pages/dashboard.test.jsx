@@ -129,4 +129,29 @@ describe('DashboardPage', () => {
     renderDashboard();
     expect(await screen.findByText('87')).toBeInTheDocument();
   });
+
+  it('renders contextual empty state with CTA when user has zero escrows', async () => {
+    global.fetch.mockImplementation((url) => {
+      if (url.includes('/api/users/GABCD1234/escrows')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ escrows: [] }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({}),
+      });
+    });
+
+    renderDashboard();
+
+    expect(await screen.findByText('No escrows yet')).toBeInTheDocument();
+    expect(
+      screen.getByText(/Create your first milestone-based escrow to safely hire talent/),
+    ).toBeInTheDocument();
+
+    const ctaLinks = screen.getAllByRole('link', { name: /\+ Create Escrow/i });
+    expect(ctaLinks.some((link) => link.getAttribute('href') === '/escrow/create')).toBe(true);
+  });
 });

@@ -1,7 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import DisputeResolutionChart from '@/components/admin/DisputeResolutionChart';
-import { deriveMetrics } from '@/components/admin/chartTheme';
+import { CHART_THEME, deriveMetrics } from '@/components/admin/chartTheme';
 
 // jsdom reports every element as 0×0, so ResponsiveContainer would size the plot
 // to nothing and warn. Hand the chart explicit dimensions instead, which also
@@ -106,5 +106,16 @@ describe('DisputeResolutionChart', () => {
       'aria-valuenow',
       '63',
     );
+  });
+
+  it('respects dark theme via document class or ThemeContext', () => {
+    const { unmount } = render(<DisputeResolutionChart metrics={metrics} />);
+    unmount();
+
+    document.documentElement.classList.add('dark');
+    render(<DisputeResolutionChart metrics={metrics} />);
+    const resolution = screen.getByRole('progressbar', { name: 'Resolution rate' });
+    expect(resolution).toHaveStyle({ backgroundColor: CHART_THEME.dark.track });
+    document.documentElement.classList.remove('dark');
   });
 });
