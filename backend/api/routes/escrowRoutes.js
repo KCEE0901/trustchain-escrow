@@ -6,6 +6,7 @@ import escrowController, {
 } from '../controllers/escrowController.js';
 import { cacheResponse, invalidateOn, TTL } from '../middleware/cache.js';
 import authMiddleware from '../middleware/auth.js';
+import { checkPermission } from '../middleware/roleGuard.js';
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -92,6 +93,19 @@ router.get(
     tags: (req) => ['escrows', `escrow:${req.params.id}`],
   }),
   escrowController.getEscrow,
+);
+
+/**
+ * @route  POST /api/v1/escrows/:id/archive
+ * @desc   Admin-only — move a completed/cancelled escrow to cold-storage archive.
+ * @access Admin
+ * @returns 200 archived | 400 not archivable | 404 not found | 409 already archived
+ */
+router.post(
+  '/:id/archive',
+  validateEscrowId,
+  checkPermission('Admin', 'archive_escrow'),
+  escrowController.archiveEscrow,
 );
 
 export default router;

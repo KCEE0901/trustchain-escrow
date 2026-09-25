@@ -136,9 +136,67 @@ async function listArchiveTables(prisma) {
   return rows.map((row) => row.tablename);
 }
 
+/**
+ * Archive a single escrow by ID, moving it to the appropriate monthly
+ * archive table based on its createdAt date.
+ *
+ * @param {import('@prisma/client').PrismaClient} prisma
+ * @param {BigInt|string|number} escrowId
+ * @returns {Promise<{ id: BigInt, tableName: string, createdAt: Date }>}
+ * @throws {Error} if the escrow is not found, not archivable, or already archived
+ */
+async function archive(prisma, escrowId) {
+  const id = typeof escrowId === 'bigint' ? escrowId : BigInt(String(escrowId));
+
+  const row = await prisma.escrow.findUnique({ where: { id } });
+  if (!row) {
+    const err = new Error('Escrow not found');
+    err.code = 'NOT_FOUND';
+    throw err;
+  }
+
+  const archivableStatuses = ['Completed', 'Cancelled'];
+  if (!archivableStatuses.includes(row.status)) {
+    const err = new Error(`Escrow must be COMPLETED or CANCELLED to archive (current: ${row.status})`);
+    err.code = 'NOT_ARCHIVABLE';
+    throw err;
+  }
+
+  const { tableName } = getArchiveWindow(row.createdAt);
+  await ensureArchivePartition(prisma, row.createdAt);
+
+  // Check if already archived (ON CONFLICT DO NOTHING will silently skip, so we
+  // detect it beforehand with a count query on the target partition).
+  const existing = await prisma.$queryRawUnsafe(
+    `SELECT COUNT(*)::int AS cnt FROM ${tableName} WHERE id = $1`,
+    id,
+  );
+  const alreadyArchived = Number(existing[0]?.cnt ?? 0) > 0;
+  if (alreadyArchived) {
+    const err = new Error('Escrow is already archived');
+    err.code = 'ALREADY_ARCHIVED';
+    throw err;
+  }
+
+  await prisma.$executeRawUnsafe(
+    `
+    INSERT INTO ${tableName} (id, tenant_id, client_address, freelancer_address, arbiter_address, token_address, total_amount, remaining_balance, status, brief_hash, deadline, created_at, updated_at, created_ledger)
+    SELECT id, tenant_id, client_address, freelancer_address, arbiter_address, token_address, total_amount, remaining_balance, status, brief_hash, deadline, created_at, updated_at, created_ledger
+    FROM escrows
+    WHERE id = $1
+    ON CONFLICT (id) DO NOTHING
+    `,
+    id,
+  );
+  await prisma.$executeRawUnsafe('DELETE FROM escrows WHERE id = $1', id);
+
+  return { id, tableName, createdAt: row.createdAt };
+}
+
 export {
   ARCHIVE_RETENTION_DAYS,
   ARCHIVE_BATCH_SIZE,
+  archive,
   archiveCompletedEscrows,
   ensureArchivePartition,
   getArchiveTableName,
@@ -150,6 +208,7 @@ export {
 export default {
   ARCHIVE_RETENTION_DAYS,
   ARCHIVE_BATCH_SIZE,
+  archive,
   archiveCompletedEscrows,
   ensureArchivePartition,
   getArchiveTableName,

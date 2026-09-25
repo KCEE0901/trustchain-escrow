@@ -13,6 +13,7 @@ import cache from '../../lib/cache.js';
 import { buildPaginatedResponse, parsePagination } from '../../lib/pagination.js';
 import { logControllerError } from '../../config/logger.js';
 import { submitTransaction } from '../../services/stellarService.js';
+import escrowArchiveService from '../../services/escrowArchiveService.js';
 import { xdr, scValToNative } from '@stellar/stellar-sdk';
 import {
   escrowIdParam,
@@ -517,6 +518,46 @@ const searchEscrowsV1 = async (req, res) => {
   }
 };
 
+// ── Archive endpoint (admin only) ─────────────────────────────────────────────
+
+/**
+ * POST /api/v1/escrows/:id/archive
+ *
+ * Admin-only endpoint that moves a completed or cancelled escrow into the
+ * monthly cold-storage archive partition.
+ *
+ * Returns:
+ *   200 — archived successfully
+ *   400 — escrow is still active (not COMPLETED or CANCELLED)
+ *   404 — escrow not found
+ *   409 — escrow is already archived
+ */
+const archiveEscrow = async (req, res) => {
+  try {
+    const result = await escrowArchiveService.archive(prisma, req.params.id);
+    // Evict the cached entries for this escrow so stale data is not served.
+    await onEscrowStatusChange(req.params.id);
+    return res.status(200).json({
+      message: 'Escrow archived successfully',
+      id: String(result.id),
+      tableName: result.tableName,
+      archivedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    if (err.code === 'NOT_FOUND') {
+      return res.status(404).json({ error: 'Escrow not found' });
+    }
+    if (err.code === 'NOT_ARCHIVABLE') {
+      return res.status(400).json({ error: err.message });
+    }
+    if (err.code === 'ALREADY_ARCHIVED') {
+      return res.status(409).json({ error: 'Escrow is already archived' });
+    }
+    logControllerError('escrow.archiveEscrow', err, req);
+    res.status(500).json({ error: err.message });
+  }
+};
+
 export default {
   listEscrows,
   getEscrow,
@@ -529,6 +570,7 @@ export default {
   getSuccessRate,
   invalidateStatsCaches,
   searchEscrowsV1,
+  archiveEscrow,
 };
 
 // ── Validation rule sets (used by escrowRoutes) ───────────────────────────────
