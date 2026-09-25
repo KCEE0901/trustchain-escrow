@@ -1,35 +1,35 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useWallet } from '../../../../hooks/useWallet';
 import { useToast } from '../../../../contexts/ToastContext';
 
 const NOTIFICATION_EVENTS = [
   {
-    id: 'milestone_completion',
-    label: 'Milestone Completion',
-    description: 'When a milestone is submitted or approved',
+    id: 'milestone_approved',
+    label: 'Milestone Approved',
+    description: 'When a milestone is approved by the client',
   },
   {
-    id: 'dispute_updates',
-    label: 'Dispute Updates',
-    description: 'When a dispute is raised, updated, or resolved',
+    id: 'dispute_raised',
+    label: 'Dispute Raised',
+    description: 'When a dispute is opened or updated on your escrow',
   },
   {
-    id: 'platform_changes',
-    label: 'Platform Changes',
-    description: 'When platform policies, fees, or features change',
+    id: 'escrow_completed',
+    label: 'Escrow Completed',
+    description: 'When all milestones are completed and funds are released',
   },
   {
-    id: 'security_events',
-    label: 'Security Events',
-    description: 'When security-related actions occur on your account',
+    id: 'new_message',
+    label: 'New Message',
+    description: 'When you receive a new message or update in chat',
   },
 ];
 
 const CHANNELS = [
   { id: 'email', label: 'Email' },
-  { id: 'sms', label: 'SMS' },
+  { id: 'in_app', label: 'In-App' },
 ];
 
 function createInitialPreferences() {
@@ -62,12 +62,42 @@ export default function NotificationPreferencesPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
 
+  // Attempt to load existing preferences from server
+  useEffect(() => {
+    let isMounted = true;
+    async function fetchPreferences() {
+      try {
+        const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
+        const url = `${baseUrl.replace(/\/api\/?$/, '')}/api/v1/notifications/preferences${
+          address ? `?address=${encodeURIComponent(address)}` : ''
+        }`;
+        const res = await fetch(url).catch(() => null);
+        if (res && res.ok) {
+          const data = await res.json().catch(() => null);
+          if (isMounted && data?.preferences) {
+            setPreferences((prev) => ({
+              ...prev,
+              ...data.preferences,
+            }));
+          }
+        }
+      } catch (_) {
+        // Fall back to default initial preferences
+      }
+    }
+
+    fetchPreferences();
+    return () => {
+      isMounted = false;
+    };
+  }, [address]);
+
   const handleToggle = useCallback((eventId, channelId) => {
     setPreferences((prev) => ({
       ...prev,
       [eventId]: {
         ...prev[eventId],
-        [channelId]: !prev[eventId][channelId],
+        [channelId]: !prev[eventId]?.[channelId],
       },
     }));
   }, []);
@@ -82,24 +112,20 @@ export default function NotificationPreferencesPage() {
       return;
     }
 
-    if (!address) {
-      setError('Wallet must be connected to save preferences.');
-      return;
-    }
-
     setIsSubmitting(true);
 
     try {
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api'}/users/${address}`,
-        {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            preferences: { notifications: preferences },
-          }),
-        },
-      );
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
+      const endpoint = `${baseUrl.replace(/\/api\/?$/, '')}/api/v1/notifications/preferences`;
+
+      const res = await fetch(endpoint, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          address: address || undefined,
+          preferences,
+        }),
+      });
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
@@ -118,15 +144,17 @@ export default function NotificationPreferencesPage() {
     <div className="max-w-2xl mx-auto space-y-8">
       <div>
         <h1 className="text-2xl font-bold text-white">Notification Preferences</h1>
-        <p className="text-gray-400 mt-1 text-sm">Choose how and when you receive notifications.</p>
+        <p className="text-gray-400 mt-1 text-sm">
+          Customize your email and in-app alerts for critical escrow events.
+        </p>
       </div>
 
       {!isConnected && (
         <div
           className="bg-amber-500/10 border border-amber-500/50 text-amber-400 p-4 rounded-xl text-sm"
-          role="alert"
+          role="status"
         >
-          Connect your wallet to save notification preferences.
+          Connect your wallet to associate notification preferences with your Stellar account.
         </div>
       )}
 
@@ -203,15 +231,12 @@ export default function NotificationPreferencesPage() {
         <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center pt-2">
           <button
             type="submit"
-            disabled={isSubmitting || !isConnected}
+            disabled={isSubmitting}
             className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-700 disabled:text-gray-500 text-white font-medium py-2.5 px-6 rounded-xl transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
             aria-label="Save notification preferences"
           >
             {isSubmitting ? 'Saving...' : 'Save Preferences'}
           </button>
-          {!isConnected && (
-            <p className="text-xs text-gray-500">Connect your wallet to enable saving.</p>
-          )}
         </div>
       </form>
     </div>

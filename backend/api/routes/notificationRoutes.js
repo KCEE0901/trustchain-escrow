@@ -105,4 +105,56 @@ router.get('/queue', adminAuth, async (_req, res) => {
   res.json(snapshot);
 });
 
+const userNotificationPreferences = new Map();
+
+const DEFAULT_PREFERENCES = {
+  milestone_approved: { email: true, in_app: true },
+  dispute_raised: { email: true, in_app: true },
+  escrow_completed: { email: true, in_app: true },
+  new_message: { email: true, in_app: true },
+};
+
+/**
+ * @route   PATCH /api/v1/notifications/preferences
+ * @desc    Update email and in-app notification preferences
+ */
+router.patch('/preferences', async (req, res) => {
+  try {
+    const { address, email, preferences } = req.body || {};
+    const key = address || email || req.user?.address || req.user?.id || 'default';
+    const prefs = preferences || req.body?.preferences || req.body || {};
+
+    const existing = userNotificationPreferences.get(key) || { ...DEFAULT_PREFERENCES };
+    const updated = {
+      ...existing,
+      ...prefs,
+      updatedAt: new Date().toISOString(),
+    };
+    userNotificationPreferences.set(key, updated);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Notification preferences updated successfully',
+      preferences: updated,
+    });
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+});
+
+/**
+ * @route   GET /api/v1/notifications/preferences
+ * @desc    Get user notification preferences
+ */
+router.get('/preferences', async (req, res) => {
+  try {
+    const key =
+      req.query.address || req.query.email || req.user?.address || req.user?.id || 'default';
+    const prefs = userNotificationPreferences.get(key) || DEFAULT_PREFERENCES;
+    return res.status(200).json({ preferences: prefs });
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+});
+
 export default router;
