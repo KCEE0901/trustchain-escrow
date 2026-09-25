@@ -102,9 +102,6 @@ mod timelock_enforcement_tests;
 mod token_whitelist_tests;
 mod transfer_client_tests;
 mod types;
-mod platform_fee;
-mod extension;
-mod auto_expiry;
 mod simulation;
 mod simulation_tests;
 mod terms_hash;
@@ -118,7 +115,7 @@ pub use types::{
     EscrowTemplate, FeeTier, Milestone, MilestoneStatus, MilestoneTemplate, MultisigConfig,
     OptionalBytesN32, OptionalPriceCondition, OptionalTimelock, OracleResolutionPayload,
     PriceCondition, PriceDirection, RecurringInterval, RecurringScheduleStatus, ReputationRecord,
-    StateHistoryEntry, Timelock, MS_APPROVED, MS_DISPUTED, MS_PENDING, MS_REJECTED, MS_RELEASED,
+    StateHistoryEntry, Timelock, TermsAcceptance, DexConfig, DexSwapRecord, MS_APPROVED, MS_DISPUTED, MS_PENDING, MS_REJECTED, MS_RELEASED,
     MS_SUBMITTED,
 };
 use types::{CancellationRequest, RecurringPaymentConfig, SlashRecord};
@@ -301,6 +298,12 @@ pub struct EscrowMeta {
     /// Oracle price (USD, with PRICE_DECIMALS decimals) recorded when slippage
     /// protection was configured. Used as the reference for slippage checks.
     pub slippage_reference_price: i128,
+    /// Optional SHA-256 hash of the off-chain terms document. When set, the
+    /// client must accept the terms before milestone funds can be released.
+    pub terms_hash: OptionalBytesN32,
+    /// Arbiter fee in basis points — portion of the escrow amount reserved
+    /// for the arbiter upon dispute resolution (0 = no arbiter fee).
+    pub arbiter_fee_bps: u32,
 }
 
 // ── Storage helpers ───────────────────────────────────────────────────────────
@@ -2352,6 +2355,8 @@ impl EscrowContract {
                 multisig_threshold,
                 slippage_bps: 0,
                 slippage_reference_price: 0,
+                terms_hash: terms_hash.into(),
+                arbiter_fee_bps: 0,
             },
         );
 
@@ -2468,6 +2473,8 @@ impl EscrowContract {
             multisig_threshold: 0,
             slippage_bps: 0,
             slippage_reference_price: 0,
+            terms_hash: None.into(),
+            arbiter_fee_bps: 0,
         };
         ContractStorage::charge_entry_rent(&env, &mut meta, &client, 1)?;
         ContractStorage::save_escrow_meta(&env, &meta);
@@ -3741,8 +3748,8 @@ impl EscrowContract {
 
             ContractStorage::check_lock_time_expired(&env, escrow_id, meta.lock_time)?;
 
-            if let Some(ref _th) = meta.terms_hash {
-                let acceptance = env.storage().persistent()
+            if matches!(meta.terms_hash, OptionalBytesN32::Some(_)) {
+                let acceptance: TermsAcceptance = env.storage().persistent()
                     .get(&DataKey::TermsAcceptance(escrow_id))
                     .ok_or(EscrowError::ClientHasNotAcceptedTerms)?;
                 if !acceptance.accepted {
@@ -3880,7 +3887,8 @@ impl EscrowContract {
         if meta.status != EscrowStatus::Active {
             return Err(EscrowError::E9);
         }
-        let terms_hash = meta.terms_hash.ok_or(EscrowError::TermsHashEmpty)?;
+        let terms_hash_opt: Option<BytesN<32>> = meta.terms_hash.clone().into();
+        let terms_hash = terms_hash_opt.ok_or(EscrowError::TermsHashEmpty)?;
 
         let key = DataKey::TermsAcceptance(escrow_id);
         let mut acceptance: TermsAcceptance = env
@@ -3915,10 +3923,11 @@ impl EscrowContract {
     pub fn check_terms_accepted(env: Env, escrow_id: u64) -> Result<bool, EscrowError> {
         ContractStorage::require_initialized(&env)?;
         let meta = ContractStorage::load_escrow_meta_with_rent(&env, escrow_id)?;
-        if meta.terms_hash.is_none() {
+        let terms_hash_opt: Option<BytesN<32>> = meta.terms_hash.clone().into();
+        if terms_hash_opt.is_none() {
             return Ok(false);
         }
-        let acceptance = env
+        let acceptance: TermsAcceptance = env
             .storage()
             .persistent()
             .get(&DataKey::TermsAcceptance(escrow_id))
@@ -3968,7 +3977,7 @@ impl EscrowContract {
             .ok_or(EscrowError::DexNotConfigured)?;
 
         let pair_found = dex_config.supported_pairs.iter().any(|(a, b)| {
-            *a == token_in && *b == token_out
+            a == token_in && b == token_out
         });
         if !pair_found {
             return Err(EscrowError::InvalidSwapParameters);
@@ -3984,8 +3993,8 @@ impl EscrowContract {
         let now = env.ledger().timestamp();
         let record = DexSwapRecord {
             escrow_id,
-            token_in,
-            token_out,
+            token_in: token_in.clone(),
+            token_out: token_out.clone(),
             amount_in,
             min_amount_out,
             amount_out: Some(amount_in),
@@ -4179,39 +4188,41 @@ impl EscrowContract {
         };
 
         let child1_id = Self::create_escrow_internal(
-            env.clone(),
-            meta.client.clone(),
-            meta.freelancer.clone(),
-            meta.token.clone(),
-            child1_amount,
-            new_brief_hash.clone(),
-            meta.arbiter.clone(),
-            meta.deadline,
-            meta.lock_time,
-            meta.dispute_timeout_ledger,
-            Some(meta.buyer_signers.clone()),
-            inherited_multisig.clone(),
-            inherited_timelock.clone(),
-            false,
-        )?;
+                    env.clone(),
+                    meta.client.clone(),
+                    meta.freelancer.clone(),
+                    meta.token.clone(),
+                    child1_amount,
+                    new_brief_hash.clone(),
+                    meta.arbiter.clone(),
+                    meta.deadline,
+                    meta.lock_time,
+                    meta.dispute_timeout_ledger,
+                    Some(meta.buyer_signers.clone()),
+                    inherited_multisig.clone(),
+                    inherited_timelock.clone(),
+                    None,
+                    false,
+                )?;
 
         // Create second child escrow
         let child2_id = Self::create_escrow_internal(
-            env.clone(),
-            meta.client.clone(),
-            meta.freelancer.clone(),
-            meta.token.clone(),
-            child2_amount,
-            new_brief_hash,
-            meta.arbiter.clone(),
-            meta.deadline,
-            meta.lock_time,
-            meta.dispute_timeout_ledger,
-            Some(meta.buyer_signers.clone()),
-            inherited_multisig,
-            inherited_timelock,
-            false,
-        )?;
+                    env.clone(),
+                    meta.client.clone(),
+                    meta.freelancer.clone(),
+                    meta.token.clone(),
+                    child2_amount,
+                    new_brief_hash,
+                    meta.arbiter.clone(),
+                    meta.deadline,
+                    meta.lock_time,
+                    meta.dispute_timeout_ledger,
+                    Some(meta.buyer_signers.clone()),
+                    inherited_multisig,
+                    inherited_timelock,
+                    None,
+                    false,
+                )?;
 
         // Note: Parent escrow remains active, only unallocated balance is split
 
@@ -4717,7 +4728,7 @@ impl EscrowContract {
                 return Err(EscrowError::E20);
             }
             if let Some(disputed_at) = meta.dispute_start_ledger {
-                let current_ledger = env.ledger().sequence();
+                let current_ledger = env.ledger().sequence() as u64;
                 if current_ledger < disputed_at + DISPUTE_COOLDOWN_LEDGERS as u64 {
                     return Err(EscrowError::E64);
                 }
@@ -5171,7 +5182,7 @@ impl EscrowContract {
         if desc_len == 0 {
             return Err(EscrowError::E80);
         }
-        if desc_len > MAX_STRING_LEN as usize {
+        if desc_len as usize > MAX_STRING_LEN as usize {
             return Err(EscrowError::E81);
         }
 
@@ -5264,10 +5275,7 @@ impl EscrowContract {
     ///
     /// See the function name for the public contract operation.
     pub fn is_arbiter_allowed(env: Env, arbiter: Address) -> bool {
-        env.storage()
-            .persistent()
-            .get::<DataKey, bool>(&DataKey::ArbiterAllowlist(arbiter))
-            .unwrap_or(false)
+        crate::arbiter_allowlist::is_arbiter_allowed(&&env, arbiter)
     }
 
     // ── Arbiter Fee Configuration ──────────────────────────────────────
@@ -5568,6 +5576,7 @@ impl EscrowContract {
             None,             // buyer_signers
             None,             // multisig_config
             None,             // timelock
+            None,             // terms_hash
             caller != client, // client auth already taken when caller is the client
         )?;
 
@@ -6628,7 +6637,7 @@ mod tests {
         (env, admin, contract_id, client)
     }
 
-    fn no_multisig(env: &Env) -> MultisigConfig {
+    pub fn no_multisig(env: &Env) -> MultisigConfig {
         MultisigConfig {
             approvers: soroban_sdk::Vec::new(env),
             weights: soroban_sdk::Vec::new(env),
@@ -8179,21 +8188,20 @@ mod tests {
         token_admin.mint(&escrow_client, &(amount + reserve));
 
         let escrow_id = contract_client.create_escrow(
-            &escrow_client,
-            &freelancer,
-            &token_id,
-            &amount,
-            &BytesN::from_array(&env, &[1u8; 32]),
-            &None,
-            &None,
-            &None,
-            &None,
-            &MultisigConfig {
-                approvers: soroban_sdk::Vec::new(&env),
-                weights: soroban_sdk::Vec::new(&env),
-                threshold: 0,
-            },
-        );
+                    &escrow_client,
+                    &freelancer,
+                    &token_id,
+                    &amount,
+                    &BytesN::from_array(&env, &[1u8; 32]),
+                    &None,
+                    &None,
+                    &None,
+                    &None,
+                    &MultisigConfig { approvers: soroban_sdk::Vec::new(&env),
+                    weights: soroban_sdk::Vec::new(&env),
+                    threshold: 0, },
+                    &None,
+                );
 
         (
             env,
@@ -8265,21 +8273,20 @@ mod tests {
         let token_admin = token::StellarAssetClient::new(&env, &token_id);
         token_admin.mint(&escrow_client, &200_i128);
         client.create_escrow(
-            &escrow_client,
-            &freelancer,
-            &token_id,
-            &100_i128,
-            &BytesN::from_array(&env, &[1u8; 32]),
-            &None,
-            &None,
-            &None,
-            &None,
-            &MultisigConfig {
-                approvers: soroban_sdk::Vec::new(&env),
-                weights: soroban_sdk::Vec::new(&env),
-                threshold: 0,
-            },
-        );
+                    &escrow_client,
+                    &freelancer,
+                    &token_id,
+                    &100_i128,
+                    &BytesN::from_array(&env, &[1u8; 32]),
+                    &None,
+                    &None,
+                    &None,
+                    &None,
+                    &MultisigConfig { approvers: soroban_sdk::Vec::new(&env),
+                    weights: soroban_sdk::Vec::new(&env),
+                    threshold: 0, },
+                    &None,
+                );
     }
 
     #[test]

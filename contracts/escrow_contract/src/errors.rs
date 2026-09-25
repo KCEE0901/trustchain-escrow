@@ -110,6 +110,18 @@ pub enum EcErr {
     E85 = 85,
     /// Slippage tolerance has been exceeded; the release is rejected.
     E86 = 86,
+    /// The terms hash is all zeros — a valid document hash must be provided.
+    TermsHashEmpty = 93,
+    /// The client has already accepted the terms for this escrow.
+    ClientAlreadyAcceptedTerms = 94,
+    /// The client has not yet accepted the terms for this escrow.
+    ClientHasNotAcceptedTerms = 95,
+    /// The DEX swap parameters are invalid (unsupported pair or zero amount).
+    InvalidSwapParameters = 96,
+    /// The DEX is not configured on this contract.
+    DexNotConfigured = 97,
+    /// The arbiter fee in basis points is invalid.
+    ArbiterFeeBpsInvalid = 98,
 }
 
 /// Backward-compatible alias — existing code imports `EscrowError`; the oracle
