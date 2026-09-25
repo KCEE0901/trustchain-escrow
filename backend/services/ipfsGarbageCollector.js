@@ -12,8 +12,12 @@ function hoursAgoDate(hours) {
   return new Date(Date.now() - hours * 60 * 60 * 1000);
 }
 
+// Pin timestamps keyed by CID, populated when the provider reports them (Pinata)
+const pinnedAtByCid = new Map();
+
 async function listPinnedCidsFromPinata() {
   const results = [];
+  pinnedAtByCid.clear();
   let pageOffset = 0;
   while (true) {
     const url = `https://api.pinata.cloud/data/pinList?status=pinned&pageLimit=${PAGE_LIMIT}&pageOffset=${pageOffset}`;
@@ -28,8 +32,11 @@ async function listPinnedCidsFromPinata() {
     if (!res.ok) throw new Error(`Pinata list failed: ${res.status} ${res.statusText}`);
     const data = await res.json();
     if (!Array.isArray(data.rows)) break;
-    for (const row of data.rows)
-      results.push(row.ipfs_pin_hash || row.id || row.pin || row.cid || row.ipfs_pin_hash);
+    for (const row of data.rows) {
+      const cid = row.ipfs_pin_hash || row.id || row.pin || row.cid;
+      if (cid && row.date_pinned) pinnedAtByCid.set(cid, new Date(row.date_pinned));
+      results.push(cid);
+    }
     if (data.rows.length < PAGE_LIMIT) break;
     pageOffset += PAGE_LIMIT;
   }
@@ -129,16 +136,25 @@ export async function runGarbageCollector({ dryRun = false } = {}) {
 
   log.info({ orphansCount: orphans.length }, '[IPFSGC] Orphan CIDs identified');
 
+  if (dryRun) {
+    const now = Date.now();
+    const candidates = orphans.map((cid) => {
+      const pinnedAt = pinnedAtByCid.get(cid);
+      return {
+        cid,
+        reason: 'unreferenced',
+        ageHours: pinnedAt ? Math.floor((now - pinnedAt.getTime()) / 3_600_000) : null,
+      };
+    });
+    const report = { dryRun: true, candidateCount: candidates.length, candidates };
+    log.info(report, '[IPFSGC] Dry run report - no pins removed');
+    return { unpinned: [], failed: [], report };
+  }
+
   // 4) Unpin orphans
   const results = { unpinned: [], failed: [] };
   for (const cid of orphans) {
     try {
-      if (dryRun) {
-        log.info({ cid }, '[IPFSGC] Dry run - would unpin');
-        results.unpinned.push(cid);
-        continue;
-      }
-
       if (PINATA_JWT || (PINATA_API_KEY && PINATA_SECRET_API_KEY)) {
         await unpinFromPinata(cid);
       } else {
