@@ -55,6 +55,7 @@
 mod admin_transfer_tests;
 mod amount_limits_tests;
 mod arbiter_allowlist;
+mod formal_verification;
 mod arbiter_allowlist_tests;
 mod arbiter_reputation_tests;
 mod arbiter_validation_tests;
