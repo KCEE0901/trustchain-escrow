@@ -11,6 +11,7 @@ import prisma from '../../lib/prisma.js';
 import { TIER_LIMITS } from '../../config/rateLimits.js';
 import { logControllerError, getLogger } from '../../config/logger.js';
 import { getUserUsage } from '../middleware/rateLimiter.js';
+import { logArbitratorAction, AdminAction } from '../services/auditLogger.js';
 
 const adminLog = getLogger();
 
@@ -500,6 +501,188 @@ const updateSettings = async (req, res) => {
   }
 };
 
+// ── Role Management ────────────────────────────────────────────────────────────
+
+/**
+ * POST /api/admin/users/:address/grant-role
+ * Grants a role to a user. Logs the action in the audit trail.
+ *
+ * Body: { role: 'admin' | 'superadmin' | 'user' }
+ */
+const grantRole = async (req, res) => {
+  try {
+    const { address } = req.params;
+    const { role } = req.body;
+    const performedBy = req.user?.address || 'system';
+
+    // Validate role
+    const validRoles = ['user', 'admin', 'superadmin'];
+    if (!role || !validRoles.includes(role)) {
+      return res.status(400).json({
+        error: {
+          code: 'INVALID_ROLE',
+          message: `Role must be one of: ${validRoles.join(', ')}`,
+        },
+      });
+    }
+
+    // Use transaction to atomically update user and log audit entry
+    const result = await prisma.$transaction(async (tx) => {
+      const user = await tx.user.findUnique({
+        where: { address },
+        select: { address: true, role: true },
+      });
+
+      if (!user) {
+        throw new Error('User not found.');
+      }
+
+      // Update user role
+      const updated = await tx.user.update({
+        where: { address },
+        data: { role },
+      });
+
+      // Log audit entry
+      await logArbitratorAction({
+        action: AdminAction.ROLE_GRANT,
+        actor: performedBy,
+        resourceId: address,
+        metadata: {
+          targetUserId: address,
+          role,
+          previousRole: user.role,
+          performedBy,
+          timestamp: new Date().toISOString(),
+        },
+        ipAddress: req.ip,
+      });
+
+      return updated;
+    });
+
+    adminLog.info({
+      type: 'admin_action',
+      action: 'ROLE_GRANT',
+      targetAddress: address,
+      role,
+      performedBy,
+      requestId: req.id,
+    });
+
+    res.json({
+      message: `Role granted: ${address} → ${role}`,
+      user: { address: result.address, role: result.role },
+    });
+  } catch (err) {
+    logControllerError('admin.grantRole', err, req);
+
+    // Log failed attempt
+    try {
+      await logArbitratorAction({
+        action: AdminAction.ROLE_GRANT,
+        actor: req.user?.address || 'system',
+        resourceId: req.params.address,
+        metadata: {
+          targetUserId: req.params.address,
+          role: req.body.role,
+          performedBy: req.user?.address || 'system',
+          reason: err.message,
+          timestamp: new Date().toISOString(),
+        },
+        ipAddress: req.ip,
+      });
+    } catch (auditErr) {
+      adminLog.error({ err: auditErr }, 'Failed to log role grant failure');
+    }
+
+    res.status(500).json({ error: err.message });
+  }
+};
+
+/**
+ * POST /api/admin/users/:address/revoke-role
+ * Revokes a role from a user (sets role to 'user'). Logs the action in the audit trail.
+ */
+const revokeRole = async (req, res) => {
+  try {
+    const { address } = req.params;
+    const performedBy = req.user?.address || 'system';
+    const roleToRevoke = req.body.role || 'admin'; // default to revoking admin
+
+    // Use transaction to atomically update user and log audit entry
+    const result = await prisma.$transaction(async (tx) => {
+      const user = await tx.user.findUnique({
+        where: { address },
+        select: { address: true, role: true },
+      });
+
+      if (!user) {
+        throw new Error('User not found.');
+      }
+
+      // Revoke role (set to 'user')
+      const updated = await tx.user.update({
+        where: { address },
+        data: { role: 'user' },
+      });
+
+      // Log audit entry
+      await logArbitratorAction({
+        action: AdminAction.ROLE_REVOKE,
+        actor: performedBy,
+        resourceId: address,
+        metadata: {
+          targetUserId: address,
+          revokedRole: roleToRevoke,
+          previousRole: user.role,
+          performedBy,
+          timestamp: new Date().toISOString(),
+        },
+        ipAddress: req.ip,
+      });
+
+      return updated;
+    });
+
+    adminLog.info({
+      type: 'admin_action',
+      action: 'ROLE_REVOKE',
+      targetAddress: address,
+      revokedRole: roleToRevoke,
+      performedBy,
+      requestId: req.id,
+    });
+
+    res.json({
+      message: `Role revoked: ${address} → user`,
+      user: { address: result.address, role: result.role },
+    });
+  } catch (err) {
+    logControllerError('admin.revokeRole', err, req);
+
+    // Log failed attempt
+    try {
+      await logArbitratorAction({
+        action: AdminAction.ROLE_REVOKE,
+        actor: req.user?.address || 'system',
+        resourceId: req.params.address,
+        metadata: {
+          targetUserId: req.params.address,
+          performedBy: req.user?.address || 'system',
+          reason: err.message,
+          timestamp: new Date().toISOString(),
+        },
+        ipAddress: req.ip,
+      });
+    } catch (auditErr) {
+      adminLog.error({ err: auditErr }, 'Failed to log role revoke failure');
+    }
+
+    res.status(500).json({ error: err.message });
+  }
+};
+
 export default {
   listUsers,
   getUserDetail,
@@ -514,4 +697,6 @@ export default {
   getRateLimits,
   updateRateLimit,
   getUserRateLimitUsage,
+  grantRole,
+  revokeRole,
 };

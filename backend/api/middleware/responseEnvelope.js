@@ -45,6 +45,7 @@ export function responseEnvelope(req, res, next) {
         error: {
           code: raw?.code ?? (statusCode >= 500 ? 'INTERNAL_ERROR' : 'REQUEST_ERROR'),
           message: raw?.message ?? (typeof raw === 'string' ? raw : 'An error occurred'),
+          requestId: req.id ?? req.headers['x-request-id'] ?? null,
           ...(raw && typeof raw === 'object' && !('code' in raw) ? {} : {}),
         },
       };
@@ -55,6 +56,8 @@ export function responseEnvelope(req, res, next) {
           Object.assign(enveloped.error, rest);
         }
       }
+      // Add X-Request-ID header to response
+      res.setHeader('X-Request-ID', enveloped.error.requestId || 'unknown');
       return originalJson(enveloped);
     }
 

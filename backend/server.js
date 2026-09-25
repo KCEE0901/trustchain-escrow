@@ -13,6 +13,9 @@ import cors from 'cors';
 import express from 'express';
 import helmet from 'helmet';
 import { requestLogger } from './lib/logger.js';
+import { OpenApiValidator } from 'express-openapi-validator';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 import cookieParser from 'cookie-parser';
 import {
@@ -76,6 +79,9 @@ attachPrismaMetrics(prisma);
 attachPrismaTracing(prisma);
 
 const PORT = process.env.PORT || 4000;
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const app = express();
 const sentryRequestHandler = Sentry.expressRequestHandler?.() ?? ((_req, _res, next) => next());
 const sentryTracingHandler = Sentry.expressTracingHandler?.() ?? ((_req, _res, next) => next());
@@ -117,6 +123,32 @@ app.use(sanitizeInputs);
 app.use(csrfProtection);
 app.use('/uploads', express.static('uploads'));
 app.use(auditMiddleware);
+
+// ── OpenAPI request body validation — after body parsers, before routes ───────
+// Validates request bodies against openapi.yaml schemas
+const openApiValidator = new OpenApiValidator({
+  apiSpec: path.join(__dirname, './openapi.yaml'),
+  validateRequests: {
+    removeAdditionalProperties: false, // report undocumented fields as errors
+    coerceTypes: true, // automatically coerce types if possible
+  },
+  validateResponses: false, // responses are not validated by default (only requests)
+  validateFormats: 'full', // full format validation
+  errorHandler: (err, req, res, next) => {
+    // Custom error handler — returns 400 with validation error details
+    const statusCode = err.status || 400;
+    res.status(statusCode).json({
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'Request validation failed',
+        requestId: req.id,
+        details: err.errors || [{ message: err.message }],
+      },
+    });
+  },
+});
+
+app.use(openApiValidator.middleware());
 
 // ── Sentry tracing handler — after body parsers, before routes ────────────────
 app.use(sentryTracingHandler);
@@ -226,12 +258,21 @@ app.use('/api-docs', docsRouter);
 
 // ── 404 handler ───────────────────────────────────────────────────────────────
 app.use((req, res) => {
+  const requestId = req?.id || req?.headers?.['x-request-id'] || 'unknown';
   getLogger().warn({
     message: 'http_not_found',
     method: req.method,
     path: req.originalUrl?.split('?')[0],
+    requestId,
   });
-  res.status(404).json({ error: 'Route not found' });
+  res.setHeader('X-Request-ID', requestId);
+  res.status(404).json({
+    error: {
+      code: 'NOT_FOUND',
+      message: 'Route not found',
+      requestId,
+    },
+  });
 });
 
 // ── Sentry error handler — must be before the generic error handler ───────────
@@ -242,18 +283,25 @@ app.use(sentryErrorHandler);
 
 app.use((err, req, res, _next) => {
   const statusCode = err.statusCode || 500;
+  const requestId = req?.id || req?.headers?.['x-request-id'] || 'unknown';
 
   // Attach Sentry event ID to response so support can correlate reports
   const sentryId = res.sentry;
-  const body = { error: err.message || 'Internal server error' };
-  if (sentryId) body.errorId = sentryId;
+  const body = {
+    error: {
+      message: err.message || 'Internal server error',
+      requestId,
+      code: err.code || (statusCode >= 500 ? 'INTERNAL_ERROR' : 'REQUEST_ERROR'),
+    },
+  };
+  if (sentryId) body.error.errorId = sentryId;
 
   const log = req?.log || logger;
   log.error(
     {
       err,
       statusCode,
-      requestId: req?.id,
+      requestId,
       route: req?.path || 'unknown',
       userId: req?.user?.userId,
     },
@@ -264,6 +312,8 @@ app.use((err, req, res, _next) => {
     Sentry.captureException(err);
   }
 
+  // Include X-Request-ID header in error responses
+  res.setHeader('X-Request-ID', requestId);
   errorsTotal.inc({ type: err.name || 'Error', route: req?.path || 'unknown' });
   res.status(statusCode).json(body);
 });
