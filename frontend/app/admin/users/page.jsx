@@ -53,7 +53,10 @@ function ActionModal({ user, action, onClose, onConfirm }) {
 export default function AdminUsersPage() {
   const { apiKey } = useAdminStore();
   const [users, setUsers] = useState([]);
-  const [pagination, setPagination] = useState({ page: 1, total: 0, pages: 1 });
+  const [total, setTotal] = useState(0);
+  const [cursors, setCursors] = useState([]); // stack of previous cursors for "Previous"
+  const [currentCursor, setCurrentCursor] = useState(null);
+  const [nextCursor, setNextCursor] = useState(null);
   const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -61,17 +64,24 @@ export default function AdminUsersPage() {
   const [toast, setToast] = useState('');
   const [modal, setModal] = useState({ user: null, action: '' });
 
+  const LIMIT = 25;
+
   const fetchUsers = useCallback(
-    async (page = 1, q = '') => {
+    async (cursor = null, q = '') => {
       setLoading(true);
       setError('');
       try {
-        const params = new URLSearchParams({ page, limit: 20, ...(q ? { search: q } : {}) });
+        const params = new URLSearchParams({
+          limit: LIMIT,
+          ...(q ? { search: q } : {}),
+          ...(cursor ? { cursor } : {}),
+        });
         const res = await adminFetch(`/api/admin/users?${params}`, apiKey);
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Failed to fetch users');
         setUsers(data.users);
-        setPagination(data.pagination);
+        setTotal(data.pagination?.total ?? 0);
+        setNextCursor(data.pagination?.nextCursor ?? null);
       } catch (err) {
         setError(err.message);
       } finally {
@@ -81,9 +91,30 @@ export default function AdminUsersPage() {
     [apiKey],
   );
 
+  // Reset cursor stack whenever search or apiKey changes
   useEffect(() => {
-    fetchUsers(1, search);
+    setCursors([]);
+    setCurrentCursor(null);
+    fetchUsers(null, search);
   }, [apiKey, search, fetchUsers]);
+
+  const handleNext = () => {
+    if (!nextCursor) return;
+    setCursors((prev) => [...prev, currentCursor]);
+    setCurrentCursor(nextCursor);
+    fetchUsers(nextCursor, search);
+  };
+
+  const handlePrev = () => {
+    if (cursors.length === 0) return;
+    const prev = cursors[cursors.length - 1];
+    setCursors((c) => c.slice(0, -1));
+    setCurrentCursor(prev);
+    fetchUsers(prev, search);
+  };
+
+  const isFirstPage = cursors.length === 0;
+  const isLastPage = !nextCursor;
 
   const showToast = (msg) => {
     setToast(msg);
@@ -101,7 +132,7 @@ export default function AdminUsersPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Action failed');
       showToast(`User ${action === 'ban' ? 'banned' : 'suspended'} successfully.`);
-      fetchUsers(pagination.page, search);
+      fetchUsers(currentCursor, search);
     } catch (err) {
       setError(err.message);
     }
@@ -125,7 +156,7 @@ export default function AdminUsersPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-white">User Management</h1>
-          <p className="text-gray-400 text-sm mt-1">{pagination.total} users total</p>
+          <p className="text-gray-400 text-sm mt-1">{total} users total</p>
         </div>
         <a
           href="/admin"
@@ -241,27 +272,27 @@ export default function AdminUsersPage() {
       </div>
 
       {/* Pagination */}
-      {pagination.pages > 1 && (
-        <div className="flex justify-center gap-2 mt-4">
+      <div className="flex items-center justify-between mt-4">
+        <span className="text-sm text-gray-500">
+          {total > 0 ? `${total} users total` : ''}
+        </span>
+        <div className="flex gap-2">
           <button
-            onClick={() => fetchUsers(pagination.page - 1, search)}
-            disabled={pagination.page <= 1}
+            onClick={handlePrev}
+            disabled={isFirstPage || loading}
             className="text-sm px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
-            ← Prev
+            ← Previous
           </button>
-          <span className="text-sm text-gray-500 px-2 py-1.5">
-            {pagination.page} / {pagination.pages}
-          </span>
           <button
-            onClick={() => fetchUsers(pagination.page + 1, search)}
-            disabled={pagination.page >= pagination.pages}
+            onClick={handleNext}
+            disabled={isLastPage || loading}
             className="text-sm px-3 py-1.5 rounded-lg border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             Next →
           </button>
         </div>
-      )}
+      </div>
     </div>
   );
 }
