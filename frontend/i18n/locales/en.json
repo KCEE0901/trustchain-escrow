@@ -14,7 +14,11 @@
       "active": "Active",
       "completed": "Completed",
       "disputed": "Disputed",
-      "cancelled": "Cancelled"
+      "expired": "Expired",
+      "cancelled": "Cancelled",
+      "pending": "Pending",
+      "funded": "Funded",
+      "resolved": "Resolved"
     },
     "fields": {
       "client": "Client",

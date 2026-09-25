@@ -18,6 +18,8 @@ import {
   TrendingUp,
   Loader2,
 } from 'lucide-react';
+import SectionErrorBoundary from '../../components/ui/SectionErrorBoundary';
+import { captureException } from '../../lib/sentry';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
@@ -440,12 +442,60 @@ function ProposalForm({ onSubmit, isSubmitting }) {
   );
 }
 
+function ProposalListContent({
+  loading,
+  error,
+  filteredProposals,
+  filter,
+  handleVote,
+  expandedProposal,
+  setExpandedProposal,
+  userVoting,
+}) {
+  if (error) {
+    throw error;
+  }
+
+  if (loading) {
+    return (
+      <div className="card flex items-center justify-center py-12">
+        <Loader2 size={32} className="animate-spin text-blue-400" />
+      </div>
+    );
+  }
+
+  if (filteredProposals.length === 0) {
+    return (
+      <div className="card text-center py-12">
+        <p className="text-gray-400">No {filter} proposals</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {filteredProposals.map((proposal) => (
+        <ProposalCard
+          key={proposal.id}
+          proposal={proposal}
+          onVote={handleVote}
+          onExpand={setExpandedProposal}
+          isExpanded={expandedProposal === proposal.id}
+          userVoting={userVoting}
+        />
+      ))}
+    </div>
+  );
+}
+
 export default function GovernancePage() {
   const { isConnected, address, signTx } = useWallet();
   const { showToast } = useToast();
   const [proposals, setProposals] = useState([]);
   const [userVotingShare, setUserVotingShare] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [proposalsError, setProposalsError] = useState(null);
+  const [resetKey, setResetKey] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [userVoting, setUserVoting] = useState(false);
   const [expandedProposal, setExpandedProposal] = useState(null);
@@ -458,23 +508,34 @@ export default function GovernancePage() {
     }
   };
 
-  useEffect(() => {
-    const fetchProposals = async () => {
-      try {
-        setLoading(true);
-        const response = await fetch(`${API_BASE}/api/governance/proposals`);
-        if (response.ok) {
-          const data = await response.json();
-          setProposals(Array.isArray(data) ? data : data.proposals || []);
-        }
-      } catch (error) {
-        console.error('Failed to fetch proposals:', error);
-        showToast('Failed to load proposals', 'error');
-      } finally {
-        setLoading(false);
+  const fetchProposals = useCallback(async () => {
+    try {
+      setLoading(true);
+      setProposalsError(null);
+      const response = await fetch(`${API_BASE}/api/governance/proposals`);
+      if (response.ok) {
+        const data = await response.json();
+        setProposals(Array.isArray(data) ? data : data.proposals || []);
+      } else {
+        throw new Error('Could not load proposals');
       }
-    };
+    } catch (error) {
+      console.error('Failed to fetch proposals:', error);
+      setProposalsError(error);
+      captureException(error);
+      showToast('Failed to load proposals', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [showToast]);
 
+  const handleRetryProposals = useCallback(() => {
+    setProposalsError(null);
+    setResetKey((k) => k + 1);
+    fetchProposals();
+  }, [fetchProposals]);
+
+  useEffect(() => {
     const fetchUserVotingShare = async () => {
       if (isConnected && address) {
         try {
@@ -491,7 +552,7 @@ export default function GovernancePage() {
 
     fetchProposals();
     fetchUserVotingShare();
-  }, [isConnected, address, showToast]);
+  }, [isConnected, address, fetchProposals]);
 
   const handleVote = async (proposalId, support) => {
     if (!isConnected || !address) {
@@ -642,26 +703,23 @@ export default function GovernancePage() {
 
         <div className="grid lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2 space-y-4">
-            {loading ? (
-              <div className="card flex items-center justify-center py-12">
-                <Loader2 size={32} className="animate-spin text-blue-400" />
-              </div>
-            ) : filteredProposals.length === 0 ? (
-              <div className="card text-center py-12">
-                <p className="text-gray-400">No {filter} proposals</p>
-              </div>
-            ) : (
-              filteredProposals.map((proposal) => (
-                <ProposalCard
-                  key={proposal.id}
-                  proposal={proposal}
-                  onVote={handleVote}
-                  onExpand={setExpandedProposal}
-                  isExpanded={expandedProposal === proposal.id}
-                  userVoting={userVoting}
-                />
-              ))
-            )}
+            <SectionErrorBoundary
+              title="Could not load proposals"
+              resetKey={resetKey}
+              onRetry={handleRetryProposals}
+              onError={(error, info) => captureException(error, info)}
+            >
+              <ProposalListContent
+                loading={loading}
+                error={proposalsError}
+                filteredProposals={filteredProposals}
+                filter={filter}
+                handleVote={handleVote}
+                expandedProposal={expandedProposal}
+                setExpandedProposal={setExpandedProposal}
+                userVoting={userVoting}
+              />
+            </SectionErrorBoundary>
           </div>
 
           <div className="lg:col-span-1">

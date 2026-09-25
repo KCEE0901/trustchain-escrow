@@ -38,6 +38,7 @@ const STATUS_STYLES = {
   Pending: TONES.gray,
   Submitted: TONES.blue,
   Approved: TONES.green,
+  Released: TONES.green,
   Rejected: TONES.red,
 
   // Reputation badges
@@ -68,6 +69,7 @@ const ICONS = {
   Pending: '○',
   Submitted: '📤',
   Approved: '✓',
+  Released: '✓',
   Rejected: '✗',
   TRUSTED: '🔵',
   VERIFIED: '💜',

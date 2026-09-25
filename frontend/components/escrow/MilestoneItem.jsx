@@ -67,11 +67,11 @@ export default function MilestoneItem({
 
   // Determine which status icon to show in the timeline dot
   const dotColor =
-    milestone.status === 'Approved'
+    milestone.status === 'Approved' || milestone.status === 'Released'
       ? 'bg-emerald-500'
       : milestone.status === 'Submitted'
         ? 'bg-blue-500'
-        : milestone.status === 'Rejected'
+        : milestone.status === 'Rejected' || milestone.status === 'Disputed'
           ? 'bg-red-500'
           : 'bg-gray-700';
 
@@ -109,7 +109,60 @@ export default function MilestoneItem({
             </div>
           </div>
 
-          {/* TODO (contributor — Issue #40): show description / IPFS link */}
+          {/* Description */}
+          {milestone.description && (
+            <p className="text-sm text-gray-400">{milestone.description}</p>
+          )}
+
+          {/* Dispute evidence upload section */}
+          {milestone.status === 'Disputed' && (
+            <div
+              className="mt-3 p-3.5 rounded-lg bg-red-950/20 border border-red-900/40 space-y-3"
+              data-testid="dispute-evidence-section"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-red-400 uppercase tracking-wide flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-red-500" />
+                  Dispute Evidence
+                </span>
+                <span className="text-xs text-gray-400">
+                  {milestone.evidence?.length || 0} file(s) attached
+                </span>
+              </div>
+              {milestone.evidence && milestone.evidence.length > 0 && (
+                <div className="space-y-1.5">
+                  {milestone.evidence.map((item, idx) => (
+                    <div
+                      key={idx}
+                      className="flex items-center justify-between text-xs text-gray-300 bg-gray-900/60 px-3 py-2 rounded border border-gray-800"
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        <span className="text-gray-500">📄</span>
+                        <span className="truncate">{item.name || item.title || item}</span>
+                      </div>
+                      {item.url && (
+                        <a
+                          href={item.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-indigo-400 hover:text-indigo-300 ml-2 flex-shrink-0 font-medium"
+                        >
+                          View
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="pt-1 flex flex-wrap items-center gap-3">
+                <label className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-700 bg-gray-800 text-gray-200 hover:bg-gray-700 hover:border-gray-600 transition-colors">
+                  <span>📎 Upload Evidence</span>
+                  <input type="file" className="hidden" onChange={() => {}} />
+                </label>
+                <span className="text-xs text-gray-500">PDF, PNG, JPG up to 10MB</span>
+              </div>
+            </div>
+          )}
 
           {/* Action Buttons */}
           {!isActing ? (
@@ -155,7 +208,7 @@ function ActionButtons({ status, role, onApprove, onReject, onSubmit, t }) {
     );
   }
 
-  if (status === 'Approved') {
+  if (status === 'Approved' || status === 'Released') {
     return <p className="text-xs text-emerald-400">✓ {t('escrow.actions.approve')}</p>;
   }
 
