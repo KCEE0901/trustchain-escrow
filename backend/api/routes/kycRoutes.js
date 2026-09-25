@@ -53,5 +53,7 @@ router.get(
  */
 router.post('/webhook', captureRawBody, express.json(), kycController.webhook);
 router.get('/admin', adminAuth, kycController.adminList);
+router.get('/admin/:address/history', adminAuth, kycController.adminHistory);
+router.patch('/admin/:address/status', adminAuth, express.json(), kycController.adminOverride);
 
 export default router;

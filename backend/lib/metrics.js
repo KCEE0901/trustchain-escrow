@@ -42,6 +42,13 @@ export const httpRequestTotal = new client.Counter({
   registers: [register],
 });
 
+export const httpRequestTimeoutsTotal = new client.Counter({
+  name: 'http_request_timeouts_total',
+  help: 'Total number of HTTP requests that exceeded their timeout budget',
+  labelNames: ['method', 'route'],
+  registers: [register],
+});
+
 export const httpRequestsInFlight = new client.Gauge({
   name: 'http_requests_in_flight',
   help: 'Number of HTTP requests currently being processed',

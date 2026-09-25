@@ -52,6 +52,7 @@ model Tenant {
   webhookSubscriptions WebhookSubscription[]
   payments             Payment[]
   kycVerifications     KycVerification[]
+  kycStatusTransitions KycStatusTransition[]
   adminAuditLogs       AdminAuditLog[]
   auditLogs            AuditLog[]
   chatRoomKeys         ChatRoomKey[]
@@ -542,6 +543,7 @@ model Payment {
   currency            String        @default("usd")
   status              PaymentStatus @default(Pending)
   refundId            String?       @map("refund_id") // Stripe refund ID
+  txHash              String?       @map("tx_hash") // on-chain submission tracked by TransactionMonitor
   createdAt           DateTime      @default(now()) @map("created_at")
   updatedAt           DateTime      @updatedAt @map("updated_at")
 
@@ -552,6 +554,7 @@ model Payment {
   @@index([tenantId, address, createdAt(sort: Desc)])
   @@index([address])
   @@index([status])
+  @@index([txHash])
   // Composite index for address lookups sorted by date
   @@index([address, createdAt(sort: Desc)])
   @@map("payments")
@@ -576,6 +579,24 @@ model KycVerification {
   @@index([tenantId, status])
   @@index([status])
   @@map("kyc_verifications")
+}
+
+/// Append-only history of KYC status changes (provider decisions and manual overrides).
+model KycStatusTransition {
+  id             Int        @id @default(autoincrement())
+  tenantId       String     @map("tenant_id")
+  address        String
+  actor          String // "system:sumsub" for provider events, admin id for overrides
+  source         String // "provider" | "manual"
+  previousStatus KycStatus? @map("previous_status")
+  newStatus      KycStatus  @map("new_status")
+  reason         String?
+  createdAt      DateTime   @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, address, createdAt])
+  @@map("kyc_status_transitions")
 }
 
 // ── Admin Audit Log ───────────────────────────────────────────────────────────
