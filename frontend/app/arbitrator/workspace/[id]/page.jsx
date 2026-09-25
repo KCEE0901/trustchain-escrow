@@ -62,38 +62,38 @@ function EvidencePreviewModal({ file, onClose }) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 p-4 backdrop-blur-xl"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 p-3 sm:p-4 backdrop-blur-xl"
       role="dialog"
       aria-modal="true"
       aria-label={`Preview ${file.name}`}
       onClick={onClose}
     >
-      <div className="w-full max-w-4xl overflow-hidden rounded-3xl border border-white/10 bg-slate-900 shadow-2xl shadow-black/50">
-        <div className="flex items-center justify-between border-b border-white/10 bg-slate-950/80 px-5 py-4">
-          <div>
-            <p className="text-sm font-semibold text-white">{file.name}</p>
+      <div className="w-full max-w-4xl overflow-hidden rounded-2xl sm:rounded-3xl border border-white/10 bg-slate-900 shadow-2xl shadow-black/50">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/10 bg-slate-950/80 px-4 py-3 sm:px-5 sm:py-4">
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-white truncate">{file.name}</p>
             <p className="text-xs text-slate-400">Previewing file in the evidence workspace.</p>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-slate-200 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+            className="w-full sm:w-full md:w-auto rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-200 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 text-center"
           >
             Close
           </button>
         </div>
-        <div className="max-h-[75vh] overflow-auto p-5">
+        <div className="max-h-[75vh] overflow-auto p-3 sm:p-5">
           {file.type.startsWith('image/') ? (
             <img
               src={file.url}
               alt={file.name}
-              className="mx-auto max-h-[70vh] rounded-3xl object-contain"
+              className="mx-auto max-h-[65vh] rounded-2xl object-contain"
             />
           ) : (
             <iframe
               src={file.url}
               title={file.name}
-              className="h-[70vh] w-full rounded-3xl border border-white/10 bg-slate-950"
+              className="h-[65vh] w-full rounded-2xl border border-white/10 bg-slate-950"
             />
           )}
         </div>
@@ -160,30 +160,30 @@ export default function ArbitratorWorkspacePage({ params }) {
   };
 
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100">
-      <div className="mx-auto flex max-w-[1600px] flex-col gap-6 px-4 py-8 lg:px-6">
-        <header className="rounded-[32px] border border-white/10 bg-slate-900/80 p-6 shadow-[0_20px_80px_-40px_rgba(15,23,42,0.65)] backdrop-blur-xl">
+    <main className="min-h-screen bg-slate-950 text-slate-100 w-full overflow-x-hidden">
+      <div className="mx-auto flex max-w-[1600px] w-full flex-col gap-6 px-3 py-6 sm:px-4 sm:py-8 lg:px-6 overflow-x-hidden">
+        <header className="rounded-2xl sm:rounded-[32px] border border-white/10 bg-slate-900/80 p-4 sm:p-6 shadow-[0_20px_80px_-40px_rgba(15,23,42,0.65)] backdrop-blur-xl w-full">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div className="space-y-3">
               <p className="text-xs uppercase tracking-[0.35em] text-indigo-300/80">
                 Arbitrator mediation workspace
               </p>
-              <h1 className="text-3xl font-semibold text-white">Case #{workspaceId}</h1>
+              <h1 className="text-2xl sm:text-3xl font-semibold text-white break-words">Case #{workspaceId}</h1>
               <p className="max-w-3xl text-sm leading-6 text-slate-300 lg:text-base">
                 Navigate evidence, compare party positions, and finalize a fair payout
                 recommendation. The UI is designed for rapid keyboard navigation and accessible
                 decision workflows.
               </p>
             </div>
-            <div className="rounded-3xl border border-cyan-500/20 bg-cyan-500/10 px-5 py-3 text-sm text-cyan-100 shadow-sm shadow-cyan-500/10">
+            <div className="rounded-2xl sm:rounded-3xl border border-cyan-500/20 bg-cyan-500/10 px-4 py-3 sm:px-5 text-sm text-cyan-100 shadow-sm shadow-cyan-500/10">
               <strong className="block text-white">Live mediation</strong>
               <span className="text-slate-300">Secure dispute review mode enabled</span>
             </div>
           </div>
         </header>
 
-        <div className="grid gap-6 lg:grid-cols-[360px_1fr_360px]">
-          <section className="rounded-[28px] border border-white/10 bg-slate-900/70 p-5 shadow-xl shadow-black/30">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-1 lg:grid-cols-[360px_1fr_360px] w-full">
+          <section className="rounded-2xl sm:rounded-[28px] border border-white/10 bg-slate-900/70 p-4 sm:p-5 shadow-xl shadow-black/30 flex flex-col w-full">
             <div className="mb-5 flex items-center justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.35em] text-slate-400">
@@ -195,11 +195,11 @@ export default function ArbitratorWorkspacePage({ params }) {
                 {MOCK_WORKSPACE.evidence.length} files
               </span>
             </div>
-            <ol className="space-y-4">
+            <ol className="space-y-4 max-h-[380px] sm:max-h-[440px] md:max-h-[520px] overflow-y-auto pr-1 overscroll-contain">
               {MOCK_WORKSPACE.evidence.map((item, index) => (
                 <li
                   key={item.id}
-                  className="group rounded-3xl border border-white/10 bg-slate-950/60 p-4 transition hover:border-indigo-400/40"
+                  className="group rounded-2xl sm:rounded-3xl border border-white/10 bg-slate-950/60 p-4 transition hover:border-indigo-400/40"
                 >
                   <button
                     type="button"
@@ -211,11 +211,11 @@ export default function ArbitratorWorkspacePage({ params }) {
                     aria-label={`Open evidence ${item.title}`}
                   >
                     <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-semibold text-white">{item.title}</p>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold text-white truncate">{item.title}</p>
                         <p className="mt-2 text-sm leading-6 text-slate-400">{item.description}</p>
                       </div>
-                      <span className="text-xs text-slate-500">
+                      <span className="text-xs text-slate-500 flex-shrink-0">
                         {new Date(item.timestamp).toLocaleDateString()}
                       </span>
                     </div>
@@ -229,9 +229,40 @@ export default function ArbitratorWorkspacePage({ params }) {
                 </li>
               ))}
             </ol>
-            <div className="mt-6 space-y-3 rounded-3xl border border-white/10 bg-slate-950/80 p-4">
+
+            <div className="mt-4 pt-4 border-t border-white/10 space-y-2">
+              <p className="text-xs uppercase tracking-[0.25em] text-slate-400">Upload evidence</p>
+              <label className="flex flex-col items-center justify-center p-3 border border-dashed border-white/20 rounded-2xl bg-slate-950/50 hover:bg-slate-950/80 cursor-pointer transition text-center">
+                <span className="text-xs text-indigo-300 font-medium">Choose file or drag & drop</span>
+                <span className="text-[10px] text-slate-500 mt-0.5">PDF, PNG, JPG, TXT up to 10MB</span>
+                <input
+                  type="file"
+                  className="sr-only"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      const newEv = {
+                        id: `up-${Date.now()}`,
+                        title: file.name,
+                        description: 'Uploaded by arbitrator',
+                        timestamp: new Date().toISOString(),
+                        file: {
+                          name: file.name,
+                          type: file.type || 'application/octet-stream',
+                          url: URL.createObjectURL(file),
+                        },
+                      };
+                      setActiveEvidence(newEv);
+                      setPreviewFile(newEv.file);
+                    }
+                  }}
+                />
+              </label>
+            </div>
+
+            <div className="mt-6 space-y-3 rounded-2xl sm:rounded-3xl border border-white/10 bg-slate-950/80 p-4">
               <p className="text-xs uppercase tracking-[0.35em] text-slate-400">Active file</p>
-              <p className="text-sm font-semibold text-white">{activeEvidence.title}</p>
+              <p className="text-sm font-semibold text-white truncate">{activeEvidence.title}</p>
               <p className="text-sm leading-6 text-slate-400">{activeEvidence.description}</p>
               <Button
                 onClick={() => setPreviewFile(activeEvidence.file)}
@@ -243,8 +274,8 @@ export default function ArbitratorWorkspacePage({ params }) {
             </div>
           </section>
 
-          <section className="space-y-6">
-            <div className="rounded-[28px] border border-white/10 bg-slate-900/70 p-5 shadow-xl shadow-black/20">
+          <section className="space-y-6 w-full">
+            <div className="rounded-2xl sm:rounded-[28px] border border-white/10 bg-slate-900/70 p-4 sm:p-5 shadow-xl shadow-black/20">
               <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-xs uppercase tracking-[0.35em] text-slate-400">
@@ -252,21 +283,21 @@ export default function ArbitratorWorkspacePage({ params }) {
                   </p>
                   <h2 className="mt-2 text-xl font-semibold text-white">Account summary</h2>
                 </div>
-                <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-semibold uppercase text-emerald-200">
+                <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-semibold uppercase text-emerald-200 self-start sm:self-auto">
                   {formattedTimestamp}
                 </span>
               </div>
-              <div className="grid gap-4 md:grid-cols-2">
+              <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
                 {[MOCK_WORKSPACE.client, MOCK_WORKSPACE.freelancer].map((party) => (
                   <div
                     key={party.address}
-                    className="rounded-3xl border border-white/10 bg-slate-950/70 p-4"
+                    className="rounded-2xl sm:rounded-3xl border border-white/10 bg-slate-950/70 p-4"
                   >
                     <p className="text-xs uppercase tracking-[0.25em] text-slate-500">
                       {party.role}
                     </p>
                     <p className="mt-3 text-lg font-semibold text-white">{party.name}</p>
-                    <p className="mt-1 text-sm text-slate-400">{party.address}</p>
+                    <p className="mt-1 text-sm text-slate-400 font-mono break-all">{party.address}</p>
                     <p className="mt-4 text-sm leading-6 text-slate-300">{party.claim}</p>
                     <div className="mt-4 rounded-2xl bg-slate-800/80 px-3 py-3 text-sm text-slate-200">
                       <p className="font-medium">Available balance</p>
@@ -277,7 +308,7 @@ export default function ArbitratorWorkspacePage({ params }) {
               </div>
             </div>
 
-            <div className="rounded-[28px] border border-white/10 bg-slate-900/70 p-5 shadow-xl shadow-black/20">
+            <div className="rounded-2xl sm:rounded-[28px] border border-white/10 bg-slate-900/70 p-4 sm:p-5 shadow-xl shadow-black/20">
               <div className="mb-5 flex items-center justify-between gap-3">
                 <div>
                   <p className="text-xs uppercase tracking-[0.35em] text-slate-400">
@@ -289,7 +320,7 @@ export default function ArbitratorWorkspacePage({ params }) {
                   {clientShare}% client
                 </span>
               </div>
-              <div className="rounded-[24px] bg-slate-950/80 p-4">
+              <div className="rounded-2xl sm:rounded-[24px] bg-slate-950/80 p-4">
                 <div className="flex items-center justify-between gap-3 text-sm text-slate-300">
                   <span>Client</span>
                   <span>Freelancer</span>
@@ -310,18 +341,18 @@ export default function ArbitratorWorkspacePage({ params }) {
                 </div>
               </div>
               <div className="mt-5 grid grid-cols-2 gap-3 text-sm text-slate-300">
-                <div className="rounded-3xl border border-white/10 bg-slate-950/80 p-4">
+                <div className="rounded-2xl sm:rounded-3xl border border-white/10 bg-slate-950/80 p-4">
                   <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Client</p>
                   <p className="mt-2 text-2xl font-semibold text-white">{clientShare}%</p>
                 </div>
-                <div className="rounded-3xl border border-white/10 bg-slate-950/80 p-4">
+                <div className="rounded-2xl sm:rounded-3xl border border-white/10 bg-slate-950/80 p-4">
                   <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Freelancer</p>
                   <p className="mt-2 text-2xl font-semibold text-white">{freelancerShare}%</p>
                 </div>
               </div>
             </div>
 
-            <div className="rounded-[28px] border border-white/10 bg-slate-900/70 p-5 shadow-xl shadow-black/20">
+            <div className="rounded-2xl sm:rounded-[28px] border border-white/10 bg-slate-900/70 p-4 sm:p-5 shadow-xl shadow-black/20">
               <div className="mb-4 flex items-center justify-between gap-3">
                 <div>
                   <p className="text-xs uppercase tracking-[0.35em] text-slate-400">
@@ -342,31 +373,31 @@ export default function ArbitratorWorkspacePage({ params }) {
                 onChange={(event) => setNotes(event.target.value)}
                 rows={8}
                 placeholder="Capture evidence observations, security flags, and suggested settlement notes."
-                className="w-full rounded-3xl border border-white/10 bg-slate-950/80 p-4 text-sm text-slate-100 placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/20"
+                className="w-full rounded-2xl sm:rounded-3xl border border-white/10 bg-slate-950/80 p-4 text-sm text-slate-100 placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/20"
               />
-              <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div className="text-sm text-slate-400">
                   Your notes are stored securely for this workspace.
                 </div>
-                <div className="flex flex-wrap gap-3">
-                  <Button onClick={saveNotes} isLoading={isSaving} className="w-full sm:w-auto">
+                <div className="flex flex-col sm:flex-col md:flex-row gap-3 w-full md:w-auto">
+                  <Button onClick={saveNotes} isLoading={isSaving} className="w-full sm:w-full md:w-auto">
                     Save notes
                   </Button>
-                  <span className="text-sm text-slate-400">{saveMessage}</span>
+                  {saveMessage && <span className="text-sm text-slate-400 self-center">{saveMessage}</span>}
                 </div>
               </div>
             </div>
           </section>
 
-          <aside className="space-y-6">
-            <div className="rounded-[28px] border border-white/10 bg-slate-900/70 p-5 shadow-xl shadow-black/20">
+          <aside className="space-y-6 w-full">
+            <div className="rounded-2xl sm:rounded-[28px] border border-white/10 bg-slate-900/70 p-4 sm:p-5 shadow-xl shadow-black/20">
               <div className="mb-5">
                 <p className="text-xs uppercase tracking-[0.35em] text-slate-400">
                   Resolution deployment
                 </p>
                 <h2 className="mt-2 text-xl font-semibold text-white">Direct transaction panel</h2>
               </div>
-              <div className="space-y-4 rounded-3xl border border-white/10 bg-slate-950/80 p-4">
+              <div className="space-y-4 rounded-2xl sm:rounded-3xl border border-white/10 bg-slate-950/80 p-4">
                 <div className="text-sm text-slate-400">Security checks</div>
                 <ul className="space-y-3 text-sm text-slate-300">
                   {[
@@ -381,7 +412,7 @@ export default function ArbitratorWorkspacePage({ params }) {
                     </li>
                   ))}
                 </ul>
-                <div className="rounded-3xl bg-slate-900/90 p-4 text-sm text-slate-200">
+                <div className="rounded-2xl sm:rounded-3xl bg-slate-900/90 p-4 text-sm text-slate-200">
                   <p className="font-semibold text-white">Deployment summary</p>
                   <p className="mt-2 leading-6">
                     Resolve {MOCK_WORKSPACE.escrowId} with {clientShare}% / {freelancerShare}% split
@@ -401,14 +432,14 @@ export default function ArbitratorWorkspacePage({ params }) {
               </div>
             </div>
 
-            <div className="rounded-[28px] border border-white/10 bg-slate-900/70 p-5 shadow-xl shadow-black/20">
+            <div className="rounded-2xl sm:rounded-[28px] border border-white/10 bg-slate-900/70 p-4 sm:p-5 shadow-xl shadow-black/20">
               <div className="mb-5">
                 <p className="text-xs uppercase tracking-[0.35em] text-slate-400">
                   Financial tools
                 </p>
                 <h2 className="mt-2 text-xl font-semibold text-white">Currency conversion</h2>
               </div>
-              <CurrencyConverter className="rounded-[28px] border border-white/10 bg-slate-950/80 p-4" />
+              <CurrencyConverter className="rounded-2xl sm:rounded-[28px] border border-white/10 bg-slate-950/80 p-4" />
             </div>
           </aside>
         </div>

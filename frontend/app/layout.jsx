@@ -11,6 +11,7 @@ import ErrorBoundary from '../components/error/ErrorBoundary';
 import PerformanceMonitor from '../components/ui/PerformanceMonitor';
 import BackToTop from '../components/ui/BackToTop';
 import OfflineBanner from '../components/ui/OfflineBanner';
+import useNetworkStatus from '../hooks/useNetworkStatus';
 import ServiceWorkerRegistrar from '../components/ui/ServiceWorkerRegistrar';
 import { AppStoreProvider } from '../store/app-store';
 import TokenRefreshManager from '../components/auth/TokenRefreshManager';
