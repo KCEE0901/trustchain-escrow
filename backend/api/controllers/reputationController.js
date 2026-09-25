@@ -13,6 +13,7 @@ import prisma from '../../lib/prisma.js';
 import { buildPaginatedResponse, parsePagination } from '../../lib/pagination.js';
 import * as reputationSearch from '../../services/reputationSearchService.js';
 import * as reputationService from '../../services/reputationService.js';
+import cache from '../../services/cacheService.js';
 import { getLogger } from '../../config/logger.js';
 
 const log = getLogger();
@@ -133,4 +134,35 @@ const recalculate = async (req, res) => {
   }
 };
 
-export default { getReputation, getLeaderboard, search, recalculate };
+/**
+ * GET /api/v1/users/:address/reputation
+ *
+ * Public endpoint — no authentication required.
+ * Returns the on-chain reputation record for a given Stellar address.
+ * Reads from the Redis cache first; falls back to the DB indexer record.
+ * Rate-limited at 60 req/min per IP (applied at the route level).
+ *
+ * @returns 200 { address, score, completedEscrows, disputeWins, disputeLosses, lastUpdated }
+ * @returns 400 invalid Stellar address
+ * @returns 404 no reputation record for that address
+ */
+const getByAddress = async (req, res) => {
+  try {
+    const { address } = req.params;
+    if (!STELLAR_ADDRESS_RE.test(address)) {
+      return res.status(400).json({ error: 'Invalid Stellar address' });
+    }
+
+    const record = await reputationService.fetchByAddress(address, { cache });
+    if (!record) {
+      return res.status(404).json({ error: 'No reputation record found for this address' });
+    }
+
+    return res.json(record);
+  } catch (err) {
+    logControllerError('reputation.getByAddress', err, req);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+export default { getReputation, getLeaderboard, search, recalculate, getByAddress };

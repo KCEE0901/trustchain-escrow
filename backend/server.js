@@ -42,6 +42,7 @@ import batchRoutes from './api/routes/batchRoutes.js';
 import webhookRoutes from './api/routes/webhookRoutes.js';
 import tenantMiddleware from './api/middleware/tenant.js';
 import auditMiddleware from './api/middleware/audit.js';
+import publicReputationRoutes from './api/routes/publicReputationRoutes.js';
 import { createWebSocketServer, pool } from './api/websocket/handlers.js';
 import cache from './lib/cache.js';
 import { attachPrismaMetrics } from './lib/prismaMetrics.js';
@@ -198,6 +199,9 @@ app.use('/api/escrows', escrowRoutes);
 
 // ── API Documentation ─────────────────────────────────────────────────────────
 setupSwagger(app);
+// Public reputation lookup — mounted before the auth-guarded userRoutes so
+// GET /api/users/:address/reputation is accessible without a Bearer token.
+app.use('/api/users', publicReputationRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/reputation', reputationRoutes);
 app.use('/api/disputes', disputeRoutes);

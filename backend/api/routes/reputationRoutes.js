@@ -1,9 +1,17 @@
 import express from 'express';
 import reputationController from '../controllers/reputationController.js';
 import { cacheResponse, TTL } from '../middleware/cache.js';
-import { reputationSearchRateLimit } from '../../middleware/rateLimit.js';
+import { reputationSearchRateLimit, createRateLimitMiddleware, RATE_LIMIT_WINDOW_MS } from '../../middleware/rateLimit.js';
 
 const router = express.Router();
+
+// Public rate limiter: 60 req/min per IP for the unauthenticated reputation lookup.
+const publicReputationRateLimit = createRateLimitMiddleware({
+  max: 60,
+  windowMs: RATE_LIMIT_WINDOW_MS,
+  prefix: 'reputation-public',
+  message: 'Too many reputation requests, please try again in a minute.',
+});
 
 /**
  * @route  GET /api/reputation/search?q=<prefix>
@@ -38,4 +46,5 @@ router.get(
   reputationController.getReputation,
 );
 
+export { publicReputationRateLimit };
 export default router;

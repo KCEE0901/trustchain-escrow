@@ -25,12 +25,20 @@ const PUBLIC_ROUTES = [
   { method: 'GET', path: '/metrics' },
   { method: 'GET', path: '/csrf-token' },
   { method: 'GET', path: '/webhooks/event-types' },
+  // Public reputation lookup by Stellar address — no auth required
+  { method: 'GET', path: '/users/', matchPrefix: true, segment: '/reputation' },
 ];
 
 function isPublicRoute(req) {
-  return PUBLIC_ROUTES.some(
-    (r) => r.method === req.method && (req.path === r.path || req.path.startsWith(r.path + '/')),
-  );
+  return PUBLIC_ROUTES.some((r) => {
+    if (r.method !== req.method) return false;
+    // Simple exact-path or starts-with check
+    if (r.matchPrefix && r.segment) {
+      // e.g. /users/<address>/reputation — match GET /users/G.../reputation
+      return req.path.startsWith(r.path) && req.path.endsWith(r.segment);
+    }
+    return req.path === r.path || req.path.startsWith(r.path + '/');
+  });
 }
 
 // ── Shared per-user rate limiter (tier-aware) ─────────────────────────────────

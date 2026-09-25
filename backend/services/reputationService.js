@@ -254,6 +254,56 @@ const recalculateFromEventHistory = async (tenantId) => {
   }
 };
 
+/**
+ * Fetch reputation data for a single Stellar address.
+ * Reads from Redis cache first; falls back to the Prisma DB record.
+ * Returns null if no record exists for the address.
+ *
+ * Cache key: reputation:<address>  TTL: REPUTATION_CACHE_TTL_SECS (default 300 s)
+ *
+ * @param {string} address - Stellar address (G…)
+ * @param {{ cache?: import('../services/cacheService.js').default }} [deps] - injectable for testing
+ * @returns {Promise<{
+ *   address: string,
+ *   score: number,
+ *   completedEscrows: number,
+ *   disputeWins: number,
+ *   disputeLosses: number,
+ *   lastUpdated: string|null
+ * }|null>}
+ */
+const fetchByAddress = async (address, { cache } = {}) => {
+  const CACHE_TTL = parseInt(process.env.REPUTATION_CACHE_TTL_SECS ?? '300', 10);
+  const cacheKey = `reputation:${address}`;
+
+  // Attempt cache read (Redis preferred, memory fallback handled inside cacheService)
+  if (cache) {
+    const cached = await cache.get(cacheKey).catch(() => null);
+    if (cached) return cached;
+  }
+
+  const record = await prisma.reputationRecord.findUnique({ where: { address } });
+  if (!record) return null;
+
+  // Normalise to the public-facing shape
+  const result = {
+    address: record.address,
+    score: Number(record.totalScore ?? 0),
+    completedEscrows: Number(record.completedEscrows ?? 0),
+    disputeWins: Number(record.disputesWon ?? 0),
+    // disputeLosses is derived from disputedEscrows - disputesWon (floor at 0)
+    disputeLosses: Math.max(0, Number(record.disputedEscrows ?? 0) - Number(record.disputesWon ?? 0)),
+    lastUpdated: record.lastUpdated ? record.lastUpdated.toISOString() : null,
+  };
+
+  // Populate the cache for subsequent requests
+  if (cache) {
+    cache.set(cacheKey, result, CACHE_TTL).catch(() => null);
+  }
+
+  return result;
+};
+
 export {
   BADGE_THRESHOLDS,
   computeCompletionRate,
@@ -265,6 +315,7 @@ export {
   recordDisputeOutcome,
   recordEscrowCancellation,
   recalculateFromEventHistory,
+  fetchByAddress,
 };
 
 export default {
@@ -278,4 +329,5 @@ export default {
   recordDisputeOutcome,
   recordEscrowCancellation,
   recalculateFromEventHistory,
+  fetchByAddress,
 };
