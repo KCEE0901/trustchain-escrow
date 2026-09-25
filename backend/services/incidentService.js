@@ -26,6 +26,7 @@
  */
 
 import crypto from 'crypto';
+import webhookService from './webhookService.js';
 
 // ── Types / constants ─────────────────────────────────────────────────────────
 
@@ -247,6 +248,52 @@ async function dispatchAlerts(action, incident, message) {
   await Promise.allSettled([alertPagerDuty(pdAction, incident), alertSlack(incident, message)]);
 }
 
+// ── Webhook Emission ─────────────────────────────────────────────────────────
+
+/**
+ * Builds standard webhook payload for incident events
+ */
+export function buildIncidentWebhookPayload(eventType, incident, extra = {}) {
+  const affectedEscrows = incident.affectedEscrowIds ?? [];
+  const affectedServices = incident.affectedServices ?? [];
+
+  return {
+    eventType,
+    incidentId: incident.id,
+    id: incident.id,
+    status: incident.status,
+    severity: incident.severity,
+    affectedScope: {
+      services: affectedServices,
+      escrows: affectedEscrows,
+      escrowIds: affectedEscrows,
+    },
+    affectedServices,
+    affectedEscrowIds: affectedEscrows,
+    title: incident.title,
+    description: incident.description,
+    commander: incident.commander,
+    timestamp: new Date().toISOString(),
+    ...extra,
+  };
+}
+
+/**
+ * Dispatches incident webhook event via webhookService
+ */
+async function emitIncidentWebhook(eventType, incident, extra = {}) {
+  try {
+    const payload = buildIncidentWebhookPayload(eventType, incident, extra);
+    if (webhookService && typeof webhookService.queueEventWebhooks === 'function') {
+      await webhookService.queueEventWebhooks(eventType, payload);
+    }
+    return payload;
+  } catch (err) {
+    console.error(`[Incident] Failed to emit webhook ${eventType}:`, err.message);
+    return null;
+  }
+}
+
 // ── Incident CRUD ─────────────────────────────────────────────────────────────
 
 /**
@@ -257,6 +304,7 @@ async function dispatchAlerts(action, incident, message) {
  * @property {string}   severity        — SEV1–SEV4
  * @property {string}   status
  * @property {string[]} affectedServices
+ * @property {string[]} affectedEscrowIds
  * @property {string}   commander       — incident commander name/email
  * @property {string}   runbookUrl
  * @property {string}   createdAt
@@ -267,7 +315,7 @@ async function dispatchAlerts(action, incident, message) {
  */
 
 /**
- * Creates a new incident and fires alerts.
+ * Creates a new incident, fires alerts, and emits webhook event.
  *
  * @param {object} params
  * @returns {Promise<Incident>}
@@ -277,6 +325,7 @@ export async function createIncident({
   description,
   severity = Severity.SEV3,
   affectedServices = [],
+  affectedEscrowIds = [],
   commander,
   runbookUrl,
   createdBy,
@@ -295,7 +344,8 @@ export async function createIncident({
     description,
     severity,
     status: Status.OPEN,
-    affectedServices,
+    affectedServices: [...affectedServices],
+    affectedEscrowIds: (Array.isArray(affectedEscrowIds) ? affectedEscrowIds : []).map(String),
     commander: resolvedCommander,
     runbookUrl: runbookUrl ?? resolvedRunbookUrl(severity),
     createdAt: now,
@@ -312,11 +362,15 @@ export async function createIncident({
   console.error(`[Incident] ${id} CREATED severity=${severity} title="${title}"`);
 
   await dispatchAlerts('trigger', incident);
+
+  // Emit webhook for incident opened
+  await emitIncidentWebhook('incident.opened', incident, { action: 'opened' });
+
   return incident;
 }
 
 /**
- * Transitions an incident to a new status.
+ * Transitions an incident to a new status and emits webhook.
  *
  * @param {string} id
  * @param {string} newStatus
@@ -352,7 +406,62 @@ export async function updateIncidentStatus(id, newStatus, { actor = 'system', no
         : 'update';
 
   await dispatchAlerts(pdAction, incident, note || undefined);
+
+  // Emit status change webhooks
+  if (newStatus === Status.RESOLVED || newStatus === Status.CLOSED) {
+    await emitIncidentWebhook('incident.resolved', incident, { actor, note, status: newStatus });
+  } else {
+    await emitIncidentWebhook('incident.updated', incident, { actor, note, status: newStatus });
+  }
+
   console.log(`[Incident] ${id} → ${newStatus} by ${actor}`);
+  return incident;
+}
+
+/**
+ * Link affected escrows to an incident and emit webhook
+ *
+ * @param {string} id - Incident ID
+ * @param {string[]|string} escrowIds - Escrow IDs to link
+ * @param {object} [opts]
+ * @returns {Promise<Incident>}
+ */
+export async function linkEscrowsToIncident(id, escrowIds = [], { actor = 'system', note = '' } = {}) {
+  const incident = incidents.get(id);
+  if (!incident) throw new Error(`Incident ${id} not found`);
+
+  const existingEscrows = new Set(incident.affectedEscrowIds || []);
+  const normalizedIds = (Array.isArray(escrowIds) ? escrowIds : [escrowIds]).map(String);
+  const newlyLinked = [];
+
+  for (const eid of normalizedIds) {
+    if (!existingEscrows.has(eid)) {
+      existingEscrows.add(eid);
+      newlyLinked.push(eid);
+    }
+  }
+
+  incident.affectedEscrowIds = Array.from(existingEscrows);
+  const now = new Date().toISOString();
+  incident.updatedAt = now;
+  incident.timeline.push({
+    ts: now,
+    status: incident.status,
+    actor,
+    note: note || `Linked escrows: ${normalizedIds.join(', ')}`,
+  });
+  incidents.set(id, incident);
+
+  console.log(`[Incident] ${id}: linked ${newlyLinked.length} new escrows`);
+
+  // Emit webhook for escrow linking
+  await emitIncidentWebhook('incident.escrows_linked', incident, {
+    linkedEscrowIds: normalizedIds,
+    newlyLinked,
+    actor,
+    note,
+  });
+
   return incident;
 }
 
@@ -419,9 +528,18 @@ function resolvedRunbookUrl(severity) {
   return map[severity] ?? `${base}/general.md`;
 }
 
+/**
+ * Resets incidents map for test suites
+ */
+export function __resetForTests() {
+  incidents.clear();
+}
+
 export default {
   createIncident,
   updateIncidentStatus,
+  linkEscrowsToIncident,
+  buildIncidentWebhookPayload,
   attachPostMortem,
   getIncident,
   listIncidents,
@@ -429,4 +547,5 @@ export default {
   getOnCallSchedule,
   Severity,
   Status,
+  __resetForTests,
 };

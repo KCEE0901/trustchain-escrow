@@ -75,6 +75,24 @@ const attachPostMortem = (req, res) => {
   }
 };
 
+const linkEscrows = async (req, res) => {
+  try {
+    const { escrowIds, note } = req.body;
+    if (!escrowIds) {
+      return res.status(400).json({ error: 'escrowIds is required' });
+    }
+    const actor = req.user?.address ?? req.headers['x-admin-api-key']?.slice(0, 8) ?? 'admin';
+    const incident = await incidentService.linkEscrowsToIncident(req.params.id, escrowIds, {
+      actor,
+      note,
+    });
+    return res.json(incident);
+  } catch (err) {
+    const code = err.message.includes('not found') ? 404 : 500;
+    return res.status(code).json({ error: err.message });
+  }
+};
+
 const getOnCall = (_req, res) => {
   res.json({
     current: incidentService.getCurrentOnCall(),
@@ -88,5 +106,6 @@ export default {
   getIncident,
   updateStatus,
   attachPostMortem,
+  linkEscrows,
   getOnCall,
 };
