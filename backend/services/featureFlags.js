@@ -6,12 +6,62 @@
  * that individual tenants can opt-in or opt-out of features independently of
  * the platform-wide rollout configuration.
  *
+ * Issue #199 — Sampled evaluation logs
+ * Every flag evaluation is optionally sampled and emitted to the logger so
+ * operators can understand flag activity per tenant without logging secrets.
+ * The sample rate is driven by FLAG_EVAL_SAMPLE_RATE (0–1, default 0.1 = 10%).
+ *
  * @module services/featureFlags
  */
 
 import crypto from 'crypto';
 import prisma from '../lib/prisma.js';
 import { log, AuditCategory } from './auditService.js';
+import { getLogger } from '../config/logger.js';
+
+const logger = getLogger();
+
+// ── Sampling ──────────────────────────────────────────────────────────────────
+
+/**
+ * Sample rate for evaluation log lines.
+ * Set FLAG_EVAL_SAMPLE_RATE=1 to log every evaluation (useful in staging).
+ * Set to 0 to disable evaluation logging entirely.
+ * Defaults to 0.1 (10 %).
+ */
+function getSampleRate() {
+  const raw = parseFloat(process.env.FLAG_EVAL_SAMPLE_RATE ?? '0.1');
+  if (Number.isNaN(raw) || raw < 0) return 0;
+  if (raw > 1) return 1;
+  return raw;
+}
+
+function shouldSample() {
+  return Math.random() < getSampleRate();
+}
+
+/**
+ * Emit a sampled evaluation log line.
+ * Deliberately omits secrets, raw user IDs, and PII; logs only the tenant,
+ * flag key, resolved variant, and reason for the decision.
+ *
+ * @param {object} params
+ * @param {string}        params.flagKey
+ * @param {boolean}       params.result    - resolved flag value
+ * @param {string}        params.reason    - human-readable decision reason
+ * @param {string|number} [params.tenantId]
+ */
+function logEvaluation({ flagKey, result, reason, tenantId }) {
+  if (!shouldSample()) return;
+  logger.info({
+    type: 'feature_flag_evaluation',
+    flag: flagKey,
+    variant: result ? 'enabled' : 'disabled',
+    reason,
+    tenantId: tenantId != null ? String(tenantId) : undefined,
+    // Note: userId is intentionally omitted to avoid logging PII / secrets
+  });
+}
 
 /**
  * Deterministic hash of userId + flagKey → integer 0–99.
@@ -38,22 +88,50 @@ function hashBucket(userId, flagKey) {
  */
 export async function isFeatureEnabled(flagKey, userContext) {
   const flag = await prisma.featureFlag.findUnique({ where: { key: flagKey } });
-  if (!flag) return false;
+  if (!flag) {
+    logEvaluation({ flagKey, result: false, reason: 'flag_not_found', tenantId: userContext.tenantId });
+    return false;
+  }
 
   // Check for tenant-level override first
   if (userContext.tenantId) {
     const tenantOverride = await getTenantFlagOverride(flagKey, String(userContext.tenantId));
     if (tenantOverride !== null) {
+      logEvaluation({
+        flagKey,
+        result: tenantOverride,
+        reason: 'tenant_override',
+        tenantId: userContext.tenantId,
+      });
       return tenantOverride;
     }
   }
 
   if (!flag.isEnabled) {
     // Still allow explicitly targeted users even when globally disabled
-    return flag.targetUsers.includes(String(userContext.id));
+    const targeted = flag.targetUsers.includes(String(userContext.id));
+    logEvaluation({
+      flagKey,
+      result: targeted,
+      reason: targeted ? 'explicit_targeting' : 'flag_globally_disabled',
+      tenantId: userContext.tenantId,
+    });
+    return targeted;
   }
-  if (flag.targetUsers.includes(String(userContext.id))) return true;
-  return hashBucket(String(userContext.id), flagKey) < flag.percentage;
+
+  if (flag.targetUsers.includes(String(userContext.id))) {
+    logEvaluation({ flagKey, result: true, reason: 'explicit_targeting', tenantId: userContext.tenantId });
+    return true;
+  }
+
+  const inBucket = hashBucket(String(userContext.id), flagKey) < flag.percentage;
+  logEvaluation({
+    flagKey,
+    result: inBucket,
+    reason: inBucket ? 'percentage_rollout_matched' : 'percentage_rollout_missed',
+    tenantId: userContext.tenantId,
+  });
+  return inBucket;
 }
 
 /**

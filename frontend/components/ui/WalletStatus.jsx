@@ -20,6 +20,7 @@ import Button from './Button';
 import Spinner from './Spinner';
 import { truncateAddress } from '../../lib/truncateAddress';
 import { useI18n } from '../../i18n/index.jsx';
+import { useConfirm } from '../../contexts/ConfirmDialogContext';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -108,6 +109,19 @@ export default function WalletStatus({ wallet }) {
   const { isConnected, isConnecting, isFreighterInstalled, address, connect, disconnect, error } =
     wallet;
   const { t } = useI18n();
+  const confirm = useConfirm();
+
+  const handleDisconnect = async () => {
+    const confirmed = await confirm({
+      title: 'Disconnect wallet?',
+      message:
+        'Any pending transactions or unsaved actions may be lost. Are you sure you want to disconnect your wallet?',
+      confirmLabel: 'Disconnect',
+      cancelLabel: 'Cancel',
+      danger: true,
+    });
+    if (confirmed) disconnect();
+  };
 
   // Not installed — prompt installation
   if (!isFreighterInstalled) {
@@ -142,7 +156,7 @@ export default function WalletStatus({ wallet }) {
     return (
       <div className="flex items-center gap-2">
         <AddressWithTooltip address={address} />
-        <Button id="wallet-disconnect-btn" variant="secondary" size="sm" onClick={disconnect}>
+        <Button id="wallet-disconnect-btn" variant="secondary" size="sm" onClick={handleDisconnect}>
           {t('wallet.disconnect')}
         </Button>
       </div>

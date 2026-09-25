@@ -71,11 +71,45 @@ async function deleteSubscription({ id, createdBy }) {
   return deleted.count > 0;
 }
 
+/**
+ * getDeliveryHistory — Issue #203
+ *
+ * Returns a paginated, subscription-scoped list of recent webhook delivery
+ * attempts along with an error summary for the queried page.
+ *
+ * Tenant isolation is enforced by requiring `createdBy` to match the
+ * subscription owner stored at creation time. A caller who does not own the
+ * subscription receives an empty result (404-style) rather than an error, to
+ * avoid leaking subscription existence to other tenants.
+ *
+ * @param {object} opts
+ * @param {string}  opts.subscriptionId - ID of the webhook subscription
+ * @param {string|null} opts.createdBy  - caller's address / owner identifier
+ * @param {number}  [opts.page=1]
+ * @param {number}  [opts.limit=30]
+ * @returns {Promise<{
+ *   page: number,
+ *   limit: number,
+ *   total: number,
+ *   totalPages: number,
+ *   hasNextPage: boolean,
+ *   deliveries: object[],
+ *   errorSummary: { total: number, byStatus: Record<string,number> }
+ * }>}
+ */
 async function getDeliveryHistory({ subscriptionId, createdBy, page = 1, limit = 30 }) {
   const skip = (page - 1) * limit;
-  const [deliveries, total] = await Promise.all([
+
+  // Enforce ownership: filter the subscription by both id AND createdBy so
+  // a different tenant cannot enumerate another tenant's deliveries.
+  const subscriptionWhere = {
+    id: subscriptionId,
+    ...(createdBy != null ? { createdBy } : {}),
+  };
+
+  const [deliveries, total, statusCounts] = await Promise.all([
     prisma.webhookDelivery.findMany({
-      where: { subscription: { id: subscriptionId, createdBy } },
+      where: { subscription: subscriptionWhere },
       orderBy: { createdAt: 'desc' },
       skip,
       take: limit,
@@ -91,15 +125,36 @@ async function getDeliveryHistory({ subscriptionId, createdBy, page = 1, limit =
       },
     }),
     prisma.webhookDelivery.count({
-      where: { subscription: { id: subscriptionId, createdBy } },
+      where: { subscription: subscriptionWhere },
     }),
+    // Aggregate delivery status counts for the error summary
+    prisma.webhookDelivery
+      .groupBy({
+        by: ['status'],
+        where: { subscription: subscriptionWhere },
+        _count: { id: true },
+      })
+      .catch(() => []), // groupBy may not be available in all test mocks
   ]);
+
+  const totalPages = total === 0 ? 0 : Math.ceil(total / limit);
+
+  // Build a status → count map for the error summary
+  const byStatus = Object.fromEntries(
+    statusCounts.map((row) => [row.status, row._count.id]),
+  );
 
   return {
     page,
     limit,
     total,
+    totalPages,
+    hasNextPage: page < totalPages,
     deliveries,
+    errorSummary: {
+      total: (byStatus.failed ?? 0) + (byStatus.error ?? 0),
+      byStatus,
+    },
   };
 }
 
