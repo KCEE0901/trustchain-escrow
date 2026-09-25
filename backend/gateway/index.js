@@ -24,6 +24,7 @@ const PUBLIC_ROUTES = [
   { method: 'GET', path: '/health' },
   { method: 'GET', path: '/metrics' },
   { method: 'GET', path: '/csrf-token' },
+  { method: 'GET', path: '/webhooks/event-types' },
 ];
 
 function isPublicRoute(req) {

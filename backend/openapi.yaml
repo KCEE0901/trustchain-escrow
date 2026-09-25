@@ -1071,6 +1071,45 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /api/webhooks/event-types:
+    get:
+      tags: [Webhooks]
+      summary: List all subscribable webhook event types
+      description: |
+        Public discovery endpoint that returns every event type the webhook system
+        can deliver. No authentication is required. Use this to discover valid
+        `eventTypes` values before creating a subscription.
+
+        Only the eleven events that the indexer has a handler for are deliverable.
+        Subscribing to an event type not in this list is accepted by the API but
+        will never result in a delivery.
+      operationId: listWebhookEventTypes
+      responses:
+        '200':
+          description: Array of subscribable event type descriptors
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [name, description, examplePayload]
+                      properties:
+                        name:
+                          type: string
+                          description: Event type identifier used in subscription eventTypes arrays
+                          example: esc_crt
+                        description:
+                          type: string
+                          description: Human-readable description of when this event fires
+                          example: Fired when an escrow is initialised and funds are locked on-chain.
+                        examplePayload:
+                          type: object
+                          description: Representative webhook delivery envelope for this event type
+
   /api/webhooks:
     get:
       tags: [Webhooks]

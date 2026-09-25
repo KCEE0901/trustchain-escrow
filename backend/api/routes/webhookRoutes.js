@@ -19,6 +19,14 @@ const subscribeRateLimit = createSlidingWindowRateLimiter({
   message: 'Too many webhook subscription requests — try again later',
 });
 
+/**
+ * @route  GET /api/v1/webhooks/event-types
+ * @desc   Public discovery endpoint — lists all subscribable webhook event types
+ *         with descriptions and example payloads. No authentication required.
+ * @returns 200 { data: Array<{ name, description, examplePayload }> }
+ */
+router.get('/event-types', webhookController.listEventTypes);
+
 router.post('/subscribe', subscribeRateLimit, webhookController.subscribe);
 router.get('/', webhookController.listSubscriptions);
 router.delete('/:id', webhookController.deleteSubscription);
