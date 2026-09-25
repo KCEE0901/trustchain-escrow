@@ -10,6 +10,7 @@ import {
   recordTransaction,
   getMonitorStatus,
   getRecentTransactions,
+  getReviewNeededTransactions,
 } from '../../services/stellarMonitorService.js';
 
 /**
@@ -68,8 +69,24 @@ const listTransactions = async (req, res) => {
   }
 };
 
+/**
+ * GET /api/v1/stellar-monitor/review
+ * Admin-only: list transactions requiring manual review (stuck pending or ambiguous failure).
+ */
+const listReviewNeeded = async (req, res) => {
+  try {
+    const { page, limit } = req.query;
+    const result = await getReviewNeededTransactions({ page, limit });
+    res.json(result);
+  } catch (err) {
+    logControllerError('stellarMonitor.listReviewNeeded', err, req);
+    res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: err.message } });
+  }
+};
+
 export default {
   getStatus,
   trackTransaction,
   listTransactions,
+  listReviewNeeded,
 };

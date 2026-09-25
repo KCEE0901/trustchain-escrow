@@ -15,7 +15,8 @@
 
 import { Queue, Worker } from 'bullmq';
 import prisma from '../lib/prisma.js';
-import { logger } from '../config/logger.js';
+import { logger, runWithCorrelation } from '../config/logger.js';
+import { withCorrelationId } from './index.js';
 
 const redisConnection = process.env.REDIS_URL
   ? { url: process.env.REDIS_URL }
@@ -54,71 +55,72 @@ const eventDLQ = new Queue('blockchain-events-dlq', {
  */
 const eventWorker = new Worker(
   'blockchain-events',
-  async (job) => {
-    const { eventPayload, eventType, blockHeight, txHash } = job.data;
+  (job) =>
+    runWithCorrelation(job.data?.correlationId, async () => {
+      const { eventPayload, eventType, blockHeight, txHash } = job.data;
 
-    if (!eventPayload || !eventType) {
-      throw new Error('Missing required fields: eventPayload, eventType');
-    }
-
-    try {
-      // Generate idempotency key from event content
-      const crypto = await import('crypto');
-      const eventHash = crypto
-        .createHash('sha256')
-        .update(JSON.stringify({ eventType, eventPayload, blockHeight, txHash }))
-        .digest('hex');
-
-      // Check if this event has already been processed (idempotency)
-      const existingEvent = await prisma.blockchainEvent.findUnique({
-        where: { eventHash },
-      });
-
-      if (existingEvent) {
-        logger.info(`[EventQueue] Skipped duplicate event: ${eventHash}`);
-        return { status: 'skipped', eventHash, reason: 'duplicate' };
+      if (!eventPayload || !eventType) {
+        throw new Error('Missing required fields: eventPayload, eventType');
       }
 
-      // Insert the event into the database
-      const result = await prisma.blockchainEvent.create({
-        data: {
-          eventType,
-          eventPayload,
-          eventHash,
-          blockHeight: blockHeight || null,
-          txHash: txHash || null,
-          processedAt: new Date(),
-        },
-      });
+      try {
+        // Generate idempotency key from event content
+        const crypto = await import('crypto');
+        const eventHash = crypto
+          .createHash('sha256')
+          .update(JSON.stringify({ eventType, eventPayload, blockHeight, txHash }))
+          .digest('hex');
 
-      logger.info(`[EventQueue] Processed event ${eventHash} (ID: ${result.id})`);
-      return {
-        status: 'success',
-        eventId: result.id,
-        eventHash,
-      };
-    } catch (error) {
-      logger.error(`[EventQueue] Failed to process event on attempt ${job.attemptsMade}:`, error);
+        // Check if this event has already been processed (idempotency)
+        const existingEvent = await prisma.blockchainEvent.findUnique({
+          where: { eventHash },
+        });
 
-      // On the final attempt, move the job to the DLQ
-      if (job.attemptsMade >= job.opts.attempts) {
-        await eventDLQ.add(
-          'failed-event',
-          {
-            originalJobData: job.data,
-            lastError: error.message,
-            attemptsMade: job.attemptsMade,
-            failedAt: new Date().toISOString(),
+        if (existingEvent) {
+          logger.info(`[EventQueue] Skipped duplicate event: ${eventHash}`);
+          return { status: 'skipped', eventHash, reason: 'duplicate' };
+        }
+
+        // Insert the event into the database
+        const result = await prisma.blockchainEvent.create({
+          data: {
+            eventType,
+            eventPayload,
+            eventHash,
+            blockHeight: blockHeight || null,
+            txHash: txHash || null,
+            processedAt: new Date(),
           },
-          { removeOnComplete: false },
-        );
-        logger.warn(`[EventQueue] Job ${job.id} moved to DLQ after exhausting retries`);
-      }
+        });
 
-      // Throw to trigger retry or mark as failed
-      throw error;
-    }
-  },
+        logger.info(`[EventQueue] Processed event ${eventHash} (ID: ${result.id})`);
+        return {
+          status: 'success',
+          eventId: result.id,
+          eventHash,
+        };
+      } catch (error) {
+        logger.error(`[EventQueue] Failed to process event on attempt ${job.attemptsMade}:`, error);
+
+        // On the final attempt, move the job to the DLQ
+        if (job.attemptsMade >= job.opts.attempts) {
+          await eventDLQ.add(
+            'failed-event',
+            {
+              originalJobData: job.data,
+              lastError: error.message,
+              attemptsMade: job.attemptsMade,
+              failedAt: new Date().toISOString(),
+            },
+            { removeOnComplete: false },
+          );
+          logger.warn(`[EventQueue] Job ${job.id} moved to DLQ after exhausting retries`);
+        }
+
+        // Throw to trigger retry or mark as failed
+        throw error;
+      }
+    }),
   {
     connection: redisConnection,
     concurrency: 1, // Process events sequentially
@@ -149,12 +151,15 @@ export async function enqueueBlockchainEvent(
   blockHeight = null,
   txHash = null,
 ) {
-  const job = await eventQueue.add('process-event', {
-    eventType,
-    eventPayload,
-    blockHeight,
-    txHash,
-  });
+  const job = await eventQueue.add(
+    'process-event',
+    withCorrelationId({
+      eventType,
+      eventPayload,
+      blockHeight,
+      txHash,
+    }),
+  );
 
   return {
     queued: 1,

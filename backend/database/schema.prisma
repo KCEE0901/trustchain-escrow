@@ -747,7 +747,7 @@ model TransactionMonitor {
   amount         String?
   memo           String?
   escrowId       BigInt?   @map("escrow_id")
-  status         String    @default("PENDING") // PENDING | CONFIRMED | FAILED | TIMEOUT
+  status         String    @default("PENDING") // PENDING | CONFIRMED | FAILED | TIMEOUT | FAILED_PERMANENT | REVIEW_REQUIRED
   ledger         BigInt?
   errorCode      String?   @map("error_code")
   submittedAt    DateTime  @default(now()) @map("submitted_at")
