@@ -4,6 +4,15 @@ import { useEffect, useRef, useState } from 'react';
 
 const DEFAULT_API = 'http://localhost:4000';
 
+/** Maximum consecutive reconnection attempts before giving up. */
+const MAX_RECONNECT_ATTEMPTS = 10;
+
+/** Base delay in ms — doubles each attempt, capped at MAX_DELAY_MS. */
+const BASE_DELAY_MS = 1_000;
+
+/** Hard ceiling on reconnect delay. */
+const MAX_DELAY_MS = 30_000;
+
 /**
  * @param {string} httpUrl
  * @returns {string} origin with ws: or wss:
@@ -30,6 +39,16 @@ export function apiUrlToWsBase(httpUrl) {
  * value as `authToken`. If `WS_ESCROW_SUBSCRIBE_REQUIRE_PARTY=true`, pass the
  * viewer's Stellar `address` so the server can verify client/freelancer.
  *
+ * Reconnect behaviour (#349):
+ *   - On close or error, schedules a reconnect with exponential backoff.
+ *   - Base delay: 1 s, doubles each attempt, capped at 30 s.
+ *   - Jitter of up to 400 ms is added to spread thundering-herd reconnects.
+ *   - After MAX_RECONNECT_ATTEMPTS (10) consecutive failures, reconnection
+ *     stops and `status` is set to `'failed'`.
+ *   - `isOffline` is true whenever the socket is not in the connected state,
+ *     which the caller can use to show an OfflineBanner.
+ *   - On successful reconnection the attempt counter resets to 0.
+ *
  * @param {string|number|bigint|null|undefined} escrowId
  * @param {object} [options]
  * @param {string} [options.authToken]
@@ -37,7 +56,8 @@ export function apiUrlToWsBase(httpUrl) {
  * @param {boolean} [options.enabled=true]
  * @param {(payload: object) => void} [options.onEvent] — fired for each escrow update message
  * @returns {{
- *   status: 'idle'|'connecting'|'connected'|'reconnecting'|'disconnected',
+ *   status: 'idle'|'connecting'|'connected'|'reconnecting'|'disconnected'|'failed',
+ *   isOffline: boolean,
  *   lastPayload: object|null,
  *   lastError: Error|null,
  *   topic: string|null,
@@ -67,6 +87,7 @@ export function useEscrowUpdates(escrowId, options = {}) {
     let cancelled = false;
     /** @type {WebSocket | null} */
     let socket = null;
+    /** Consecutive failed reconnection attempts. */
     let attempt = 0;
     /** @type {ReturnType<typeof setTimeout> | null} */
     let reconnectTimer = null;
@@ -88,9 +109,27 @@ export function useEscrowUpdates(escrowId, options = {}) {
       }
     };
 
+    /**
+     * Schedule the next reconnect using exponential backoff with jitter.
+     * Stops after MAX_RECONNECT_ATTEMPTS consecutive failures.
+     */
     const scheduleReconnect = () => {
       clearReconnect();
-      const exp = Math.min(30_000, 1000 * 2 ** Math.min(attempt, 5));
+
+      if (attempt >= MAX_RECONNECT_ATTEMPTS) {
+        // Give up — set a permanent failed state and surface an error.
+        setStatus('failed');
+        setLastError(
+          new Error(
+            `WebSocket reconnection failed after ${MAX_RECONNECT_ATTEMPTS} attempts. ` +
+              'Please refresh the page to try again.',
+          ),
+        );
+        return;
+      }
+
+      // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s (capped), + up-to-400ms jitter.
+      const exp = Math.min(MAX_DELAY_MS, BASE_DELAY_MS * 2 ** Math.min(attempt, 5));
       const jitter = Math.floor(Math.random() * 400);
       reconnectTimer = setTimeout(() => open(), exp + jitter);
     };
@@ -111,6 +150,7 @@ export function useEscrowUpdates(escrowId, options = {}) {
           ws.close();
           return;
         }
+        // Successful connection — reset the backoff counter.
         attempt = 0;
         setStatus('connected');
         ws.send(
@@ -189,8 +229,12 @@ export function useEscrowUpdates(escrowId, options = {}) {
     };
   }, [topic, enabled, authToken, address]);
 
+  // isOffline is true for every state except 'connected' and 'idle'.
+  const isOffline = status !== 'connected' && status !== 'idle';
+
   return {
     status,
+    isOffline,
     lastPayload,
     lastError,
     topic,
