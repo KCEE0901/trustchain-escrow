@@ -91,6 +91,40 @@ describe('Webhook Service and Worker', () => {
     );
   });
 
+  it.each([
+    'esc_crt',
+    'mil_add',
+    'mil_sub',
+    'mil_apr',
+    'mil_rej',
+    'mil_dis',
+    'funds_rel',
+    'esc_can',
+    'dis_rai',
+    'dis_res',
+    'rep_upd',
+  ])('includes the schema version in %s payloads and headers', async (eventType) => {
+    prismaMock.webhookSubscription.findMany.mockResolvedValue([
+      { id: 'sub_1', url: 'https://example.com/webhook', secret: 'secret123' },
+    ]);
+    prismaMock.webhookDelivery.create.mockResolvedValue({ id: 'delivery_1' });
+    prismaMock.webhookDelivery.update.mockResolvedValue({});
+    queueMock.enqueueWebhookDelivery.mockResolvedValue({});
+
+    const { default: webhookService, WEBHOOK_SCHEMA_VERSION } =
+      await import('../services/webhookService.js');
+    await webhookService.queueEventWebhooks(eventType, { eventType });
+
+    expect(WEBHOOK_SCHEMA_VERSION).toBe('1');
+    expect(queueMock.enqueueWebhookDelivery).toHaveBeenCalledWith(
+      'delivery_1',
+      'https://example.com/webhook',
+      expect.objectContaining({ eventType, schemaVersion: WEBHOOK_SCHEMA_VERSION }),
+      expect.objectContaining({ 'X-Webhook-Schema-Version': WEBHOOK_SCHEMA_VERSION }),
+      expect.any(Object),
+    );
+  });
+
   it('processWebhookJob records successful deliveries', async () => {
     global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200, text: jest.fn() });
     prismaMock.webhookDelivery.update.mockResolvedValue({});

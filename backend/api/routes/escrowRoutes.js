@@ -1,4 +1,5 @@
 import express from 'express';
+import { idempotencyMiddleware } from '../../lib/idempotency.js';
 import escrowController, {
   validateBroadcast,
   validateEscrowId,
@@ -47,6 +48,7 @@ router.get('/search', validatePagination, escrowController.searchEscrowsV1);
 router.post(
   '/broadcast',
   validateBroadcast,
+  idempotencyMiddleware,
   invalidateOn({ tags: ['escrows'] }),
   escrowController.broadcastCreateEscrow,
 );

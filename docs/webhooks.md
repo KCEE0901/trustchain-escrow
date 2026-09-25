@@ -171,10 +171,11 @@ subscription and create a new one — which also rotates the signing secret.
 ## The delivery envelope
 
 Every request is a `POST` with `Content-Type: application/json` and this envelope
-([webhookService.js:13-20](../backend/services/webhookService.js#L13-L20)):
+([webhookService.js:16-24](../backend/services/webhookService.js#L16-L24)):
 
 ```json
 {
+  "schemaVersion": "1",
   "eventType": "esc_crt",
   "deliveryId": "clx7f1m4k0001qzrm6c2h8w0p",
   "timestamp": "2026-07-25T10:14:58.902Z",
@@ -196,6 +197,7 @@ Every request is a `POST` with `Content-Type: application/json` and this envelop
 
 | Field        | Type   | Description                                                                             |
 | ------------ | ------ | --------------------------------------------------------------------------------------- |
+| `schemaVersion` | string | Payload schema version. Current version: **`1`**. See [Schema versioning](#schema-versioning). |
 | `eventType`  | string | The event symbol that triggered this delivery — see [Event types](#event-types).         |
 | `deliveryId` | string | Unique id for this delivery attempt chain. **Use this as your idempotency key.**         |
 | `timestamp`  | string | ISO-8601 time the envelope was built (dispatch time, not ledger close time).             |
@@ -230,6 +232,16 @@ Every request is a `POST` with `Content-Type: application/json` and this envelop
 | `X-Webhook-Signature`   | Hex-encoded HMAC-SHA256 of the request body. See [Verifying signatures](#verifying-signatures). |
 | `X-Webhook-Delivery-Id` | Same value as the envelope's `deliveryId`.                        |
 | `X-Webhook-Event-Type`  | Same value as the envelope's `eventType`, for cheap routing before parsing the body. |
+| `X-Webhook-Schema-Version` | Same value as the envelope's `schemaVersion`.                  |
+
+### Schema versioning
+
+The current webhook payload schema version is **`1`**. Every delivery, for every
+event type, carries it in the envelope's `schemaVersion` field and in the
+`X-Webhook-Schema-Version` header. The version is bumped only for breaking
+changes to the envelope or an event's `data` shape; adding new optional fields
+does not change it. Consumers should check the version and reject or route
+unknown versions rather than guessing at the shape.
 
 ---
 
@@ -287,6 +299,7 @@ All amounts are `i128` stroops (1 unit = 10 000 000 stroops).
 
 ```json
 {
+  "schemaVersion": "1",
   "eventType": "esc_crt",
   "deliveryId": "clx7f1m4k0001qzrm6c2h8w0p",
   "timestamp": "2026-07-25T10:14:58.902Z",
@@ -318,6 +331,7 @@ All amounts are `i128` stroops (1 unit = 10 000 000 stroops).
 
 ```json
 {
+  "schemaVersion": "1",
   "eventType": "mil_add",
   "deliveryId": "clx7f2p9x0002qzrm4b1t7k3d",
   "timestamp": "2026-07-25T10:15:31.004Z",
@@ -380,6 +394,7 @@ separate `funds_rel` event — settle balances on `funds_rel`, not on `mil_apr`.
 
 ```json
 {
+  "schemaVersion": "1",
   "eventType": "funds_rel",
   "deliveryId": "clx7f5r2m0004qzrm9d3v2j8h",
   "timestamp": "2026-07-25T11:02:17.556Z",
@@ -440,6 +455,7 @@ it. The escrow moves to `Completed` on this event, not to `Cancelled`.
 
 ```json
 {
+  "schemaVersion": "1",
   "eventType": "rep_upd",
   "deliveryId": "clx7f8t4p0006qzrm1n7w5s2k",
   "timestamp": "2026-07-25T11:02:18.113Z",
