@@ -16,19 +16,26 @@
  * @param {string}   [props.className]
  */
 
+import { useContext } from 'react';
 import { useOptimisticAction } from '../../hooks/useOptimisticAction';
+import { ToastContext } from '../../contexts/ToastContext';
 import { cn } from '../../lib/utils';
 
 export default function OptimisticMilestoneActions({ milestone, onApprove, onReject, className }) {
   const { state, run, isPending, error } = useOptimisticAction(milestone);
+  const toast = useContext(ToastContext);
 
   const handle = (nextStatus, action) =>
     run({
       optimisticUpdate: (prev) => ({ ...prev, status: nextStatus }),
       action: () => action(milestone.id),
       onSuccess: (result, prev) => ({ ...prev, ...(result || {}) }),
-    }).catch(() => {
+      onError: (err) => {
+        toast?.showToast(err.message || `Failed to update milestone to ${nextStatus}`, 'error');
+      },
+    }).catch((err) => {
       /* error state is surfaced via `error` below; rollback already applied */
+      toast?.showToast(err.message || `Failed to update milestone to ${nextStatus}`, 'error');
     });
 
   const isSettled = state.status === 'Approved' || state.status === 'Rejected';

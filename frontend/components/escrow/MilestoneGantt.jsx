@@ -106,10 +106,19 @@ function Tooltip({ milestone, x, y, visible }) {
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
-export default function MilestoneGantt({ milestones = [], startDate, endDate, className = '' }) {
+export default function MilestoneGantt({
+  milestones = [],
+  startDate,
+  endDate,
+  onSelectMilestone,
+  onMilestoneClick,
+  className = '',
+}) {
   const [tooltip, setTooltip] = useState({ visible: false, milestone: null, x: 0, y: 0 });
   const [focusedIndex, setFocusedIndex] = useState(null);
+  const [selectedMilestone, setSelectedMilestone] = useState(null);
   const containerRef = useRef(null);
+  const barRefs = useRef([]);
   const [containerWidth, setContainerWidth] = useState(600);
 
   // Responsive width
@@ -121,6 +130,44 @@ export default function MilestoneGantt({ milestones = [], startDate, endDate, cl
     ro.observe(containerRef.current);
     return () => ro.disconnect();
   }, []);
+
+  const handleOpenDetail = (milestone) => {
+    setSelectedMilestone(milestone);
+    onSelectMilestone?.(milestone);
+    onMilestoneClick?.(milestone);
+  };
+
+  const handleKeyDown = (e, index, milestone) => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      const next = (index + 1) % milestones.length;
+      barRefs.current[next]?.focus();
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const prev = (index - 1 + milestones.length) % milestones.length;
+      barRefs.current[prev]?.focus();
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      barRefs.current[0]?.focus();
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      barRefs.current[milestones.length - 1]?.focus();
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      handleOpenDetail(milestone);
+    }
+  };
+
+  useEffect(() => {
+    if (!selectedMilestone) return;
+    const handleGlobalKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setSelectedMilestone(null);
+      }
+    };
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [selectedMilestone]);
 
   const chartWidth = containerWidth - LABEL_WIDTH;
 
@@ -284,9 +331,14 @@ export default function MilestoneGantt({ milestones = [], startDate, endDate, cl
               return (
                 <g
                   key={m.id ?? i}
+                  ref={(el) => {
+                    barRefs.current[i] = el;
+                  }}
                   tabIndex={0}
                   role="button"
-                  aria-label={`${m.title}: ${m.status}, ${formatAmount(m.amount)}`}
+                  aria-label={`Milestone ${i + 1}: ${m.title}: ${m.status}, ${formatAmount(m.amount)}`}
+                  onKeyDown={(e) => handleKeyDown(e, i, m)}
+                  onClick={() => handleOpenDetail(m)}
                   onMouseEnter={(e) => {
                     const rect = containerRef.current?.getBoundingClientRect();
                     const svgRect = e.currentTarget.closest('svg').getBoundingClientRect();
@@ -381,6 +433,85 @@ export default function MilestoneGantt({ milestones = [], startDate, endDate, cl
           </span>
         ))}
       </div>
+
+      {/* Milestone Detail Dialog */}
+      {selectedMilestone && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="gantt-milestone-detail-title"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          onClick={() => setSelectedMilestone(null)}
+        >
+          <div
+            className="bg-gray-900 border border-gray-700 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 text-white"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <span className="text-xs uppercase font-semibold text-gray-400">Milestone Details</span>
+                <h3 id="gantt-milestone-detail-title" className="text-lg font-bold text-white mt-0.5">
+                  {selectedMilestone.title}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedMilestone(null)}
+                aria-label="Close milestone details"
+                className="text-gray-400 hover:text-white p-1 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between py-1.5 border-b border-gray-800">
+                <span className="text-gray-400">Status</span>
+                <span
+                  className="font-medium"
+                  style={{ color: (STATUS_COLORS[selectedMilestone.status] ?? STATUS_COLORS.Pending).text }}
+                >
+                  ● {selectedMilestone.status}
+                </span>
+              </div>
+              <div className="flex justify-between py-1.5 border-b border-gray-800">
+                <span className="text-gray-400">Amount</span>
+                <span className="font-medium text-white">{formatAmount(selectedMilestone.amount)}</span>
+              </div>
+              {selectedMilestone.submittedAt && (
+                <div className="flex justify-between py-1.5 border-b border-gray-800">
+                  <span className="text-gray-400">Submitted</span>
+                  <span className="text-gray-200">{formatDate(new Date(selectedMilestone.submittedAt))}</span>
+                </div>
+              )}
+              {selectedMilestone.resolvedAt && (
+                <div className="flex justify-between py-1.5 border-b border-gray-800">
+                  <span className="text-gray-400">Resolved</span>
+                  <span className="text-gray-200">{formatDate(new Date(selectedMilestone.resolvedAt))}</span>
+                </div>
+              )}
+              {selectedMilestone.description && (
+                <div className="pt-2">
+                  <span className="text-gray-400 block text-xs mb-1">Description</span>
+                  <p className="text-gray-300 text-xs bg-gray-800/60 p-2.5 rounded-lg">
+                    {selectedMilestone.description}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setSelectedMilestone(null)}
+                className="px-4 py-2 text-sm bg-gray-800 hover:bg-gray-700 text-white rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
