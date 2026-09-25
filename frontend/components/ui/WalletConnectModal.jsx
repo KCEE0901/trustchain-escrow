@@ -62,6 +62,9 @@ export default function WalletConnectModal({ isOpen, onClose, wallet, onConnecte
   const [connectingId, setConnectingId] = useState(null);
   const [localError, setLocalError] = useState(null);
 
+  const displayError = localError || wallet?.error;
+  const isConnecting = Boolean(connectingId) || Boolean(wallet?.isConnecting);
+
   useEffect(() => {
     if (!isOpen) {
       setConnectingId(null);
@@ -85,7 +88,7 @@ export default function WalletConnectModal({ isOpen, onClose, wallet, onConnecte
   }, [connectingId, wallet?.error]);
 
   const handleSelect = async (walletOption) => {
-    if (!walletOption.available || connectingId) return;
+    if (!walletOption.available || isConnecting) return;
     setLocalError(null);
 
     if (walletOption.id === 'freighter') {
@@ -97,29 +100,35 @@ export default function WalletConnectModal({ isOpen, onClose, wallet, onConnecte
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Connect a wallet" size="sm">
-      <p className="mb-4 text-sm text-gray-400">
-        Choose a Stellar wallet to connect to Trustchain Escrow.
-      </p>
+      {wallet?.isConnected ? (
+        <div className="mb-4 rounded-lg border border-emerald-800 bg-emerald-950/30 p-3 text-xs text-emerald-300">
+          Connected account: <span className="font-mono font-medium">{wallet.address ? `${wallet.address.slice(0, 8)}...${wallet.address.slice(-6)}` : 'Freighter'}</span>
+        </div>
+      ) : (
+        <p className="mb-4 text-sm text-gray-400">
+          Choose a Stellar wallet to connect to Trustchain Escrow.
+        </p>
+      )}
 
-      {localError && (
+      {displayError && (
         <div
           role="alert"
           className="mb-3 rounded-lg border border-red-800 bg-red-950/30 p-3 text-sm text-red-300"
         >
-          {localError}
+          {displayError}
         </div>
       )}
 
       <ul className="space-y-2" aria-label="Available wallets">
         {SUPPORTED_WALLETS.map((walletOption) => {
-          const isConnectingThis = connectingId === walletOption.id;
+          const isConnectingThis = connectingId === walletOption.id || (walletOption.id === 'freighter' && wallet?.isConnecting);
           return (
             <li key={walletOption.id}>
               <button
                 type="button"
                 onClick={() => handleSelect(walletOption)}
-                disabled={!walletOption.available || Boolean(connectingId)}
-                aria-disabled={!walletOption.available || Boolean(connectingId)}
+                disabled={!walletOption.available || isConnecting}
+                aria-disabled={!walletOption.available || isConnecting}
                 className={cn(
                   'flex w-full items-center gap-3 rounded-xl border p-3 text-left transition-colors',
                   'focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500',
@@ -137,6 +146,11 @@ export default function WalletConnectModal({ isOpen, onClose, wallet, onConnecte
                     {!walletOption.available && (
                       <span className="rounded-full bg-gray-700 px-2 py-0.5 text-[10px] uppercase tracking-wide text-gray-300">
                         Coming soon
+                      </span>
+                    )}
+                    {wallet?.isConnected && walletOption.id === 'freighter' && (
+                      <span className="rounded-full bg-emerald-950/60 border border-emerald-700 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
+                        Connected
                       </span>
                     )}
                   </span>

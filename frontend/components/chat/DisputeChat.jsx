@@ -18,10 +18,15 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, Paperclip, Circle } from 'lucide-react';
+import { Send, Paperclip, Circle, FileText, Film, ExternalLink, File } from 'lucide-react';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 const WS_BASE = API_BASE.replace(/^http/, 'ws');
+const IPFS_GATEWAY = (
+  process.env.NEXT_PUBLIC_IPFS_GATEWAY_URL ||
+  process.env.NEXT_PUBLIC_IPFS_GATEWAY ||
+  'https://ipfs.io'
+).replace(/\/+$/, '');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -34,9 +39,189 @@ function truncateAddress(addr) {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
 
+export function resolveIpfsUrl(cidOrUrl, gateway = IPFS_GATEWAY) {
+  if (!cidOrUrl) return '';
+  if (cidOrUrl.startsWith('http://') || cidOrUrl.startsWith('https://')) {
+    return cidOrUrl;
+  }
+  const cleanCid = cidOrUrl.replace(/^ipfs:\/\//, '').replace(/^\/+/, '');
+  return `${gateway}/ipfs/${cleanCid}`;
+}
+
+export function determineFileType({ type = '', name = '', url = '', text = '' }) {
+  const combined = `${type} ${name} ${url} ${text}`.toLowerCase();
+  if (
+    type.startsWith('image/') ||
+    /\.(png|jpe?g|gif|webp|svg|bmp)(\?.*)?$/i.test(name || url || text) ||
+    combined.includes('image:')
+  ) {
+    return 'image';
+  }
+  if (
+    type.startsWith('video/') ||
+    /\.(mp4|webm|ogg|mov)(\?.*)?$/i.test(name || url || text) ||
+    combined.includes('video:')
+  ) {
+    return 'video';
+  }
+  if (
+    type === 'application/pdf' ||
+    /\.pdf(\?.*)?$/i.test(name || url || text) ||
+    combined.includes('pdf:') ||
+    combined.includes('.pdf')
+  ) {
+    return 'pdf';
+  }
+  if (/\b(png|jpg|jpeg|gif|webp|image)\b/i.test(combined)) return 'image';
+  if (/\b(mp4|webm|mov|video)\b/i.test(combined)) return 'video';
+  if (/\b(pdf|document)\b/i.test(combined)) return 'pdf';
+  return 'other';
+}
+
+export function extractEvidence(msg) {
+  if (!msg) return null;
+
+  // 1. Attachment object
+  if (msg.attachment) {
+    const rawUrl = msg.attachment.url || (msg.attachment.cid ? `${IPFS_GATEWAY}/ipfs/${msg.attachment.cid}` : '');
+    const name = msg.attachment.name || '';
+    const fileType = determineFileType({
+      type: msg.attachment.type || msg.fileType || '',
+      name,
+      url: rawUrl,
+      text: msg.text || '',
+    });
+    if (rawUrl || msg.attachment.cid) {
+      return {
+        url: resolveIpfsUrl(rawUrl || msg.attachment.cid),
+        fileType,
+        name: name || 'Evidence file',
+      };
+    }
+  }
+
+  // 2. Explicit CID on message
+  const explicitCid = msg.cid || msg.ipfsCid;
+  if (explicitCid) {
+    const fileType = determineFileType({
+      type: msg.fileType || msg.type || '',
+      name: msg.filename || msg.name || '',
+      url: explicitCid,
+      text: msg.text || '',
+    });
+    return {
+      url: `${IPFS_GATEWAY}/ipfs/${explicitCid}`,
+      fileType,
+      name: msg.filename || msg.name || explicitCid,
+    };
+  }
+
+  // 3. Message text containing IPFS URL or CID
+  if (typeof msg.text === 'string') {
+    const ipfsMatch =
+      msg.text.match(/(?:ipfs:\/\/|https?:\/\/[^\s/]+\/ipfs\/)(Qm[1-9A-HJ-NP-Za-km-z]{44,}|bafy[a-z0-9]{50,}|bafk[a-z0-9]{50,})([^\s]*)/i) ||
+      msg.text.match(/\b(Qm[1-9A-HJ-NP-Za-km-z]{44}|bafy[a-z0-9]{50,}|bafk[a-z0-9]{50,})\b/i);
+
+    if (ipfsMatch) {
+      const matchedCid = ipfsMatch[1];
+      const extraPath = ipfsMatch[2] || '';
+      const fullUrl = `${IPFS_GATEWAY}/ipfs/${matchedCid}${extraPath}`;
+      const fileType = determineFileType({
+        type: msg.fileType || '',
+        name: extraPath || '',
+        url: fullUrl,
+        text: msg.text,
+      });
+      return {
+        url: fullUrl,
+        fileType,
+        name: extraPath ? extraPath.replace(/^\//, '') : matchedCid,
+      };
+    }
+  }
+
+  return null;
+}
+
 // ── Sub-components ────────────────────────────────────────────────────────────
 
+function EvidencePreview({ url, fileType, name }) {
+  if (!url) return null;
+
+  if (fileType === 'image') {
+    return (
+      <div className="mt-2 overflow-hidden rounded-xl border border-gray-700/60 bg-gray-900/60 shadow-md">
+        <img
+          src={url}
+          alt={name || 'IPFS evidence preview'}
+          loading="lazy"
+          className="max-h-[200px] max-w-[300px] w-auto h-auto rounded-lg object-cover transition-opacity hover:opacity-95"
+          style={{ maxHeight: '200px', maxWidth: '300px', objectFit: 'cover' }}
+        />
+        {name && (
+          <span className="block px-2.5 py-1 text-[11px] text-gray-400 truncate max-w-[300px]">
+            {name}
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  if (fileType === 'video') {
+    return (
+      <div className="mt-2 overflow-hidden rounded-xl border border-gray-700/60 bg-black/80 max-w-[300px] shadow-md">
+        <video
+          src={url}
+          controls
+          preload="metadata"
+          className="max-h-[200px] max-w-[300px] w-full rounded-lg"
+          style={{ maxHeight: '200px', maxWidth: '300px' }}
+        >
+          Your browser does not support the video tag.
+        </video>
+        {name && (
+          <span className="block px-2.5 py-1 text-[11px] text-gray-400 truncate max-w-[300px]">
+            {name}
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  if (fileType === 'pdf') {
+    return (
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-2 inline-flex items-center gap-2 rounded-xl border border-red-900/50 bg-red-950/40 px-3 py-2 text-xs text-red-200 hover:bg-red-900/50 hover:text-white transition-all shadow-sm"
+        aria-label={`Open PDF document: ${name || 'evidence.pdf'}`}
+      >
+        <FileText size={16} className="text-red-400 flex-shrink-0" aria-hidden="true" />
+        <span className="truncate max-w-[200px] font-medium">{name || 'View PDF Evidence'}</span>
+        <ExternalLink size={12} className="opacity-70 flex-shrink-0" aria-hidden="true" />
+      </a>
+    );
+  }
+
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="mt-2 inline-flex items-center gap-2 rounded-xl border border-gray-700 bg-gray-800/80 px-3 py-2 text-xs text-indigo-200 hover:bg-gray-750 hover:text-white transition-all shadow-sm"
+      aria-label={`Open evidence file: ${name || 'evidence file'}`}
+    >
+      <File size={16} className="text-indigo-400 flex-shrink-0" aria-hidden="true" />
+      <span className="truncate max-w-[200px] font-medium">{name || 'View Evidence Attachment'}</span>
+      <ExternalLink size={12} className="opacity-70 flex-shrink-0" aria-hidden="true" />
+    </a>
+  );
+}
+
 function MessageBubble({ msg, isMine }) {
+  const evidence = extractEvidence(msg);
+
   return (
     <div className={`flex gap-2 ${isMine ? 'flex-row-reverse' : 'flex-row'} items-end`}>
       {/* Avatar */}
@@ -66,7 +251,14 @@ function MessageBubble({ msg, isMine }) {
           }`}
         >
           {msg.text}
-          {msg.attachment && (
+          {evidence && (
+            <EvidencePreview
+              url={evidence.url}
+              fileType={evidence.fileType}
+              name={evidence.name}
+            />
+          )}
+          {msg.attachment && !evidence && (
             <a
               href={msg.attachment.url}
               target="_blank"
@@ -255,12 +447,15 @@ export default function DisputeChat({ escrowId, address, role, token }) {
         body: form,
       });
       if (!res.ok) return;
-      const { url, name } = await res.json();
+      const data = await res.json();
+      const url = data.url || (data.cid ? resolveIpfsUrl(data.cid) : '');
+      const name = data.name || file.name;
+      const cid = data.cid || data.ipfsCid;
       const msg = {
         type: 'message',
         payload: {
           text: `Attached: ${name}`,
-          attachment: { url, name },
+          attachment: { url, name, cid, type: file.type },
           address,
           role,
           ts: Date.now(),
@@ -354,7 +549,7 @@ export default function DisputeChat({ escrowId, address, role, token }) {
             type="file"
             className="sr-only"
             onChange={handleAttach}
-            accept="image/*,.pdf,.doc,.docx"
+            accept="image/*,.pdf,.doc,.docx,video/*"
           />
         </label>
 
