@@ -13,6 +13,9 @@ import cors from 'cors';
 import express from 'express';
 import helmet from 'helmet';
 import { requestLogger } from './lib/logger.js';
+import { OpenApiValidator } from 'express-openapi-validator';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 import cookieParser from 'cookie-parser';
 import {
@@ -76,6 +79,9 @@ attachPrismaMetrics(prisma);
 attachPrismaTracing(prisma);
 
 const PORT = process.env.PORT || 4000;
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const app = express();
 const sentryRequestHandler = Sentry.expressRequestHandler?.() ?? ((_req, _res, next) => next());
 const sentryTracingHandler = Sentry.expressTracingHandler?.() ?? ((_req, _res, next) => next());
@@ -117,6 +123,32 @@ app.use(sanitizeInputs);
 app.use(csrfProtection);
 app.use('/uploads', express.static('uploads'));
 app.use(auditMiddleware);
+
+// ── OpenAPI request body validation — after body parsers, before routes ───────
+// Validates request bodies against openapi.yaml schemas
+const openApiValidator = new OpenApiValidator({
+  apiSpec: path.join(__dirname, './openapi.yaml'),
+  validateRequests: {
+    removeAdditionalProperties: false, // report undocumented fields as errors
+    coerceTypes: true, // automatically coerce types if possible
+  },
+  validateResponses: false, // responses are not validated by default (only requests)
+  validateFormats: 'full', // full format validation
+  errorHandler: (err, req, res, next) => {
+    // Custom error handler — returns 400 with validation error details
+    const statusCode = err.status || 400;
+    res.status(statusCode).json({
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'Request validation failed',
+        requestId: req.id,
+        details: err.errors || [{ message: err.message }],
+      },
+    });
+  },
+});
+
+app.use(openApiValidator.middleware());
 
 // ── Sentry tracing handler — after body parsers, before routes ────────────────
 app.use(sentryTracingHandler);
