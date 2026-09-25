@@ -17,6 +17,7 @@
  */
 
 import { useEscrowUpdates } from '../../hooks/useEscrowUpdates';
+import OfflineBanner from '../ui/OfflineBanner';
 
 const STATUS_STYLES = {
   pending:    'bg-yellow-900/40 text-yellow-300 border-yellow-700',
@@ -44,6 +45,7 @@ const WS_STATUS_DOT = {
   connected:    'bg-emerald-400',
   reconnecting: 'bg-orange-400 animate-pulse',
   disconnected: 'bg-red-500',
+  failed:       'bg-red-700',
 };
 
 export default function EscrowStatusBadge({
@@ -53,7 +55,7 @@ export default function EscrowStatusBadge({
   address,
   className = '',
 }) {
-  const { status: wsStatus, lastPayload } = useEscrowUpdates(escrowId, {
+  const { status: wsStatus, isOffline, lastPayload, lastError } = useEscrowUpdates(escrowId, {
     authToken,
     address,
     enabled: Boolean(escrowId),
@@ -63,22 +65,38 @@ export default function EscrowStatusBadge({
   const styleKey = escrowStatus in STATUS_STYLES ? escrowStatus : 'pending';
   const label = STATUS_LABELS[styleKey] ?? escrowStatus;
 
+  // Build a contextual offline message based on the WS status.
+  const offlineMessage =
+    wsStatus === 'failed'
+      ? '⚠️ Real-time updates stopped after too many reconnection failures. Refresh to try again.'
+      : '⚠️ Real-time updates paused — reconnecting…';
+
   return (
-    <span
-      className={`
-        inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium
-        border ${STATUS_STYLES[styleKey]} ${className}
-      `}
-      aria-label={`Escrow status: ${label}`}
-      role="status"
-    >
-      {/* WebSocket connection indicator */}
+    <>
+      {/* #349 — show OfflineBanner while disconnected from the WS */}
+      <OfflineBanner show={isOffline} message={offlineMessage} />
+
       <span
-        className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${WS_STATUS_DOT[wsStatus]}`}
-        aria-hidden="true"
-        title={`WebSocket: ${wsStatus}`}
-      />
-      {label}
-    </span>
+        className={`
+          inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium
+          border ${STATUS_STYLES[styleKey]} ${className}
+        `}
+        aria-label={`Escrow status: ${label}`}
+        role="status"
+      >
+        {/* WebSocket connection indicator */}
+        <span
+          className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${WS_STATUS_DOT[wsStatus] ?? 'bg-gray-500'}`}
+          aria-hidden="true"
+          title={`WebSocket: ${wsStatus}`}
+        />
+        {label}
+      </span>
+
+      {/* Surface the permanent failure error for screen readers */}
+      {wsStatus === 'failed' && lastError && (
+        <p role="alert" className="sr-only">{lastError.message}</p>
+      )}
+    </>
   );
 }

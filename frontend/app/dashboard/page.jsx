@@ -13,6 +13,7 @@ import DashboardTour from '../../components/onboarding/DashboardTour';
 import { usePerformance } from '../../hooks/usePerformance';
 import { useI18n } from '../../i18n/index.jsx';
 import { useWalletStore } from '../../store/app-store';
+import { useLocalStorage } from '../../hooks/useLocalStorage';
 
 const StatWidgets = dynamic(() => import('../../components/dashboard/StatWidgets'), {
   ssr: false,
@@ -49,6 +50,9 @@ export default function DashboardPage() {
   const [escrowsLoading, setEscrowsLoading] = useState(true);
   const [reputation, setReputation] = useState(null);
   const { measureAsync } = usePerformance('DashboardPage');
+
+  // #352 — persist grid/list layout preference across page refreshes
+  const [layout, setLayout] = useLocalStorage('dashboardLayout', 'grid');
 
   useEffect(() => {
     if (!address) router.replace('/');
@@ -96,6 +100,42 @@ export default function DashboardPage() {
             </div>
             <div className="flex items-center gap-3">
               {reputationScore !== null && <ReputationBadge score={reputationScore} />}
+              {/* #352 — grid/list layout toggle, persisted in localStorage */}
+              <div role="group" aria-label="Layout view" className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setLayout('grid')}
+                  aria-pressed={layout === 'grid'}
+                  aria-label="Grid view"
+                  className={`p-1.5 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-gray-950 ${
+                    layout === 'grid'
+                      ? 'bg-indigo-600 text-white'
+                      : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                  }`}
+                >
+                  {/* 2×2 grid icon */}
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                    <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
+                    <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLayout('list')}
+                  aria-pressed={layout === 'list'}
+                  aria-label="List view"
+                  className={`p-1.5 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-gray-950 ${
+                    layout === 'list'
+                      ? 'bg-indigo-600 text-white'
+                      : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                  }`}
+                >
+                  {/* list icon */}
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                    <line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" />
+                  </svg>
+                </button>
+              </div>
               <Button
                 href="/escrow/create"
                 variant="primary"
@@ -140,8 +180,16 @@ export default function DashboardPage() {
               <div className="card text-center py-10">
                 <p className="text-gray-400 font-medium">No active escrows yet.</p>
               </div>
-            ) : (
+            ) : layout === 'grid' ? (
               <div className="grid gap-4 md:grid-cols-2" role="list">
+                {escrows.map((escrow) => (
+                  <div key={escrow.id} role="listitem">
+                    <EscrowCard escrow={escrow} />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex flex-col gap-3" role="list">
                 {escrows.map((escrow) => (
                   <div key={escrow.id} role="listitem">
                     <EscrowCard escrow={escrow} />
