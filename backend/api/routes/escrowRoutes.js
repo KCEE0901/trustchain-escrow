@@ -11,6 +11,20 @@ const router = express.Router();
 router.use(authMiddleware);
 
 /**
+ * Build a tenant-scoped cache key for the escrow detail endpoint.
+ * Format: escrow:<tenantId>:<escrowId>
+ * Falls back to '_global' when no tenant is resolved (e.g. single-tenant setups).
+ *
+ * @param {import('express').Request} req
+ * @returns {string}
+ */
+function escrowDetailCacheKey(req) {
+  const tenantId = req.tenant?.id ?? '_global';
+  const escrowId = req.params.id;
+  return `escrow:${tenantId}:${escrowId}`;
+}
+
+/**
  * @route  GET /api/escrows
  */
 router.get(
@@ -43,11 +57,29 @@ router.get('/search', validatePagination, escrowController.searchEscrowsV1);
 
 /**
  * @route  POST /api/escrows/broadcast
+ * @desc   Submit a signed Soroban transaction (create, approve, release, dispute, cancel).
+ *         Invalidates the escrows collection cache after a successful broadcast.
+ *         If the request body contains an escrowId the corresponding detail cache entry
+ *         is also purged so GET /escrows/:id reflects the new state immediately.
  */
 router.post(
   '/broadcast',
   validateBroadcast,
-  invalidateOn({ tags: ['escrows'] }),
+  invalidateOn({
+    tags: (req) => {
+      const tags = ['escrows'];
+      // Optionally scope per-escrow invalidation when the caller supplies escrowId
+      const escrowId = req.body?.escrowId ?? req.query?.escrowId;
+      if (escrowId) {
+        const tenantId = req.tenant?.id ?? '_global';
+        // Invalidate the custom key used by the detail cache
+        tags.push(`escrow:${tenantId}:${escrowId}`);
+        // Also invalidate the tag-based entries
+        tags.push(`escrow:${escrowId}`);
+      }
+      return tags;
+    },
+  }),
   escrowController.broadcastCreateEscrow,
 );
 
@@ -83,12 +115,24 @@ router.get(
 
 /**
  * @route  GET /api/escrows/:id
+ * @desc   Fetch a single escrow by ID.
+ *
+ * Caching strategy:
+ *   - TTL:     30 seconds (CACHE_TTL_DETAIL env var or TTL.DETAIL default)
+ *   - Key:     escrow:<tenantId>:<escrowId>  — tenant-scoped to prevent cross-tenant data leaks
+ *   - Tags:    ['escrows', 'escrow:<id>']    — for tag-based bulk invalidation
+ *   - X-Cache: HIT header is set on cached responses
+ *
+ * Invalidation:
+ *   Cache is evicted when the escrow is mutated via POST /escrows/broadcast
+ *   (covers create, approve_milestone, release_funds, raise_dispute, cancel).
  */
 router.get(
   '/:id',
   validateEscrowId,
   cacheResponse({
-    ttl: TTL.DETAIL,
+    ttl: TTL.DETAIL, // 30 seconds (CACHE_TTL_DETAIL=30)
+    keyFn: escrowDetailCacheKey,
     tags: (req) => ['escrows', `escrow:${req.params.id}`],
   }),
   escrowController.getEscrow,
