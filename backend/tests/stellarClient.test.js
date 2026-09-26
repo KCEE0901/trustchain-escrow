@@ -35,6 +35,13 @@ const mockSorobanRpc = {
 
 jest.unstable_mockModule('@stellar/stellar-sdk', () => mockSorobanRpc);
 
+// Mock correlationId module so we can control the ID returned during tests
+const mockGetCorrelationId = jest.fn(() => 'test-correlation-id-123');
+jest.unstable_mockModule('../lib/correlationId.js', () => ({
+  middleware: jest.fn(),
+  getCorrelationId: mockGetCorrelationId,
+}));
+
 const { default: stellarClient, StellarClient } = await import('../services/stellarClient.js');
 
 describe('Stellar Client with Horizon Failover', () => {
@@ -385,5 +392,110 @@ describe('Stellar Client with Horizon Failover', () => {
 
       await expect(promise).rejects.toThrow('Query timeout');
     });
+  });
+});
+
+describe('Stellar Client — Correlation ID propagation', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockServerInstances.clear();
+    mockGetCorrelationId.mockReturnValue('test-correlation-id-123');
+    loggerMock.info.mockReset();
+    loggerMock.warn.mockReset();
+    loggerMock.error.mockReset();
+  });
+
+  afterEach(() => {
+    stellarClient.destroy();
+  });
+
+  it('passes X-Correlation-ID header to SorobanRpc.Server on successful query', async () => {
+    // Prime a mock server for the primary endpoint
+    const primaryUrl = stellarClient.getPrimaryEndpoint();
+    const mockServer = {
+      getLatestLedger: jest.fn().mockResolvedValue({ sequence: 100 }),
+    };
+    mockServerInstances.set(primaryUrl, mockServer);
+    mockSorobanRpc.SorobanRpc.Server.mockImplementation((url, opts) => {
+      mockServerInstances.set(url, { ...mockServerInstances.get(url), _opts: opts });
+      return mockServerInstances.get(url);
+    });
+
+    await stellarClient.getLatestLedger();
+
+    // SorobanRpc.Server must have been constructed with the correlation header
+    expect(mockSorobanRpc.SorobanRpc.Server).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'X-Correlation-ID': 'test-correlation-id-123' }),
+      }),
+    );
+  });
+
+  it('logs correlationId field on successful RPC call', async () => {
+    const primaryUrl = stellarClient.getPrimaryEndpoint();
+    mockServerInstances.set(primaryUrl, {
+      getLatestLedger: jest.fn().mockResolvedValue({ sequence: 200 }),
+    });
+    mockSorobanRpc.SorobanRpc.Server.mockImplementation((url) => mockServerInstances.get(url));
+
+    await stellarClient.getLatestLedger();
+
+    expect(loggerMock.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'query_success',
+        correlationId: 'test-correlation-id-123',
+      }),
+    );
+  });
+
+  it('logs correlationId on failover warning', async () => {
+    const primaryUrl = stellarClient.getPrimaryEndpoint();
+    mockServerInstances.set(primaryUrl, {
+      getLatestLedger: jest.fn().mockRejectedValue(new Error('connection refused')),
+    });
+    mockSorobanRpc.SorobanRpc.Server.mockImplementation((url) => mockServerInstances.get(url));
+
+    try {
+      await stellarClient.getLatestLedger();
+    } catch {
+      // expected
+    }
+
+    expect(loggerMock.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'query_failed_attempting_next_node',
+        correlationId: 'test-correlation-id-123',
+      }),
+    );
+  });
+
+  it('logs correlationId on all-endpoints-failed error', async () => {
+    const client = new StellarClient(['https://primary.stellar.org']);
+    mockGetCorrelationId.mockReturnValue('err-corr-id-999');
+    mockServerInstances.set('https://primary.stellar.org', {
+      getLatestLedger: jest.fn().mockRejectedValue(new Error('fatal')),
+    });
+    mockSorobanRpc.SorobanRpc.Server.mockImplementation((url) => mockServerInstances.get(url));
+
+    client.nodeHealth.clear();
+    client.nodeHealth.set('https://primary.stellar.org', {
+      url: 'https://primary.stellar.org',
+      isHealthy: true,
+      canAttempt: () => true,
+      recordFailure: jest.fn(),
+      failureCount: 0,
+    });
+
+    await expect(
+      client.executeWithFailover((server) => server.getLatestLedger()),
+    ).rejects.toThrow('All Stellar endpoints failed');
+
+    expect(loggerMock.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'all_endpoints_failed',
+        correlationId: 'err-corr-id-999',
+      }),
+    );
   });
 });

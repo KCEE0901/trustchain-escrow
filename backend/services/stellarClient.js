@@ -18,6 +18,7 @@
 
 import { SorobanRpc, Transaction, Networks } from '@stellar/stellar-sdk';
 import { createModuleLogger } from '../config/logger.js';
+import { getCorrelationId } from '../lib/correlationId.js';
 
 const logger = createModuleLogger('service.stellarClient');
 
@@ -143,11 +144,15 @@ export class StellarClient {
    * Perform health checks on all endpoints in parallel.
    */
   async performHealthChecks() {
+    const correlationId = getCorrelationId();
     const checks = this.endpoints.map(async (url) => {
       const health = this.nodeHealth.get(url);
       try {
         const startTime = Date.now();
-        const server = new SorobanRpc.Server(url, { allowHttp: url.startsWith('http://') });
+        const server = new SorobanRpc.Server(url, {
+          allowHttp: url.startsWith('http://'),
+          headers: { 'X-Correlation-ID': correlationId },
+        });
         const result = await Promise.race([
           server.getLatestLedger(),
           new Promise((_, reject) =>
@@ -168,6 +173,7 @@ export class StellarClient {
     // Log health metrics
     logger.info({
       message: 'health_check_complete',
+      correlationId,
       timestamp: new Date().toISOString(),
       results: results.map((r) => ({
         url: r.url,
@@ -192,6 +198,8 @@ export class StellarClient {
 
   /**
    * Execute a query with automatic failover.
+   * Attaches the current request's correlation ID (X-Correlation-ID) to each
+   * Soroban RPC call for end-to-end distributed tracing.
    */
   async executeWithFailover(queryFn) {
     const endpointOrder = this.getEndpointOrder();
@@ -200,12 +208,21 @@ export class StellarClient {
       throw new Error('No healthy Stellar endpoints available');
     }
 
+    // Read the correlation ID from AsyncLocalStorage so it matches the
+    // inbound HTTP request that triggered this Stellar RPC call.
+    const correlationId = getCorrelationId();
+
     let lastError;
     for (const url of endpointOrder) {
       const health = this.nodeHealth.get(url);
       try {
         const startTime = Date.now();
-        const server = new SorobanRpc.Server(url, { allowHttp: url.startsWith('http://') });
+        // Pass X-Correlation-ID as a custom header so the Soroban RPC node
+        // can correlate its own logs back to the originating API request.
+        const server = new SorobanRpc.Server(url, {
+          allowHttp: url.startsWith('http://'),
+          headers: { 'X-Correlation-ID': correlationId },
+        });
 
         // Execute query with timeout
         const result = await Promise.race([
@@ -220,6 +237,7 @@ export class StellarClient {
 
         logger.info({
           message: 'query_success',
+          correlationId,
           activeNode: url,
           latency,
           successCount: health.successCount,
@@ -232,6 +250,7 @@ export class StellarClient {
 
         logger.warn({
           message: 'query_failed_attempting_next_node',
+          correlationId,
           failedNode: url,
           error: error.message,
           failureCount: health.failureCount,
@@ -244,6 +263,7 @@ export class StellarClient {
     // All endpoints exhausted
     logger.error({
       message: 'all_endpoints_failed',
+      correlationId,
       error: lastError.message,
       attemptedCount: endpointOrder.length,
     });
