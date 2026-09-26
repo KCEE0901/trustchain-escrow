@@ -90,6 +90,27 @@ const sentryErrorHandler =
 // Attaches trace context and request data to every event captured downstream.
 app.use(sentryRequestHandler);
 
+// ── Graceful-shutdown: in-flight request counter ──────────────────────────────
+// Declared here so the middleware is registered before any route handler.
+// The shutdown() function (defined later) reads these variables.
+let _inFlight = 0;
+let _shuttingDown = false;
+
+app.use((req, res, next) => {
+  if (_shuttingDown) {
+    // Refuse new work while draining; tell the client to retry elsewhere.
+    res.setHeader('Connection', 'close');
+    return res.status(503).json({ error: 'Server is shutting down' });
+  }
+  _inFlight++;
+  const decrement = () => {
+    _inFlight = Math.max(0, _inFlight - 1);
+  };
+  res.once('finish', decrement);
+  res.once('close', decrement);
+  next();
+});
+
 app.use(helmet());
 app.use(compressionMiddleware);
 app.use(timeoutMiddleware);
@@ -271,6 +292,74 @@ app.use((err, req, res, _next) => {
 const server = http.createServer(app);
 createWebSocketServer(server);
 
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
+// On SIGTERM / SIGINT:
+//  1. Stop accepting new connections immediately.
+//  2. Wait up to SHUTDOWN_TIMEOUT_MS for in-flight requests to complete.
+//  3. Close the database (Prisma) and Redis (cache) connections.
+//  4. Exit 0 on clean drain; exit 1 if the timeout fires first.
+
+const SHUTDOWN_TIMEOUT_MS = parseInt(process.env.SHUTDOWN_TIMEOUT_MS || '10000', 10);
+
+async function shutdown(signal) {
+  if (_shuttingDown) return; // idempotent
+  _shuttingDown = true;
+
+  logger.info({ signal, inFlight: _inFlight }, '[Shutdown] Signal received — draining requests');
+
+  // 1. Stop the HTTP server from accepting new connections.
+  server.close();
+
+  // 2. Wait for in-flight requests to complete (up to SHUTDOWN_TIMEOUT_MS).
+  const deadline = Date.now() + SHUTDOWN_TIMEOUT_MS;
+  await new Promise((resolve) => {
+    const check = setInterval(() => {
+      if (_inFlight <= 0 || Date.now() >= deadline) {
+        clearInterval(check);
+        resolve();
+      }
+    }, 100);
+  });
+
+  const timedOut = _inFlight > 0;
+  if (timedOut) {
+    logger.warn(
+      { inFlight: _inFlight },
+      '[Shutdown] Drain timeout reached — forcing close with in-flight requests',
+    );
+  } else {
+    logger.info('[Shutdown] All in-flight requests completed');
+  }
+
+  // 3. Close DB and cache connections.
+  try {
+    await prisma.$disconnect();
+    logger.info('[Shutdown] Prisma disconnected');
+  } catch (err) {
+    logger.error({ err }, '[Shutdown] Prisma disconnect error');
+  }
+
+  try {
+    // cacheService exposes the Redis client via its internal module scope.
+    // We call disconnect() if available; the in-memory fallback is a no-op.
+    const { default: cacheService } = await import('./services/cacheService.js');
+    if (typeof cacheService.disconnect === 'function') {
+      await cacheService.disconnect();
+      logger.info('[Shutdown] Redis disconnected');
+    }
+  } catch (err) {
+    logger.warn({ err }, '[Shutdown] Cache disconnect error (non-fatal)');
+  }
+
+  // 4. Exit with the appropriate code.
+  const exitCode = timedOut ? 1 : 0;
+  logger.info({ exitCode }, '[Shutdown] Process exiting');
+  process.exit(exitCode);
+}
+
+process.once('SIGTERM', () => shutdown('SIGTERM'));
+process.once('SIGINT', () => shutdown('SIGINT'));
+
 async function startServer() {
   return new Promise((resolve, reject) => {
     server.listen(PORT, async () => {
@@ -357,4 +446,4 @@ if (
 }
 
 export default app;
-export { server, startServer };
+export { server, startServer, shutdown };

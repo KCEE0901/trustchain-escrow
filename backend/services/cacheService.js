@@ -265,6 +265,22 @@ function size() {
   return redisReady ? null : mem.size();
 }
 
+/**
+ * Gracefully close the Redis connection.
+ * Called during server shutdown so the process can exit cleanly.
+ * Safe to call when Redis is not configured (no-op).
+ */
+async function disconnect() {
+  if (redis && redisReady) {
+    try {
+      await redis.quit();
+      redisReady = false;
+    } catch (err) {
+      log.warn({ message: 'redis_disconnect_error', error: err.message });
+    }
+  }
+}
+
 export default {
   get,
   set,
@@ -277,4 +293,5 @@ export default {
   warm,
   analytics,
   size,
+  disconnect,
 };
