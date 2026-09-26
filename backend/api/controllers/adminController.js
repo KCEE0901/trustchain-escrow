@@ -11,6 +11,7 @@ import prisma from '../../lib/prisma.js';
 import { TIER_LIMITS } from '../../config/rateLimits.js';
 import { logControllerError, getLogger } from '../../config/logger.js';
 import { getUserUsage } from '../middleware/rateLimiter.js';
+import emailService from '../../services/emailService.js';
 
 const adminLog = getLogger();
 
@@ -358,6 +359,49 @@ const resolveDispute = async (req, res) => {
 
     await cache.invalidateTags(['escrows', `escrow:${result.dispute.escrowId}`]);
     await cache.invalidatePrefix('admin:disputes');
+
+    // Fire-and-forget: notify client and contractor of the ruling result.
+    // Email failure must not block or reject the ruling response.
+    (async () => {
+      try {
+        const escrow = await prisma.escrow.findUnique({
+          where: { id: result.dispute.escrowId },
+          select: { id: true, clientAddress: true, freelancerAddress: true, totalAmount: true },
+        });
+        if (!escrow) return;
+
+        const total = Number(escrow.totalAmount ?? 0) || 1;
+        const clientNum = Number(clientAmount ?? 0);
+        const clientPct = Math.round((clientNum / total) * 100);
+        const contractorPct = 100 - clientPct;
+
+        const baseUrl =
+          process.env.EMAIL_BASE_URL || process.env.FRONTEND_URL || 'http://localhost:3000';
+        const dashboardUrl = `${baseUrl}/escrows/${escrow.id}`;
+
+        const recipients = [];
+        if (escrow.clientAddress) {
+          recipients.push({ address: escrow.clientAddress, email: escrow.clientAddress });
+        }
+        if (escrow.freelancerAddress && escrow.freelancerAddress !== escrow.clientAddress) {
+          recipients.push({ address: escrow.freelancerAddress, email: escrow.freelancerAddress });
+        }
+
+        if (recipients.length > 0) {
+          await emailService.notifyDisputeRulingIssued({
+            escrowId: escrow.id,
+            clientPct,
+            contractorPct,
+            resolution: notes || undefined,
+            dashboardUrl,
+            recipients,
+          });
+        }
+      } catch (emailErr) {
+        adminLog.error({ err: emailErr, disputeId: result.dispute.id }, '[admin] Failed to send ruling email');
+      }
+    })();
+
     res.json({ message: 'Dispute resolved.', dispute: result.dispute });
   } catch (err) {
     logControllerError('admin.resolveDispute', err, req);

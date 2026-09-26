@@ -16,6 +16,8 @@
 
 import prisma from '../lib/prisma.js';
 import { log, AuditCategory, AuditAction } from './auditService.js';
+import emailService from './emailService.js';
+import logger from '../config/logger.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -140,6 +142,44 @@ const rules = [
     },
   },
 ];
+
+// ── Email Helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * Build the recipient list and send the dispute ruling email to both client
+ * and contractor.  Called fire-and-forget — errors are only logged.
+ *
+ * @param {object} opts
+ * @param {object} opts.dispute    - Resolved dispute record
+ * @param {object} opts.escrow     - Associated escrow record
+ * @param {number} opts.clientPct
+ * @param {number} opts.contractorPct
+ * @param {string} [opts.resolution]
+ */
+async function sendRulingNotification({ dispute, escrow, clientPct, contractorPct, resolution }) {
+  const baseUrl = process.env.EMAIL_BASE_URL || process.env.FRONTEND_URL || 'http://localhost:3000';
+  const dashboardUrl = `${baseUrl}/escrows/${escrow.id}`;
+
+  const recipients = [];
+
+  if (escrow.clientAddress) {
+    recipients.push({ address: escrow.clientAddress, email: escrow.clientAddress });
+  }
+  if (escrow.freelancerAddress && escrow.freelancerAddress !== escrow.clientAddress) {
+    recipients.push({ address: escrow.freelancerAddress, email: escrow.freelancerAddress });
+  }
+
+  if (recipients.length === 0) return;
+
+  await emailService.notifyDisputeRulingIssued({
+    escrowId: escrow.id,
+    clientPct,
+    contractorPct,
+    resolution,
+    dashboardUrl,
+    recipients,
+  });
+}
 
 // ── Core Engine ───────────────────────────────────────────────────────────────
 
@@ -298,6 +338,18 @@ export async function runAutomatedResolution(disputeId) {
         freelancerAmount,
       },
     });
+
+    // Fire-and-forget: send ruling notification to both parties.
+    // Email failure must not block or reject the ruling response.
+    sendRulingNotification({
+      dispute: updated,
+      escrow: dispute.escrow,
+      clientPct: Math.round(evaluation.clientSplit * 100),
+      contractorPct: Math.round((1 - evaluation.clientSplit) * 100),
+      resolution: evaluation.resolution,
+    }).catch((err) =>
+      logger.error({ err, disputeId }, '[disputeResolution] Failed to send ruling email'),
+    );
 
     return { resolved: true, resolutionType: ResolutionType.AUTO, dispute: updated };
   }

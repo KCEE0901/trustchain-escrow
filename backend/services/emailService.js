@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { __resetForTests, enqueueEvent, getQueueSnapshot } from '../queues/emailQueue.js';
 
 import disputeRaisedTemplate from '../templates/emails/disputeRaised.js';
+import disputeRulingIssuedTemplate from '../templates/emails/disputeRulingIssued.js';
 import escrowStatusChangedTemplate from '../templates/emails/escrowStatusChanged.js';
 import milestoneCompletedTemplate from '../templates/emails/milestoneCompleted.js';
 
@@ -140,6 +141,10 @@ async function notifyDisputeRaised(payload) {
   return queueNotifications('dispute.raised', payload, disputeRaisedTemplate);
 }
 
+async function notifyDisputeRulingIssued(payload) {
+  return queueNotifications('dispute.ruling_issued', payload, disputeRulingIssuedTemplate);
+}
+
 function resetEmailServiceForTests() {
   preferences.clear();
   __resetForTests();
@@ -150,6 +155,7 @@ export {
   resetEmailServiceForTests as __resetForTests,
   getQueueSnapshot,
   notifyDisputeRaised,
+  notifyDisputeRulingIssued,
   notifyEscrowStatusChange,
   notifyMilestoneCompleted,
 };
@@ -161,6 +167,7 @@ export default {
   start,
   getQueueSnapshot,
   notifyDisputeRaised,
+  notifyDisputeRulingIssued,
   notifyEscrowStatusChange,
   notifyMilestoneCompleted,
   __resetForTests: resetEmailServiceForTests,
