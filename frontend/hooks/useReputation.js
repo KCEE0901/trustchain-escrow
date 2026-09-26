@@ -14,6 +14,8 @@
 
 'use client';
 
+import { useEffect, useState } from 'react';
+
 const BADGE_THRESHOLDS = {
   ELITE: 1000,
   EXPERT: 500,
@@ -44,11 +46,52 @@ export function getBadgeFromScore(score) {
  * TODO (contributor — Issue #39): replace stub with SWR fetch
  */
 export function useReputation(address) {
-  // TODO: implement
+  const [reputation, setReputation] = useState(null);
+  const [isLoading, setIsLoading] = useState(Boolean(address));
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (!address) {
+      setReputation(null);
+      setIsLoading(false);
+      setError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoading(true);
+    setError(null);
+
+    fetch(`/api/reputation/${address}`)
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to load reputation');
+        return data;
+      })
+      .then((data) => {
+        if (!cancelled) setReputation(data);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setReputation(null);
+          setError(err);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [address]);
+
+  const score = Number(reputation?.totalScore ?? reputation?.score ?? 0);
+
   return {
-    reputation: null,
-    badge: 'NEW',
-    isLoading: false,
-    error: address ? new Error('useReputation not implemented — see Issue #39') : null,
+    reputation,
+    badge: getBadgeFromScore(score),
+    isLoading,
+    error,
   };
 }

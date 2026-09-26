@@ -1213,6 +1213,7 @@ mod tests {
 
         let claim = s.client.get_claim(&id);
         assert_eq!(claim.status, ClaimStatus::Withdrawn);
+        assert_eq!(s.client.get_fund_info().current_balance, 0);
     }
 
     // ── Governance ────────────────────────────────────────────────────────────

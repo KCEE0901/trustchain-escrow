@@ -1,4 +1,4 @@
-import { renderHook } from '@testing-library/react';
+import { renderHook, waitFor } from '@testing-library/react';
 import { useReputation, getBadgeFromScore } from '../../hooks/useReputation';
 
 describe('getBadgeFromScore', () => {
@@ -29,6 +29,10 @@ describe('getBadgeFromScore', () => {
 });
 
 describe('useReputation', () => {
+  beforeEach(() => {
+    global.fetch = jest.fn();
+  });
+
   it('returns default values when address is null', () => {
     const { result } = renderHook(() => useReputation(null));
     expect(result.current.reputation).toBeNull();
@@ -37,14 +41,32 @@ describe('useReputation', () => {
     expect(result.current.error).toBeNull();
   });
 
-  it('returns error when address is provided (not yet implemented)', () => {
+  it('loads reputation data and maps the badge', async () => {
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ totalScore: 275, completedEscrows: 4 }),
+    });
+
     const { result } = renderHook(() => useReputation('GABC123'));
-    expect(result.current.error).toBeInstanceOf(Error);
-    expect(result.current.error.message).toMatch(/not implemented/i);
+    expect(result.current.isLoading).toBe(true);
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.reputation.completedEscrows).toBe(4);
+    expect(result.current.badge).toBe('VERIFIED');
   });
 
-  it('returns isLoading false', () => {
+  it('surfaces API errors', async () => {
+    global.fetch.mockResolvedValueOnce({
+      ok: false,
+      json: async () => ({ error: 'not found' }),
+    });
+
     const { result } = renderHook(() => useReputation('GABC123'));
-    expect(result.current.isLoading).toBe(false);
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.error).toBeInstanceOf(Error);
+    expect(result.current.error.message).toBe('not found');
   });
 });

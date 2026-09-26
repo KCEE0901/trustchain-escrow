@@ -1795,6 +1795,16 @@ impl EscrowContract {
             .unwrap_or_else(|| Self::default_platform_fee_tiers(&env))
     }
 
+    pub fn simulate_escrow_creation(
+        env: Env,
+        total_amount: i128,
+    ) -> Result<EscrowFeeSnapshot, EscrowError> {
+        if total_amount <= 0 {
+            return Err(EscrowError::E17);
+        }
+        Self::calculate_platform_fee(&env, total_amount)
+    }
+
     // ── Escrow Lifecycle ──────────────────────────────────────────────────────
 
     /// Creates a new escrow and locks funds in the contract.

@@ -13,4 +13,9 @@ soroban-sdk = { version = "21.0.0", features = [] }
 stellar-trust-shared = { path = "../shared" }
 
 [dev-dependencies]
+criterion = "0.5"
 soroban-sdk = { version = "21.0.0", features = ["testutils"] }
+
+[[bench]]
+name = "governance_benchmarks"
+harness = false
