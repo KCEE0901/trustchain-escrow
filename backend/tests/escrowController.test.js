@@ -263,8 +263,26 @@ describe('escrowController', () => {
   });
 
   describe('getMilestones', () => {
-    it('returns 200 with milestones', async () => {
-      const req = { params: { id: '1' }, query: {} };
+    const CLIENT_ADDR = 'GCLIENT_ADDRESS_001';
+    const FREELANCER_ADDR = 'GFREELANCER_ADDRESS_001';
+
+    const escrowRow = {
+      id: 1n,
+      clientAddress: CLIENT_ADDR,
+      freelancerAddress: FREELANCER_ADDR,
+      arbiterAddress: null,
+    };
+
+    beforeEach(() => {
+      prismaMock.escrow.findUnique.mockResolvedValue(escrowRow);
+    });
+
+    it('returns 200 with milestones for the client', async () => {
+      const req = {
+        params: { id: '1' },
+        query: {},
+        user: { address: CLIENT_ADDR },
+      };
       const res = createMockRes();
       prismaMock.milestone.findMany.mockResolvedValue(fixtures.milestones);
       prismaMock.milestone.count.mockResolvedValue(fixtures.milestones.length);
@@ -275,8 +293,87 @@ describe('escrowController', () => {
       expect(res.body.data).toHaveLength(fixtures.milestones.length);
     });
 
+    it('returns 200 with milestones for the freelancer', async () => {
+      const req = {
+        params: { id: '1' },
+        query: {},
+        user: { address: FREELANCER_ADDR },
+      };
+      const res = createMockRes();
+      prismaMock.milestone.findMany.mockResolvedValue(fixtures.milestones);
+      prismaMock.milestone.count.mockResolvedValue(fixtures.milestones.length);
+
+      await escrowController.getMilestones(req, res);
+
+      expect(res.statusCode).toBe(200);
+    });
+
+    it('returns 403 for a non-participant caller', async () => {
+      const req = {
+        params: { id: '1' },
+        query: {},
+        user: { address: 'GSTRANGER_ADDRESS_NOT_IN_ESCROW' },
+      };
+      const res = createMockRes();
+
+      await escrowController.getMilestones(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(res.body.error).toMatch(/not a participant/i);
+    });
+
+    it('returns 403 when req.user has no address field', async () => {
+      const req = {
+        params: { id: '1' },
+        query: {},
+        user: { id: 'user-uuid-only' }, // no address
+      };
+      const res = createMockRes();
+
+      await escrowController.getMilestones(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+    });
+
+    it('returns 404 when escrow does not exist', async () => {
+      prismaMock.escrow.findUnique.mockResolvedValue(null);
+      const req = {
+        params: { id: '999' },
+        query: {},
+        user: { address: CLIENT_ADDR },
+      };
+      const res = createMockRes();
+
+      await escrowController.getMilestones(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it('milestones are ordered by milestoneIndex ascending', async () => {
+      const req = {
+        params: { id: '1' },
+        query: {},
+        user: { address: CLIENT_ADDR },
+      };
+      const res = createMockRes();
+      prismaMock.milestone.findMany.mockResolvedValue(fixtures.milestones);
+      prismaMock.milestone.count.mockResolvedValue(fixtures.milestones.length);
+
+      await escrowController.getMilestones(req, res);
+
+      expect(prismaMock.milestone.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orderBy: { milestoneIndex: 'asc' },
+        }),
+      );
+    });
+
     it('returns 400 for invalid escrow ID', async () => {
-      const req = { params: { id: 'abc' }, query: {} };
+      const req = {
+        params: { id: 'abc' },
+        query: {},
+        user: { address: CLIENT_ADDR },
+      };
       const res = createMockRes();
 
       await escrowController.getMilestones(req, res);

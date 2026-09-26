@@ -247,6 +247,33 @@ const getMilestones = async (req, res) => {
     const escrowId = BigInt(req.params.id);
     const { page, limit, skip } = parsePagination(req.query);
 
+    // Verify the escrow exists and the caller is a participant (client or
+    // freelancer). Arbiters are allowed too since they participate in disputes.
+    const escrow = await prisma.escrow.findUnique({
+      where: { id: escrowId },
+      select: {
+        id: true,
+        clientAddress: true,
+        freelancerAddress: true,
+        arbiterAddress: true,
+      },
+    });
+
+    if (!escrow) return res.status(404).json({ error: 'Escrow not found' });
+
+    const callerAddress = req.user?.address ?? req.user?.walletAddress ?? null;
+    const isParticipant =
+      callerAddress &&
+      (escrow.clientAddress === callerAddress ||
+        escrow.freelancerAddress === callerAddress ||
+        (escrow.arbiterAddress && escrow.arbiterAddress === callerAddress));
+
+    if (!isParticipant) {
+      return res
+        .status(403)
+        .json({ error: 'Forbidden: caller is not a participant of this escrow' });
+    }
+
     const [data, total] = await prisma.$transaction([
       prisma.milestone.findMany({
         where: { escrowId },

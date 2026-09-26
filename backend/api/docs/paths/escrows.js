@@ -204,6 +204,10 @@
  *   get:
  *     tags: [Escrows]
  *     summary: List milestones for an escrow (paginated)
+ *     description: |
+ *       Returns the ordered milestone array for the given escrow.
+ *       Requires authentication and verifies the caller is a participant
+ *       (client, freelancer, or arbiter). Returns 403 for non-participants.
  *     security:
  *       - BearerAuth: []
  *     parameters:
@@ -218,7 +222,7 @@
  *       - $ref: '#/components/parameters/Limit'
  *     responses:
  *       200:
- *         description: Paginated list of milestones
+ *         description: Paginated list of milestones ordered by milestoneIndex ascending
  *         content:
  *           application/json:
  *             schema:
@@ -232,6 +236,14 @@
  *                         $ref: '#/components/schemas/Milestone'
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
+ *       403:
+ *         description: Caller is not a participant of this escrow
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *             example:
+ *               error: 'Forbidden: caller is not a participant of this escrow'
  *       404:
  *         $ref: '#/components/responses/NotFound'
  *       500:

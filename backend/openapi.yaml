@@ -351,7 +351,12 @@ paths:
   /api/escrows/{id}/milestones:
     get:
       tags: [Escrows]
-      summary: List milestones for an escrow
+      summary: List milestones for an escrow (paginated)
+      description: |
+        Returns the ordered milestone array for the given escrow.
+        Requires authentication and verifies the caller is a participant
+        (client, freelancer, or arbiter) of the escrow. Returns 403 for
+        non-participants.
       operationId: listMilestones
       security:
         - BearerAuth: []
@@ -361,17 +366,34 @@ paths:
         - name: id
           in: path
           required: true
+          description: Escrow ID (numeric)
           schema:
             type: string
       responses:
         '200':
-          description: Paginated milestone list
+          description: Paginated milestone list ordered by milestoneIndex ascending
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/PaginatedMilestones'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Caller is not a participant of this escrow
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: 'Forbidden: caller is not a participant of this escrow'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/escrows/{id}/milestones/{milestoneId}:
     get:
