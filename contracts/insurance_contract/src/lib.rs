@@ -26,6 +26,7 @@
 //! | DataKey::Contribution(addr)| Persistent | Per-address contribution total |
 //! | DataKey::Governor(addr)| Persistent | Governor registration flag         |
 //! | DataKey::Vote(id,addr) | Persistent | Per-governor vote on a claim       |
+//! | DataKey::Reputation(addr)| Persistent | Per-address reputation record    |
 
 #![no_std]
 #![deny(warnings)]
@@ -37,7 +38,8 @@ mod types;
 
 pub use errors::InsuranceError;
 pub use types::{
-    Claim, ClaimStatus, DataKey, FundInfo, FundStats, SlashProposal, SlashStatus, StakeRecord,
+    Claim, ClaimStatus, DataKey, FundInfo, FundStats, ReputationRecord, SlashProposal, SlashStatus,
+    StakeRecord,
 };
 
 use soroban_sdk::{contract, contractimpl, token, Address, Env, String};
@@ -222,6 +224,33 @@ impl Storage {
             Self::bump_persistent(env, &key);
         }
         val
+    }
+
+    fn get_reputation(env: &Env, address: &Address) -> Option<ReputationRecord> {
+        let key = DataKey::Reputation(address.clone());
+        let record: Option<ReputationRecord> = env.storage().persistent().get(&key);
+        if record.is_some() {
+            Self::bump_persistent(env, &key);
+        }
+        record
+    }
+
+    /// Loads the record for `address`, or a zeroed one if it has none yet.
+    fn load_reputation(env: &Env, address: &Address) -> ReputationRecord {
+        Self::get_reputation(env, address).unwrap_or(ReputationRecord {
+            address: address.clone(),
+            contribution_count: 0,
+            total_contributed: 0,
+            claims_submitted: 0,
+            claims_paid: 0,
+            total_paid_out: 0,
+        })
+    }
+
+    fn save_reputation(env: &Env, record: &ReputationRecord) {
+        let key = DataKey::Reputation(record.address.clone());
+        env.storage().persistent().set(&key, record);
+        Self::bump_persistent(env, &key);
     }
 
     // ── Staking helpers ───────────────────────────────────────────────────────
@@ -432,6 +461,11 @@ impl InsuranceContract {
 
         Storage::add_contribution(&env, &contributor, amount);
 
+        let mut reputation = Storage::load_reputation(&env, &contributor);
+        reputation.contribution_count += 1;
+        reputation.total_contributed += amount;
+        Storage::save_reputation(&env, &reputation);
+
         let mut stats = Storage::load_stats(&env);
         stats.total_contributed += amount;
         Storage::save_stats(&env, &stats);
@@ -485,6 +519,10 @@ impl InsuranceContract {
             votes_against: 0,
         };
         Storage::save_claim(&env, &claim);
+
+        let mut reputation = Storage::load_reputation(&env, &claimant);
+        reputation.claims_submitted += 1;
+        Storage::save_reputation(&env, &reputation);
 
         let mut stats = Storage::load_stats(&env);
         stats.total_claims += 1;
@@ -612,6 +650,11 @@ impl InsuranceContract {
 
         token.transfer(&env.current_contract_address(), &claim.claimant, &amount);
 
+        let mut reputation = Storage::load_reputation(&env, &claim.claimant);
+        reputation.claims_paid += 1;
+        reputation.total_paid_out += amount;
+        Storage::save_reputation(&env, &reputation);
+
         let mut stats = Storage::load_stats(&env);
         stats.total_paid_out += amount;
         stats.paid_claims += 1;
@@ -720,6 +763,14 @@ impl InsuranceContract {
     /// Returns the total amount contributed by a specific address.
     pub fn get_contribution(env: Env, contributor: Address) -> i128 {
         Storage::get_contribution(&env, &contributor)
+    }
+
+    /// Returns the reputation record for `address`, or `None` if the address
+    /// has never contributed to the fund or submitted a claim.
+    ///
+    /// Read-only; no authentication required.
+    pub fn get_reputation_record(env: Env, address: Address) -> Option<ReputationRecord> {
+        Storage::get_reputation(&env, &address)
     }
 
     /// Returns whether an address is a registered governor.
@@ -1293,6 +1344,49 @@ mod tests {
     }
 
     // ── Payout ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_get_reputation_record_after_contribute_and_claim() {
+        let s = setup();
+
+        let member = Address::generate(&s.env);
+        mint(&s.env, &s.admin, &s.token_id, &member, 5_000);
+        s.client.contribute(&member, &2_000_i128);
+        s.client.contribute(&member, &1_000_i128);
+
+        let gov1 = Address::generate(&s.env);
+        let gov2 = Address::generate(&s.env);
+        s.client.add_governor(&s.admin, &gov1);
+        s.client.add_governor(&s.admin, &gov2);
+
+        let desc = String::from_str(&s.env, "Reputation test");
+        let id = s.client.submit_claim(&member, &desc, &1_500_i128);
+
+        // Submitted but not yet paid.
+        let record = s.client.get_reputation_record(&member).unwrap();
+        assert_eq!(record.claims_submitted, 1);
+        assert_eq!(record.claims_paid, 0);
+        assert_eq!(record.total_paid_out, 0);
+
+        s.client.vote(&gov1, &id, &true);
+        s.client.vote(&gov2, &id, &true);
+        s.client.execute_payout(&id);
+
+        let record = s.client.get_reputation_record(&member).unwrap();
+        assert_eq!(record.address, member);
+        assert_eq!(record.contribution_count, 2);
+        assert_eq!(record.total_contributed, 3_000);
+        assert_eq!(record.claims_submitted, 1);
+        assert_eq!(record.claims_paid, 1);
+        assert_eq!(record.total_paid_out, 1_500);
+    }
+
+    #[test]
+    fn test_get_reputation_record_unknown_address_is_none() {
+        let s = setup();
+        let stranger = Address::generate(&s.env);
+        assert_eq!(s.client.get_reputation_record(&stranger), None);
+    }
 
     #[test]
     fn test_execute_payout_transfers_tokens() {

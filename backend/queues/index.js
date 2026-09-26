@@ -28,6 +28,10 @@ class InMemoryQueue {
     return [];
   }
 
+  async getJobCounts() {
+    return { waiting: this.jobs.length, active: 0, delayed: 0, failed: 0 };
+  }
+
   __resetForTests() {
     this.jobs = [];
   }
@@ -50,3 +54,16 @@ export const scheduledQueue = createQueue('scheduled');
 // eventQueue is handled separately due to its complex retry/DLQ setup.
 // Import it directly from './eventQueue.js' to avoid starting BullMQ workers
 // as a side effect of importing shared queue primitives.
+//
+// This handle points at the same Redis-backed 'blockchain-events' queue but
+// carries no worker or job options; it exists only so queue depth can be read
+// (e.g. by the Prometheus metrics endpoint) without importing eventQueue.js.
+export const eventQueueMonitor = createQueue('blockchain-events');
+
+/** Queue instances keyed by the `queue` label used in Prometheus metrics. */
+export const queues = {
+  webhooks: webhookQueue,
+  email: emailQueue,
+  eventQueue: eventQueueMonitor,
+  scheduled: scheduledQueue,
+};

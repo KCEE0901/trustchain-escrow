@@ -109,6 +109,8 @@ pub enum DataKey {
     SlashVote(u32, Address),
     /// Configured slash ceiling in bps (default 4000 = 40%) — instance.
     MaxSlashBps,
+    /// Per-address reputation record — persistent.
+    Reputation(Address),
 }
 
 /// Mutable aggregate stats stored under DataKey::FundStats.
@@ -158,4 +160,27 @@ pub struct SlashProposal {
     pub votes_against: u32,
     pub status: SlashStatus,
     pub created_at: u64,
+}
+
+// ── Reputation types ──────────────────────────────────────────────────────────
+
+/// Reputation record for an address, built up from its fund interactions.
+///
+/// Created on the address's first contribution or claim and returned by
+/// `get_reputation_record`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReputationRecord {
+    /// The address this record belongs to.
+    pub address: Address,
+    /// Number of contributions made to the fund.
+    pub contribution_count: u32,
+    /// Total amount contributed (in token base units).
+    pub total_contributed: i128,
+    /// Number of claims submitted.
+    pub claims_submitted: u32,
+    /// Number of submitted claims that were paid out.
+    pub claims_paid: u32,
+    /// Total amount received from paid claims (in token base units).
+    pub total_paid_out: i128,
 }

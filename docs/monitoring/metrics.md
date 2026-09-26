@@ -36,6 +36,19 @@ All metrics exposed via prom-client at `/metrics`. Default labels: `{app="stella
 | `disputes_raised_total`      | Counter | Disputes      |
 | `milestones_completed_total` | Counter | Milestones    |
 
+## BullMQ Queues
+
+Queue depths are read from Redis on every scrape of `/metrics` (not only on queue events), so values always reflect the current state. Each gauge carries a `queue` label with one of: `webhooks`, `email`, `eventQueue`, `scheduled`.
+
+| Metric                        | Type  | Labels | Description                            | Grafana Query                                        |
+| ----------------------------- | ----- | ------ | -------------------------------------- | ---------------------------------------------------- |
+| `bullmq_queue_waiting_count`  | Gauge | queue  | Jobs waiting to be processed           | `bullmq_queue_waiting_count{queue="webhooks"}`       |
+| `bullmq_queue_active_count`   | Gauge | queue  | Jobs currently being processed         | `bullmq_queue_active_count`                          |
+| `bullmq_queue_delayed_count`  | Gauge | queue  | Jobs scheduled for later processing    | `bullmq_queue_delayed_count`                         |
+| `bullmq_queue_failed_count`   | Gauge | queue  | Jobs that failed and were retained     | `increase(bullmq_queue_failed_count[1h])`            |
+
+Example alert for a stuck queue: `bullmq_queue_waiting_count > 1000` for 10 minutes.
+
 ## Other
 
 - **Node.js**: Heap used, event loop lag (default prom-client)

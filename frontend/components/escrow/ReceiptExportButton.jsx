@@ -2,6 +2,10 @@
 
 import { useEffect, useId, useRef, useState } from 'react';
 import EscrowReceipt from './EscrowReceipt';
+import api from '../../lib/api/client';
+
+// PDF generation can take longer than the client's default request timeout.
+const PDF_DOWNLOAD_TIMEOUT_MS = 60000;
 
 /**
  * Button that opens a print-ready preview of an escrow receipt.
@@ -9,9 +13,19 @@ import EscrowReceipt from './EscrowReceipt';
  * user save to PDF without any extra client-side PDF dependency. When
  * printing, everything outside the receipt preview is hidden via a
  * scoped print stylesheet so only the receipt is emitted.
+ *
+ * When `escrowId` is provided the button instead downloads the receipt PDF
+ * from `GET /api/v1/pdf/escrow/:id`, showing a spinner while it generates and
+ * reporting failures through `onError(message)`.
  */
-export default function ReceiptExportButton({ escrow, label = 'Export receipt' }) {
+export default function ReceiptExportButton({
+  escrow,
+  escrowId,
+  label = 'Export receipt',
+  onError,
+}) {
   const [open, setOpen] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
   const dialogRef = useRef(null);
   const closeRef = useRef(null);
   const triggerRef = useRef(null);
@@ -41,22 +55,59 @@ export default function ReceiptExportButton({ escrow, label = 'Export receipt' }
     window.print();
   };
 
+  const handleDownload = async () => {
+    setIsDownloading(true);
+    try {
+      const response = await api.get(`/v1/pdf/escrow/${encodeURIComponent(escrowId)}`, {
+        responseType: 'blob',
+        timeout: PDF_DOWNLOAD_TIMEOUT_MS,
+      });
+      const url = URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `escrow-${escrowId}-receipt.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      onError?.(err?.isOffline ? err.message : 'Failed to download receipt. Please try again.');
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
   return (
     <>
       <button
         ref={triggerRef}
         type="button"
-        onClick={() => setOpen(true)}
-        className="inline-flex items-center gap-2 rounded-lg border border-gray-300 dark:border-gray-700 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+        onClick={escrowId ? handleDownload : () => setOpen(true)}
+        disabled={isDownloading}
+        aria-busy={isDownloading}
+        className="inline-flex items-center gap-2 rounded-lg border border-gray-300 dark:border-gray-700 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
       >
-        <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m0-10V4a1 1 0 011-1h8a1 1 0 011 1v3M7 17v3a1 1 0 001 1h8a1 1 0 001-1v-3H7z"
-          />
-        </svg>
+        {isDownloading ? (
+          <svg
+            aria-hidden="true"
+            data-testid="receipt-download-spinner"
+            className="h-4 w-4 animate-spin"
+            fill="none"
+            viewBox="0 0 24 24"
+          >
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+          </svg>
+        ) : (
+          <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m0-10V4a1 1 0 011-1h8a1 1 0 011 1v3M7 17v3a1 1 0 001 1h8a1 1 0 001-1v-3H7z"
+            />
+          </svg>
+        )}
         {label}
       </button>
 

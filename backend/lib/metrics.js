@@ -9,10 +9,12 @@
  *  - Database query duration (by model, operation)
  *  - Cache hits / misses
  *  - Business metrics: escrows created, disputes raised, milestones completed
+ *  - BullMQ queue depths (waiting, active, delayed, failed) per queue
  *  - Node.js default metrics (event loop lag, heap, GC, etc.)
  */
 
 import client from 'prom-client';
+import { queues } from '../queues/index.js';
 
 // ── Registry ──────────────────────────────────────────────────────────────────
 
@@ -151,6 +153,68 @@ export const activeEscrowsGauge = new client.Gauge({
   name: 'active_escrows',
   help: 'Current number of active escrows',
   registers: [register],
+});
+
+// ── BullMQ Queue Metrics ──────────────────────────────────────────────────────
+
+// Queue depths are read from Redis on every scrape (via each gauge's collect
+// hook) rather than being updated from queue events, so values never go stale.
+// The gauges' collect hooks run concurrently, so they share one in-flight read.
+let queueDepthRefresh = null;
+
+function refreshQueueDepths() {
+  if (!queueDepthRefresh) {
+    queueDepthRefresh = (async () => {
+      await Promise.all(
+        Object.entries(queues).map(async ([name, queue]) => {
+          try {
+            const counts = await queue.getJobCounts('waiting', 'active', 'delayed', 'failed');
+            bullmqQueueWaitingCount.set({ queue: name }, counts.waiting || 0);
+            bullmqQueueActiveCount.set({ queue: name }, counts.active || 0);
+            bullmqQueueDelayedCount.set({ queue: name }, counts.delayed || 0);
+            bullmqQueueFailedCount.set({ queue: name }, counts.failed || 0);
+          } catch {
+            // Redis unavailable: keep serving /metrics with the last known values.
+          }
+        }),
+      );
+    })().finally(() => {
+      queueDepthRefresh = null;
+    });
+  }
+  return queueDepthRefresh;
+}
+
+export const bullmqQueueWaitingCount = new client.Gauge({
+  name: 'bullmq_queue_waiting_count',
+  help: 'Number of jobs waiting to be processed in a BullMQ queue',
+  labelNames: ['queue'],
+  registers: [register],
+  collect: refreshQueueDepths,
+});
+
+export const bullmqQueueActiveCount = new client.Gauge({
+  name: 'bullmq_queue_active_count',
+  help: 'Number of jobs currently being processed in a BullMQ queue',
+  labelNames: ['queue'],
+  registers: [register],
+  collect: refreshQueueDepths,
+});
+
+export const bullmqQueueDelayedCount = new client.Gauge({
+  name: 'bullmq_queue_delayed_count',
+  help: 'Number of delayed jobs in a BullMQ queue',
+  labelNames: ['queue'],
+  registers: [register],
+  collect: refreshQueueDepths,
+});
+
+export const bullmqQueueFailedCount = new client.Gauge({
+  name: 'bullmq_queue_failed_count',
+  help: 'Number of failed jobs in a BullMQ queue',
+  labelNames: ['queue'],
+  registers: [register],
+  collect: refreshQueueDepths,
 });
 
 // ── Circuit Breaker Metrics ───────────────────────────────────────────────────

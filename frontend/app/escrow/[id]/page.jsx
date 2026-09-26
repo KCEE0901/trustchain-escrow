@@ -31,6 +31,7 @@ import TransactionHistoryList, {
 } from '../../../components/escrow/TransactionHistoryList';
 import DisputeModal from '../../../components/escrow/DisputeModal';
 import CancelEscrowModal from '../../../components/escrow/CancelEscrowModal';
+import ReceiptExportButton from '../../../components/escrow/ReceiptExportButton';
 import Badge from '../../../components/ui/Badge';
 import Button from '../../../components/ui/Button';
 import ReputationBadge from '../../../components/ui/ReputationBadge';
@@ -227,6 +228,13 @@ export default function EscrowDetailPage({ params }) {
           />
         </div>
         <div className="flex gap-2 flex-shrink-0">
+          {String(escrow.status).toUpperCase() === 'COMPLETED' && (
+            <ReceiptExportButton
+              escrowId={id}
+              label="Download Receipt (PDF)"
+              onError={(message) => showToast(message, 'error')}
+            />
+          )}
           {escrow.status === 'Active' && (
             <>
               <Button variant="danger" size="sm" onClick={() => setDisputeOpen(true)}>

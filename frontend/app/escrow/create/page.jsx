@@ -29,6 +29,7 @@ import XLMAmountInput from '../../../components/ui/XLMAmountInput';
 import templatesData from '../../../data/templates.json';
 import { useToast } from '../../../contexts/ToastContext';
 import { useWallet } from '../../../hooks/useWallet';
+import useNetworkGuard from '../../../hooks/useNetworkGuard';
 import {
   buildCreateEscrowTx,
   broadcastTransaction,
@@ -41,6 +42,10 @@ const STEPS = [
   { id: 3, label: 'Review' },
   { id: 4, label: 'Sign' },
 ];
+
+const EXPECTED_NETWORK = process.env.NEXT_PUBLIC_STELLAR_NETWORK || 'testnet';
+const EXPECTED_NETWORK_LABEL = EXPECTED_NETWORK.charAt(0).toUpperCase() + EXPECTED_NETWORK.slice(1);
+const NETWORK_SWITCH_INSTRUCTIONS_URL = 'https://docs.freighter.app/docs/guide/usingfreighter/';
 
 const DEFAULT_MILESTONE = { title: '', description: '', amount: '' };
 
@@ -78,6 +83,7 @@ export default function CreateEscrowPage() {
   const templateLibrary = templatesData.templates || [];
 
   const { address, isConnected, signTx } = useWallet();
+  const { isMismatch: isWrongNetwork } = useNetworkGuard({ targetNetwork: EXPECTED_NETWORK });
   const [currentStep, setCurrentStep] = useState(1);
   const [formData, setFormData] = useState({
     freelancerAddress: '',
@@ -122,6 +128,7 @@ export default function CreateEscrowPage() {
 
   // TODO (contributor — Issue #33): implement form submission
   const handleSubmit = async () => {
+    if (isWrongNetwork) return;
     setIsSubmitting(true);
     setError(null);
     try {
@@ -181,6 +188,23 @@ export default function CreateEscrowPage() {
         <h1 className="text-2xl font-bold text-white">Create New Escrow</h1>
         <p className="text-gray-400 mt-1">Lock funds and define milestones for your project.</p>
       </div>
+
+      {isWrongNetwork && (
+        <div
+          role="alert"
+          className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-amber-300 text-sm"
+        >
+          Please switch to {EXPECTED_NETWORK_LABEL} to continue.{' '}
+          <a
+            href={NETWORK_SWITCH_INSTRUCTIONS_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline hover:text-amber-200"
+          >
+            How to switch networks in your wallet
+          </a>
+        </div>
+      )}
 
       <TemplateSelector
         baseTemplates={templateLibrary}
@@ -262,7 +286,12 @@ export default function CreateEscrowPage() {
             Next →
           </Button>
         ) : (
-          <Button variant="primary" onClick={handleSubmit} isLoading={isSubmitting}>
+          <Button
+            variant="primary"
+            onClick={handleSubmit}
+            isLoading={isSubmitting}
+            disabled={isWrongNetwork}
+          >
             Sign & Create Escrow
           </Button>
         )}
