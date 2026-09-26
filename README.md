@@ -1,254 +1,346 @@
-# 🌟 StellarTrustEscrow
+# Trustchain Escrow
 
-> A decentralized, milestone-based escrow platform with an on-chain reputation system — built on the Stellar blockchain using Soroban smart contracts.
+**Trustless, milestone-based escrow on the Stellar blockchain.**
+
+A platform where clients lock funds into verifiable smart contracts, contractors deliver work in provable milestones, and every outcome — completion or dispute — builds an immutable on-chain reputation that follows both parties forever.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Contributors Welcome](https://img.shields.io/badge/contributors-welcome-brightgreen)](CONTRIBUTING.md)
-[![Built on Stellar](https://img.shields.io/badge/built%20on-Stellar-blueviolet)](https://stellar.org)
-[![Soroban](https://img.shields.io/badge/Soroban-Smart%20Contracts-orange)](https://soroban.stellar.org)
-[![Coverage](https://img.shields.io/github/actions/workflow/status/Stellar-Trust-Escrow/stellar-trust-escrow/coverage.yml?label=coverage&style=flat-square)](https://github.com/Stellar-Trust-Escrow/stellar-trust-escrow/actions/workflows/coverage.yml)
+[![Built on Stellar](https://img.shields.io/badge/Built%20on-Stellar-7B2FBE?logo=stellar)](https://stellar.org)
+[![Soroban Contracts](https://img.shields.io/badge/Smart%20Contracts-Soroban%20%2F%20Rust-orange)](https://soroban.stellar.org)
+[![Backend Tests](https://img.shields.io/badge/backend%20tests-425%20passing-brightgreen)](#testing)
+[![Node](https://img.shields.io/badge/Node.js-%3E%3D20-339933?logo=node.js)](https://nodejs.org)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-blue)](CONTRIBUTING.md)
 
 ---
 
-## 📖 Overview
+## The Problem This Solves
 
-StellarTrustEscrow allows clients and freelancers to create trustless payment agreements secured by Soroban smart contracts. Funds are locked on-chain and released milestone by milestone — no intermediaries, no trust required.
+Traditional escrow platforms hold funds in centralised accounts — meaning you trust a company, not a contract. If the platform shuts down, gets hacked, or makes a unilateral call, your money can be frozen or lost. Dispute resolution is opaque, outcomes are non-transferable, and reputation is a database entry that can be deleted.
 
-Every completed milestone builds an immutable, on-chain **reputation score** for freelancers and clients, creating a trustworthy track record that persists across all future engagements.
+**Trustchain Escrow replaces the intermediary with code.**
 
----
-
-## ✨ Features
-
-| Feature                         | Status         |
-| ------------------------------- | -------------- |
-| Milestone-based escrow contract | 🚧 In Progress |
-| On-chain reputation system      | 🚧 In Progress |
-| Dispute resolution mechanism    | 🚧 In Progress |
-| REST API + event indexer        | 🚧 In Progress |
-| Next.js dashboard               | 🚧 In Progress |
-| Wallet connection (Freighter)   | 🚧 In Progress |
-| Public escrow explorer          | 🚧 In Progress |
-
-> This project is actively seeking contributors! See [CONTRIBUTING.md](CONTRIBUTING.md) and the [Issues](../../issues) tab.
+- Funds are locked in a Soroban smart contract, not on a company server
+- Milestone approval is on-chain — no one can override or delay it
+- Reputation scores are contract-level state, not a row that can be deleted
+- Anyone can audit the contract logic before trusting it with funds
 
 ---
 
-## 🏗️ Tech Stack
+## Who This Is For
 
-| Layer           | Technology                  |
-| --------------- | --------------------------- |
-| Smart Contracts | Rust + Soroban SDK          |
-| Backend         | Node.js + Express           |
-| Database        | PostgreSQL + Prisma         |
-| Frontend        | Next.js 14 + Tailwind CSS   |
-| Blockchain      | Stellar (Testnet / Mainnet) |
-| Wallet          | Freighter Browser Extension |
-
----
-
-## 🔄 How It Works
-
-```
-Client                Contract              Freelancer
-  │                      │                      │
-  ├─── create_escrow() ──►│                      │
-  │    (funds locked)     │                      │
-  │                       │◄── add_milestone() ──┤
-  │                       │                      │
-  │◄── milestone done ────┤─── notify client ────┤
-  │                       │                      │
-  ├─── approve_milestone()►│                      │
-  │                       ├─── release_funds() ──►│
-  │                       │    (partial payout)   │
-  │                       │                       │
-  │              [dispute raised]                 │
-  │                       │                       │
-  ├─── raise_dispute() ───►│◄── raise_dispute() ──┤
-  │                       │                       │
-  │            [arbiter resolves]                 │
-  │                       ├─── resolve_dispute() ─►│
-  │                       │                       │
-  └── reputation updated ─┴── reputation updated ─┘
-```
+| Role                          | How they use Trustchain                                                                                                             |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| **Clients / Funders**         | Lock XLM or any Stellar asset into a milestone contract; approve work incrementally; raise disputes with evidence if delivery fails |
+| **Contractors / Freelancers** | Accept work under clear on-chain terms; submit milestones for review; build a verifiable reputation across all engagements          |
+| **DAOs / Communities**        | Pool contributor funds into a single escrow; gate milestone approval to a multi-sig or governance vote                              |
+| **Arbiters**                  | Resolve disputes with on-chain authority and an auditable decision trail                                                            |
+| **Developers**                | Self-host a tenant, integrate via REST API, or extend the Soroban contract                                                          |
 
 ---
 
-## 🚀 Quick Start
+## Core Concepts
 
-### Prerequisites
+### Escrow Lifecycle
 
-- Node.js >= 18
-- Rust >= 1.74
-- Soroban CLI >= 21.0.0
-- PostgreSQL >= 14
-- [Freighter Wallet](https://www.freighter.app/) (browser extension)
-
-### 1. Clone the Repository
-
-```bash
-git clone https://github.com/your-org/stellar-trust-escrow
-cd stellar-trust-escrow
+```
+Active → (all milestones approved) → Completed
+Active → (either party raises dispute) → Disputed → (arbiter resolves) → Completed
+Active → (mutual consent) → Cancelled
+Active → (deadline passed) → Expired → (auto-refund to client)
 ```
 
-### 2. Install Dependencies
+Each state transition is a signed Stellar transaction — auditable by anyone, reversible by no one.
 
-```bash
-# Backend
-cd backend && npm install
+### Milestone-Based Release
 
-# Frontend
-cd ../frontend && npm install
-```
+Funds are never released all at once. Each escrow is subdivided into milestones, each with its own amount and description hash. When the contractor submits a milestone and the client approves it, only that milestone's funds are released — the remainder stays locked.
 
-### 3. Set Up Environment Variables
+This gives both parties checkpoints: clients can stop at any milestone if work is unsatisfactory; contractors are protected from non-payment once a milestone is approved.
 
-```bash
-# Backend
-cp backend/.env.example backend/.env
-# Edit backend/.env with your database URL, Stellar keys, etc.
+### On-Chain Reputation
 
-# Frontend
-cp frontend/.env.example frontend/.env.local
-# Edit with your API URL and Stellar network config
-```
+Every escrow completion, dispute win, and dispute loss emits a `ReputationEvent` to the contract. Events accumulate into a score that is:
 
-### 4. Set Up the Database
-
-```bash
-cd backend
-npx prisma migrate dev
-npx prisma generate
-```
-
-### 5. Build the Smart Contract
-
-```bash
-cd contracts/escrow_contract
-cargo build --release --target wasm32-unknown-unknown
-```
-
-### 6. Run the Development Server
-
-```bash
-# Terminal 1 — Backend
-cd backend && npm run dev
-
-# Terminal 2 — Frontend
-cd frontend && npm run dev
-```
-
-Visit `http://localhost:3000` to see the app.
+- **Public** — readable by any Stellar wallet or dApp
+- **Immutable** — no one can delete or alter past events
+- **Portable** — your score lives at your Stellar address, not on our servers
+- **Composable** — other contracts and dApps can query it directly
 
 ---
 
-## 🧪 Local Soroban Sandbox (Docker)
+## Architecture
 
-### Prerequisites
-
-- Docker & Docker Compose installed and running
-- Soroban CLI available on your host (for contract deployment)
-
-### Start the Sandbox
-
-```bash
-# From the repository root
-docker compose up -d soroban-sandbox
-
-# Or use the helper script to start the sandbox, deploy contracts,
-# generate dev wallets and wire the frontend config:
-./scripts/start-sandbox.sh
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Client Layer                                                   │
+│  ┌──────────────────────────┐  ┌──────────────────────────┐    │
+│  │  Web Dashboard           │  │  Mobile App              │    │
+│  │  Next.js 14 + Tailwind   │  │  Expo / React Native     │    │
+│  │  Freighter wallet        │  │  Biometric auth          │    │
+│  │  Soroban transaction UI  │  │  Offline SQLite cache    │    │
+│  └────────────┬─────────────┘  └────────────┬─────────────┘    │
+└───────────────┼──────────────────────────────┼──────────────────┘
+                │ HTTPS + JWT                  │ HTTPS + JWT
+┌───────────────▼──────────────────────────────▼──────────────────┐
+│  API Layer  (Express.js, Node 20+)                              │
+│                                                                 │
+│  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐   │
+│  │ Auth      │  │ Escrow    │  │ Dispute   │  │ Admin     │   │
+│  │ MFA + JWT │  │ Milestone │  │ Evidence  │  │ Audit log │   │
+│  └───────────┘  └───────────┘  └───────────┘  └───────────┘   │
+│                                                                 │
+│  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐   │
+│  │ Tenant    │  │ Search    │  │ Webhooks  │  │ Reputation│   │
+│  │ Scoping   │  │ (ES + PG) │  │ BullMQ    │  │ Indexer   │   │
+│  └───────────┘  └───────────┘  └───────────┘  └───────────┘   │
+└───────────┬───────────────────────────┬─────────────────────────┘
+            │                           │
+┌───────────▼──────────┐  ┌────────────▼──────────────────────────┐
+│  Data Layer           │  │  Blockchain Layer                     │
+│  PostgreSQL (Prisma)  │  │  Stellar Network (Testnet / Mainnet)  │
+│  Redis (cache+queues) │  │  Soroban RPC                         │
+│  IPFS (evidence)      │  │  Soroban Smart Contracts (Rust/Wasm) │
+└──────────────────────┘  └───────────────────────────────────────┘
 ```
 
-The helper script will:
+### Technology Decisions
 
-- Start a local Stellar Quickstart node in Soroban mode (standalone, no public testnet)
-- Deploy core smart contracts to the local network
-- Generate and fund a development account
-- Write contract IDs and Soroban RPC settings into `frontend/.env.local`
-
-### Verify It Is Running
-
-```bash
-# Check the container
-docker ps --filter name=stellar-sandbox
-
-# Check Soroban RPC health
-curl -sf http://localhost:8000/soroban/rpc | jq .
-```
-
-If the RPC endpoint responds and the container is healthy, the sandbox is ready.
-
-### Hot Reloading Contracts
-
-When you change a contract:
-
-```bash
-# Rebuild and redeploy only the changed contract to the existing sandbox
-./scripts/start-sandbox.sh
-```
-
-The script is idempotent and will:
-
-- Rebuild the contract Wasm
-- Upload and redeploy to the already-running sandbox
-- Refresh the contract IDs in `frontend/.env.local`
-
-No full network teardown is required for rapid iteration.
-
-### Teardown
-
-```bash
-# Stop and remove the local Soroban sandbox container
-docker compose down soroban-sandbox
-```
-
-This stops the local network cleanly without touching your database or other services.
+| Decision               | Choice                          | Why                                                                                |
+| ---------------------- | ------------------------------- | ---------------------------------------------------------------------------------- |
+| Smart contract runtime | Soroban (Rust → Wasm)           | Stellar's native contract platform; deterministic, auditable, no EVM gas surprises |
+| API framework          | Express.js                      | Minimal surface area; easy to audit middleware chain                               |
+| ORM                    | Prisma                          | Type-safe DB access; migration history lives in the repo                           |
+| Cache                  | Redis + in-memory fallback      | Sliding-window rate limits need atomic operations; fallback keeps dev setup simple |
+| Job queue              | BullMQ                          | Reliable webhook retry with exponential backoff; dead-letter visibility in Redis   |
+| Search                 | Elasticsearch + Prisma fallback | Full-text escrow search at scale; falls back gracefully if ES is unavailable       |
+| Mobile offline         | SQLite (expo-sqlite)            | Works without network; stale rows evicted by TTL                                   |
+| Pagination             | Cursor-based                    | Stable across concurrent inserts; no skipped rows on fast-changing datasets        |
 
 ---
 
-## 📁 Project Structure
+## Fund Flow
 
 ```
-stellar-trust-escrow/
-├── contracts/
-│   └── escrow_contract/       # Soroban smart contract (Rust)
-├── backend/
+1. CLIENT deposits funds
+   └─ create_escrow(contractor, amount, milestones[], timelock?)
+      └─ Stellar transaction locks funds in contract
+
+2. CONTRACTOR delivers work
+   └─ submit_milestone(escrow_id, milestone_index, ipfs_hash)
+      └─ Deliverable hash stored on-chain
+
+3. CLIENT reviews and approves
+   └─ approve_milestone(escrow_id, milestone_index)
+      └─ Soroban releases that milestone's funds to contractor
+
+4. Repeat for each milestone until completion
+   └─ Final approval → escrow Completed
+      └─ ReputationEvent written for both parties
+
+── OR ──
+
+3b. Dispute raised
+    └─ raise_dispute(escrow_id, evidence_hashes[])
+       └─ SHA-256 hashes anchored on-chain
+
+4b. Arbiter resolves
+    └─ submit_ruling(escrow_id, client_pct, contractor_pct)
+       └─ Funds split per ruling; ReputationEvent reflects outcome
+```
+
+---
+
+## Project Structure
+
+```
+trustchain-escrow/
+│
+├── contracts/                         # Soroban smart contracts (Rust)
+│   ├── escrow_contract/
+│   │   └── src/
+│   │       ├── lib.rs                 # Entry points & access control
+│   │       ├── storage.rs             # On-chain state definitions
+│   │       ├── errors.rs              # Typed error enum
+│   │       └── types.rs               # Shared types
+│   └── governance/                    # On-chain governance contract
+│
+├── backend/                           # Node 20+ REST API
 │   ├── api/
-│   │   ├── controllers/       # Route handler logic
-│   │   └── routes/            # Express route definitions
-│   ├── services/              # Business logic & indexers
-│   └── database/              # Prisma models & migrations
-├── frontend/
-│   ├── app/                   # Next.js 14 App Router pages
-│   └── components/            # Reusable React components
-├── docs/                      # Architecture & guides
-├── scripts/                   # Deployment & utility scripts
-├── README.md
-├── CONTRIBUTING.md
-└── ARCHITECTURE.md
+│   │   ├── controllers/
+│   │   ├── middleware/                # Auth, rate-limit, cache, logging
+│   │   └── routes/
+│   ├── services/                      # Business logic layer
+│   ├── database/
+│   │   ├── schema.prisma
+│   │   └── migrations/
+│   └── tests/                         # Jest — 425 tests
+│
+├── frontend/                          # Next.js 14 web dashboard
+│   ├── app/                           # App Router pages
+│   ├── components/
+│   └── lib/
+│       ├── stellar.js                 # Stellar SDK + contract bindings
+│       └── api/client.js              # Axios client + JWT refresh
+│
+├── mobile/                            # Expo / React Native app
+│   ├── app/
+│   ├── hooks/
+│   ├── services/
+│   │   ├── biometrics.ts
+│   │   └── offlineCache.ts
+│   └── lib/
+│
+├── CONTRIBUTING.md                    # Contributor guide (setup → first PR)
+│
+├── docs/
+│   ├── CONTRIBUTING.md                # → points at the root guide
+│   ├── SECURITY.md
+│   ├── configuration.md               # All env vars & config options
+│   ├── dispute-resolution-guide.md    # End-to-end dispute resolution process
+│   ├── escrow-creation-release-guide.md # Escrow creation & milestone release guide
+│   ├── event-schema.md                # On-chain event catalogue
+│   ├── production-deployment-guide.md # Production deployment & setup guide
+│   ├── security-model.md              # System security model & threat matrix
+│   └── webhooks.md                    # Webhook payloads & event types
+│
+├── scripts/
+│   ├── deploy/
+│   │   ├── testnet.sh
+│   │   └── mainnet.sh
+│   └── simulate/                      # End-to-end lifecycle scripts
+│
+└── docker-compose.yml                 # PostgreSQL + Redis + Stellar node
 ```
 
 ---
 
-## 🤝 Contributing
+## Getting Started
 
-We welcome contributions of all kinds! This repository is designed to be beginner-friendly with clearly scoped issues.
+### Prerequisites
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide, or jump straight to [open issues](../../issues).
+| Dependency  | Minimum        |
+| ----------- | -------------- |
+| Node.js     | 20             |
+| Rust        | stable (1.75+) |
+| Docker      | 24+            |
+| Stellar CLI | latest         |
+
+### Local Setup
+
+```bash
+# Clone
+git clone git@github.com:KCEE0901/trustchain-escrow.git
+cd trustchain-escrow
+
+# Install dependencies
+npm install
+
+# Start infrastructure
+docker compose up -d
+
+# Configure environment
+cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env.local
+
+# Run migrations
+npm run db:migrate -w backend
+npm run db:generate -w backend
+
+# Start backend
+npm run dev -w backend
+
+# Start frontend (separate terminal)
+npm run dev -w frontend
+```
+
+### Run Tests
+
+```bash
+# Backend
+npm test -w backend
+
+# Frontend
+npm run test:unit -w frontend
+
+# Contracts
+cargo test --workspace
+```
+
+### Configuration
+
+Every environment variable and configuration option — backend, frontend, mobile,
+Docker Compose, and the ops scripts — is catalogued in
+[docs/configuration.md](docs/configuration.md), along with defaults, startup
+validation rules, and per-environment recommendations.
 
 ---
 
-## 🔒 Security
+## API Overview
 
-- **Security Model**: [`docs/SECURITY.md`](docs/SECURITY.md)
-- **Privacy Policy**: [`docs/PRIVACY.md`](docs/PRIVACY.md)
-- **Bug Bounty**: [`docs/BUG_BOUNTY.md`](docs/BUG_BOUNTY.md)
+All endpoints are versioned under `/api/v1/`. Authentication uses Bearer JWT tokens.
 
-Report vulnerabilities to security@stellartrustescrow.example.com.
+| Method | Endpoint               | Description                         |
+| ------ | ---------------------- | ----------------------------------- |
+| `POST` | `/auth/login`          | Authenticate and receive JWT        |
+| `GET`  | `/escrows`             | List escrows for authenticated user |
+| `POST` | `/escrows`             | Create a new escrow                 |
+| `GET`  | `/escrows/:id`         | Get escrow detail                   |
+| `POST` | `/escrows/:id/release` | Approve milestone release           |
+| `POST` | `/escrows/:id/dispute` | Raise a dispute                     |
+| `GET`  | `/escrows/:id/events`  | Full event timeline                 |
+| `GET`  | `/users/me/stats`      | Account stats and volume            |
+| `POST` | `/webhooks/subscribe`  | Subscribe to on-chain event webhooks |
+
+Full API reference: `backend/openapi.yaml`
+
+### Webhooks
+
+Subscribe to indexed on-chain events and receive signed `POST` callbacks. See
+[docs/webhooks.md](docs/webhooks.md) for subscription management, the delivery
+envelope, payload schemas for every event type, signature verification, and retry
+behaviour.
 
 ---
 
-## 📄 License
+## Smart Contract Addresses
 
-MIT — see [LICENSE](LICENSE).
+| Network | Contract ID          |
+| ------- | -------------------- |
+| Testnet | _deploy in progress_ |
+| Mainnet | _pending audit_      |
+
+---
+
+## Security
+
+See [docs/security-model.md](docs/security-model.md) for the complete security model and threat architecture, and [docs/SECURITY.md](docs/SECURITY.md) for the vulnerability disclosure policy.
+
+---
+
+## Documentation Guides
+
+- [REST API Reference](docs/api-reference.md) — Comprehensive technical reference for all REST endpoints, request/response schemas, and code samples.
+- [Developer Onboarding & Local Setup Guide](docs/developer-onboarding.md) — Step-by-step developer setup, toolchain requirements, Docker stack, and troubleshooting.
+- [Smart Contract ABI & Function Reference](docs/smart-contract-abi.md) — Detailed Soroban smart contract ABI signatures, data types, authorization, and event catalog.
+- [System Architecture Overview](docs/architecture-overview.md) — High-level architecture diagram, component breakdowns, data flows, and security boundaries.
+- [Escrow Creation & Release Flow Guide](docs/escrow-creation-release-guide.md) — Step-by-step end-user guide for creating escrows and releasing milestone funds.
+- [Dispute Resolution Guide](docs/dispute-resolution-guide.md) — End-to-end guide on raising disputes, IPFS evidence submission, and arbiter rulings.
+- [Security Model Documentation](docs/security-model.md) — System threat model, access control matrix, and smart contract invariants.
+- [Production Deployment Guide](docs/production-deployment-guide.md) — Deploying Soroban contracts, backend API, databases, and Docker services to production.
+- [Configuration Reference](docs/configuration.md) — Detailed environment variables and system settings.
+- [Multi-Tenant Architecture](docs/multi-tenant-architecture.md) — Tenant model, tenant resolution, data isolation guarantees, and audit chain integrity.
+- [Stellar Network Integration](docs/stellar-network-integration.md) — Local sandbox, testnet, and mainnet setup with contract deployment and wallet management.
+- [Operational Runbook](docs/runbooks/operational-runbook.md) — Common operational tasks including health checks, service restarts, database maintenance, contract upgrades, and scaling.
+- [Changelog and Versioning Policy](docs/versioning-policy.md) — SemVer policy, changelog format, and release process.
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, the Soroban toolchain, how to test each layer, branch naming conventions, commit format, and the PR process. New pull requests are pre-filled with the [PR template](.github/pull_request_template.md).
+
+---
+
+## License
+
+[MIT](LICENSE)

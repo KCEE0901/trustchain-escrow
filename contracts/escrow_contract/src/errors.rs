@@ -57,11 +57,61 @@ pub enum EcErr {
     E61 = 61,
     E62 = 62,
     E63 = 63,
-    /// A checked arithmetic operation (add/mul/cast) overflowed.
-    ArithmeticOverflow = 64,
+    E64 = 64,
+    E65 = 65,
+    E66 = 66,
     OracleStaleFeed = 67,
     OracleInvalidPrice = 68,
     OraclePriceConversionFailed = 69,
+    /// Timelock release time is in the past or zero — must be a future timestamp.
+    TimelockReleasetimeInvalid = 70,
+    /// A timelock release time is already set for this escrow.
+    TimelockAlreadySet = 71,
+    /// Timelock release time has not yet been reached; release is blocked.
+    TimelockNotExpired = 72,
+    /// No timelock release time is configured on this escrow.
+    TimelockNotSet = 73,
+    /// Multisig config is internally inconsistent: `weights` length does not match
+    /// `approvers`, a weight is zero, or `threshold` is zero or exceeds the total weight.
+    MultisigInvalidConfig = 74,
+    /// The caller is not among this escrow's multisig approvers.
+    MultisigNotApprover = 75,
+    /// This signer has already recorded an approval for this milestone.
+    MultisigDuplicateApproval = 76,
+    /// The approver list exceeds `MAX_BUYER_SIGNERS`.
+    MultisigTooManySigners = 77,
+    /// The escrow amount is at or above the high-value threshold, which requires a
+    /// multisig policy needing more than one signer.
+    MultisigRequiredForHighValue = 78,
+    E80 = 80,
+    /// Description string exceeds MAX_STRING_LEN.
+    E81 = 81,
+    /// Escrow is not in Disputed status.
+    E82 = 82,
+    /// Caller is not a party (client or freelancer) to this escrow.
+    E83 = 83,
+    /// Upgrade not authorized.
+    E87 = 87,
+    /// Invalid arbiter fee basis points (must be <= 10000).
+    E88 = 88,
+    /// Arbiter fee exceeds total fee allowance.
+    E89 = 89,
+    /// Arbiter address is not on the allowlist.
+    E90 = 90,
+    /// Arbiter address is already on the allowlist.
+    E91 = 91,
+    /// Arbiter address not found on allowlist.
+    E92 = 92,
+    /// The brief hash is all zeros, so no agreement document is bound to the escrow.
+    InvalidBriefHash = 79,
+    /// Escrow amount is below the minimum allowed threshold.
+    E84 = 84,
+    /// Escrow amount exceeds the maximum allowed threshold.
+    E85 = 85,
+    /// Slippage tolerance has been exceeded; the release is rejected.
+    E86 = 86,
 }
 
-pub use self::EcErr as EscrowError;
+/// Backward-compatible alias — existing code imports `EscrowError`; the oracle
+/// refactor renamed the enum to `EcErr` without updating call sites.
+pub type EscrowError = EcErr;

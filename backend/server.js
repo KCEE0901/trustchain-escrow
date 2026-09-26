@@ -5,13 +5,14 @@ import './lib/sentry.js';
 import * as Sentry from '@sentry/node';
 
 import 'dotenv/config';
+import { randomUUID } from 'crypto';
 import { initSecrets } from './lib/secrets.js';
 import http from 'http';
 import compressionMiddleware from './middleware/compression.js';
 import cors from 'cors';
 import express from 'express';
 import helmet from 'helmet';
-import { assignRequestContext, httpRequestLogger } from './api/middleware/requestLogger.js';
+import { requestLogger } from './lib/logger.js';
 
 import cookieParser from 'cookie-parser';
 import {
@@ -41,8 +42,6 @@ import batchRoutes from './api/routes/batchRoutes.js';
 import webhookRoutes from './api/routes/webhookRoutes.js';
 import tenantMiddleware from './api/middleware/tenant.js';
 import auditMiddleware from './api/middleware/audit.js';
-import idempotencyMiddleware from './api/middleware/idempotency.js';
-import zodValidationMiddleware from './api/middleware/zodValidation.js';
 import { createWebSocketServer, pool } from './api/websocket/handlers.js';
 import cache from './lib/cache.js';
 import { attachPrismaMetrics } from './lib/prismaMetrics.js';
@@ -56,6 +55,7 @@ import { leaderboardRateLimit } from './middleware/rateLimit.js';
 import metricsMiddleware from './middleware/metricsMiddleware.js';
 import responseTime from './middleware/responseTime.js';
 import tracingMiddleware from './middleware/tracingMiddleware.js';
+import timeoutMiddleware from './middleware/timeout.js';
 import logger, { getLogger } from './config/logger.js';
 import emailService from './services/emailService.js';
 import complianceService from './services/complianceService.js';
@@ -65,10 +65,11 @@ import { createEventWorker, createDeadLetterWorker } from './services/eventWorke
 import { setupSwagger } from './api/docs/swagger.js';
 import { getBackupStatus } from './services/backupMonitor.js';
 import { syncFromPrisma, ensureIndex } from './services/reputationSearchService.js';
+import { startExpiryJob } from './services/expiryService.js';
 import { createGateway } from './gateway/index.js';
 import queueDashboardRoutes from './api/routes/queueDashboardRoutes.js';
 import chatRoutes from './api/routes/chatRoutes.js';
-import v1Routes from './api/v1/index.js';
+import expiryRoutes from './api/routes/expiryRoutes.js';
 
 // Attach Prisma query instrumentation (metrics + traces)
 attachPrismaMetrics(prisma);
@@ -91,11 +92,18 @@ app.use(sentryRequestHandler);
 
 app.use(helmet());
 app.use(compressionMiddleware);
+app.use(timeoutMiddleware);
 app.use(metricsMiddleware);
 app.use(responseTime);
 app.use(tracingMiddleware);
-app.use(assignRequestContext);
-app.use(httpRequestLogger);
+app.use(requestLogger);
+app.use((req, res, next) => {
+  const requestId =
+    req.id || req.headers['x-request-id'] || req.headers['x-correlation-id'] || randomUUID();
+  req.id = requestId;
+  res.setHeader('X-Request-Id', requestId);
+  next();
+});
 app.use(
   cors({
     origin: process.env.ALLOWED_ORIGINS?.split(',') || 'http://localhost:3000',
@@ -107,8 +115,6 @@ app.use(express.urlencoded({ extended: true, limit: REQUEST_SIZE_LIMIT }));
 app.use(cookieParser());
 app.use(sanitizeInputs);
 app.use(csrfProtection);
-app.use(zodValidationMiddleware);
-app.use(idempotencyMiddleware);
 app.use('/uploads', express.static('uploads'));
 app.use(auditMiddleware);
 
@@ -186,7 +192,6 @@ app.get('/api/csrf-token', generateCsrfToken);
 app.use('/api/health', healthRoutes);
 app.use('/ws/health', wsHealthRoutes);
 app.use('/api', tenantMiddleware);
-app.use('/api/v1', v1Routes);
 app.use('/api/auth', authRoutes);
 app.use('/api/tenant', tenantRoutes);
 app.use('/api/escrows', escrowRoutes);
@@ -209,6 +214,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/batch', batchRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/expiry', expiryRoutes);
 app.use('/admin/queues', queueDashboardRoutes);
 app.use('/docs', docsRouter);
 // Alias — acceptance criteria requires /api-docs
@@ -239,12 +245,7 @@ app.use((err, req, res, _next) => {
 
   // Attach Sentry event ID to response so support can correlate reports
   const sentryId = res.sentry;
-  const body = {
-    error: {
-      code: err.code || (statusCode >= 500 ? 'INTERNAL_SERVER_ERROR' : 'REQUEST_ERROR'),
-      message: err.message || 'Internal server error',
-    },
-  };
+  const body = { error: err.message || 'Internal server error' };
   if (sentryId) body.errorId = sentryId;
 
   const log = req?.log || logger;
@@ -327,6 +328,8 @@ async function startServer() {
           Sentry.captureException(err, { tags: { component: 'indexer' } });
         });
         startRpcMonitor();
+        startExpiryJob();
+        logger.info('[ExpiryJob] Background auto-expiry started');
 
         // Reputation ES sync — ensure index + initial sync on startup
         ensureIndex().then(() =>

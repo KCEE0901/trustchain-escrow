@@ -80,7 +80,7 @@ mod bridge_tests {
         let freelancer = Address::generate(&env);
         soroban_sdk::token::StellarAssetClient::new(&env, &token_addr).mint(&escrow_client, &1000);
 
-        let brief_hash = soroban_sdk::BytesN::from_array(&env, &[0u8; 32]);
+        let brief_hash = soroban_sdk::BytesN::from_array(&env, &[1u8; 32]);
         let multisig = crate::MultisigConfig {
             approvers: soroban_sdk::Vec::new(&env),
             weights: soroban_sdk::Vec::new(&env),
@@ -98,6 +98,7 @@ mod bridge_tests {
             &None,
             &None,
             &multisig,
+            &None,
         );
         assert!(result.is_err());
     }
@@ -181,7 +182,7 @@ mod bridge_tests {
         // create_escrow transfers amount + rent_reserve (30 stroops for 1 entry × 30 periods)
         soroban_sdk::token::StellarAssetClient::new(&env, &token_addr).mint(&escrow_client, &1030);
 
-        let brief_hash = soroban_sdk::BytesN::from_array(&env, &[0u8; 32]);
+        let brief_hash = soroban_sdk::BytesN::from_array(&env, &[1u8; 32]);
         let multisig = crate::MultisigConfig {
             approvers: soroban_sdk::Vec::new(&env),
             weights: soroban_sdk::Vec::new(&env),
@@ -199,6 +200,7 @@ mod bridge_tests {
             &None,
             &None,
             &multisig,
+            &None,
         );
         assert!(matches!(result, Err(Ok(EscrowError::E54))));
     }
@@ -242,7 +244,7 @@ mod bridge_tests {
         assert_eq!(emitted_confirmations, MIN_BRIDGE_CONFIRMATIONS - 1);
         assert!(!emitted_is_finalized);
 
-        let brief_hash = soroban_sdk::BytesN::from_array(&env, &[0u8; 32]);
+        let brief_hash = soroban_sdk::BytesN::from_array(&env, &[1u8; 32]);
         let multisig = crate::MultisigConfig {
             approvers: soroban_sdk::Vec::new(&env),
             weights: soroban_sdk::Vec::new(&env),
@@ -260,6 +262,7 @@ mod bridge_tests {
             &None,
             &None,
             &multisig,
+            &None,
         );
         assert!(matches!(result, Err(Ok(EscrowError::E54))));
 
@@ -298,6 +301,7 @@ mod bridge_tests {
             &None,
             &None,
             &multisig,
+            &None,
         );
         assert!(result.is_ok());
     }

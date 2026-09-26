@@ -8,6 +8,7 @@
  * @param {string}   [props.title='No escrows found']
  * @param {string}   [props.description]
  * @param {string}   [props.actionLabel]   — label for the CTA button
+ * @param {React.ReactNode} [props.illustration] — custom SVG illustration node
  * @param {string}   [props.actionHref]    — renders CTA as a link if provided
  * @param {Function} [props.onAction]      — renders CTA as a button if provided
  * @param {string}   [props.className]
@@ -18,6 +19,7 @@ import Link from 'next/link';
 export default function EmptyState({
   title = 'No escrows found',
   description,
+  illustration,
   actionLabel,
   actionHref,
   onAction,
@@ -30,8 +32,8 @@ export default function EmptyState({
       className={`flex flex-col items-center justify-center py-20 text-center ${className}`}
       data-testid="empty-state"
     >
-      {/* SVG illustration */}
-      <svg
+      {/* SVG illustration — custom or default */}
+      {illustration ?? <svg
         aria-hidden="true"
         width="120"
         height="120"
@@ -102,7 +104,7 @@ export default function EmptyState({
           strokeWidth="1.5"
           strokeLinecap="round"
         />
-      </svg>
+      </svg>}
 
       {/* Title */}
       <h3 className="text-lg font-semibold text-white mb-2">{title}</h3>

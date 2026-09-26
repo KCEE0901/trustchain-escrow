@@ -1,4 +1,5 @@
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod arbiter_validation_tests {
     use crate::{EscrowContract, EscrowContractClient, EscrowError, MultisigConfig};
     use soroban_sdk::{testutils::Address as _, Address, BytesN, Env};
@@ -23,7 +24,8 @@ mod arbiter_validation_tests {
 
     fn register_token(env: &Env, admin: &Address, recipient: &Address, amount: i128) -> Address {
         let token_id = env.register_stellar_asset_contract_v2(admin.clone());
-        soroban_sdk::token::StellarAssetClient::new(env, &token_id.address()).mint(recipient, &amount);
+        soroban_sdk::token::StellarAssetClient::new(env, &token_id.address())
+            .mint(recipient, &amount);
         token_id.address()
     }
 
@@ -46,6 +48,7 @@ mod arbiter_validation_tests {
             &None,
             &None,
             &no_multisig(&env),
+            &None,
         );
         assert!(matches!(result, Err(Ok(EscrowError::E3))));
     }
@@ -69,6 +72,7 @@ mod arbiter_validation_tests {
             &None,
             &None,
             &no_multisig(&env),
+            &None,
         );
         assert!(matches!(result, Err(Ok(EscrowError::E3))));
     }
@@ -92,6 +96,7 @@ mod arbiter_validation_tests {
             &None,
             &None,
             &no_multisig(&env),
+            &None,
         );
         assert!(result.is_ok());
     }

@@ -168,7 +168,39 @@ const gzipMiddleware = compression({
  * Combined compression middleware.
  * Brotli is attempted first; if the client doesn't support it, gzip takes over.
  */
+/**
+ * Symbol stored on the request to signal that compression should be skipped
+ * for this particular response.  Set via `noCompress(req)` or the
+ * `skipCompression` middleware.
+ */
+const NO_COMPRESS_SYM = Symbol('noCompress');
+
+/**
+ * Programmatically opt a request out of compression.
+ * Call this inside a route handler before writing the response.
+ *
+ * @param {import('express').Request} req
+ */
+export function noCompress(req) {
+  req[NO_COMPRESS_SYM] = true;
+}
+
+/**
+ * Express middleware that marks a request to skip response compression.
+ * Useful for routes that stream binary data, SSE, or pre-compressed payloads.
+ *
+ * @example
+ *   router.get('/stream', skipCompression, streamHandler);
+ */
+export function skipCompression(req, _res, next) {
+  req[NO_COMPRESS_SYM] = true;
+  next();
+}
+
 export default function compressionMiddleware(req, res, next) {
+  // Respect explicit opt-out.
+  if (req[NO_COMPRESS_SYM]) return next();
+
   wrapResponseForMetrics(req, res);
 
   const acceptEncoding = req.headers['accept-encoding'] || '';

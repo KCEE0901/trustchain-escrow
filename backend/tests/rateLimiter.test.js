@@ -22,7 +22,7 @@ function buildApp({ userId, tier, max } = {}) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    if (userId || tier) req.user = { userId, tier };
+    if (userId || tier) req.user = { id: userId, tier };
     next();
   });
   app.use(createPerUserRateLimiter({ prefix: 'test', ...(max !== undefined && { max }) }));
@@ -125,7 +125,7 @@ describe('per-user rate limiter', () => {
     await request(app).get('/test').set('x-user-id', 'user-block');
     const res = await request(app).get('/test').set('x-user-id', 'user-block');
     expect(res.status).toBe(429);
-    expect(res.body.error.code).toBe('RATE_LIMIT_EXCEEDED');
+    expect(res.body.code).toBe('RATE_LIMIT_EXCEEDED');
   });
 
   it('tracks different users independently', async () => {
@@ -203,7 +203,7 @@ describe('burst limiting', () => {
     await request(app).get('/').expect(200);
     await request(app).get('/').expect(200);
     const res = await request(app).get('/').expect(429);
-    expect(res.body.error.reason).toBe('burst');
+    expect(res.body.reason).toBe('burst');
   });
 });
 

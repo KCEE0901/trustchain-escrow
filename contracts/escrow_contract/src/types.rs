@@ -42,11 +42,6 @@ pub enum EscrowStatus {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Compact bitflag type for milestone lifecycle state.
-///
-/// Use the `MS_*` constants below instead of constructing raw values.
-/// A single bit is set at any given time; the bitflag layout allows
-/// cheap membership tests (`status & MS_TERMINAL != 0`) without
-/// deserialising a tagged-union enum.
 pub type MilestoneStatus = u32;
 
 /// Milestone defined but work not yet started/submitted.
@@ -73,20 +68,15 @@ pub enum PriceDirection {
 }
 
 /// A price-based release condition attached to a milestone.
-/// The oracle is queried at trigger time; funds release if the condition is met.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PriceCondition {
-    /// The asset whose USD price is checked.
     pub asset: Address,
-    /// Target price in USD with `oracle::PRICE_DECIMALS` decimal places.
     pub target_price_usd: i128,
-    /// Whether the current price must be above or below the target.
     pub direction: PriceDirection,
 }
 
-/// Optional price condition wrapper — mirrors `OptionalTimelock` to work around
-/// Soroban's lack of `Option<CustomContractType>` support in `#[contracttype]`.
+/// Optional price condition wrapper.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OptionalPriceCondition {
@@ -111,14 +101,6 @@ impl From<OptionalPriceCondition> for Option<PriceCondition> {
         }
     }
 }
-
-/// Mask of all terminal states (no further transitions expected).
-#[allow(dead_code)]
-pub const MS_TERMINAL: MilestoneStatus = MS_RELEASED | MS_DISPUTED;
-
-/// Mask of states that block escrow cancellation.
-#[allow(dead_code)]
-pub const MS_BLOCKS_CANCEL: MilestoneStatus = MS_SUBMITTED | MS_APPROVED;
 
 /// Timelock metadata for protecting buyers: no release until expiry.
 #[contracttype]
@@ -677,6 +659,22 @@ pub enum ProposalPayload {
 // STORAGE KEYS
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Record of an escrow status transition for audit/history purposes.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StateHistoryEntry {
+    /// The escrow this entry belongs to.
+    pub escrow_id: u64,
+    /// The status before the transition.
+    pub from_status: EscrowStatus,
+    /// The status after the transition.
+    pub to_status: EscrowStatus,
+    /// Ledger timestamp when the transition occurred.
+    pub timestamp: u64,
+    /// Address of the caller who triggered the transition.
+    pub caller: Address,
+}
+
 /// Contract storage keys.
 ///
 /// All persistent state lives under one of these keys.
@@ -752,4 +750,78 @@ pub enum DataKey {
     OracleResolution(u64),
     /// Trusted oracle Ed25519 public key for fallback dispute resolution — value: BytesN<32>
     TrustedOracleKey,
+    /// Absolute ledger timestamp after which funds may be released — key: u64 (escrow_id), value: u64
+    TimelockReleaseTime(u64),
+    /// Escrow amount at or above which a multisig policy is mandatory — value: i128
+    HighValueThreshold,
+    /// Contract code version metadata — value: ContractVersionInfo (persistent storage)
+    ContractVersion,
+    /// Per-escrow state transition history — key: u64, value: Vec<StateHistoryEntry>
+    StateHistory(u64),
+}
+
+/// Tracks the contract *code* version (distinct from `storage::STORAGE_VERSION`,
+/// which tracks the data layout). Stored in persistent storage so the history
+/// survives across upgrades and instance-storage TTL expiry.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractVersionInfo {
+    /// Current contract code version, starting at 1 and incremented by one on
+    /// every successful `upgrade()` call.
+    pub version: u32,
+    /// Ledger timestamp when the contract was first initialized.
+    pub deployed_at: u64,
+    /// Ledger timestamp of the most recent successful upgrade.
+    /// Equal to `deployed_at` if the contract has never been upgraded.
+    pub last_upgraded_at: u64,
+    /// Total number of successful upgrades applied since deployment.
+    pub upgrade_count: u32,
+}
+
+/// Records a client's acceptance of off-chain terms bound to an escrow.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TermsAcceptance {
+    /// Escrow ID this acceptance belongs to.
+    pub escrow_id: u64,
+    /// Address of the client who accepted the terms.
+    pub client: Address,
+    /// SHA-256 hash of the terms document accepted off-chain.
+    pub terms_hash: BytesN<32>,
+    /// Whether the client has accepted the terms.
+    pub accepted: bool,
+    /// Ledger timestamp when terms were accepted. `None` if not yet accepted.
+    pub accepted_at: Option<u64>,
+}
+
+/// Configuration for a Stellar DEX integration for cross-contract asset swaps.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DexConfig {
+    /// Address of the DEX (e.g., Soroswap, Stellar DEX) contract.
+    pub dex_contract_id: Address,
+    /// Supported trading pairs as (token_in, token_out).
+    pub supported_pairs: soroban_sdk::Vec<(Address, Address)>,
+}
+
+/// A recorded DEX swap intent or result.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DexSwapRecord {
+    /// Escrow ID this swap is associated with.
+    pub escrow_id: u64,
+    /// Token being swapped from.
+    pub token_in: Address,
+    /// Token being swapped to.
+    pub token_out: Address,
+    /// Amount swapped from.
+    pub amount_in: i128,
+    /// Minimum amount expected out.
+    pub min_amount_out: i128,
+    /// Actual amount received out.
+    pub amount_out: Option<i128>,
+    /// Ledger timestamp when the swap was initiated.
+    pub swapped_at: Option<u64>,
+    /// Whether the swap was successful.
+    pub success: bool,
 }

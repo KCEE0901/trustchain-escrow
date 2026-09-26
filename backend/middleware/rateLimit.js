@@ -72,10 +72,8 @@ export function createRateLimitMiddleware({
       }
 
       res.status(options.statusCode).json({
-        error: {
-          code: 'RATE_LIMIT_EXCEEDED',
-          message,
-        },
+        error: message,
+        code: 'RATE_LIMIT_EXCEEDED',
       });
     },
   });

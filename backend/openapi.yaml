@@ -63,6 +63,8 @@ tags:
     description: Admin-only operations (requires x-admin-api-key)
   - name: Audit
     description: Audit log search and export (requires x-admin-api-key)
+  - name: Stellar Monitoring
+    description: Real-time Stellar transaction monitoring
   - name: Health
     description: Service health and metrics
 
@@ -2421,6 +2423,61 @@ components:
           type: string
           format: date-time
 
+    TransactionMonitorRecord:
+      type: object
+      properties:
+        id:
+          type: integer
+        txHash:
+          type: string
+        fromAddress:
+          type: string
+        toAddress:
+          type: string
+          nullable: true
+        amount:
+          type: string
+          nullable: true
+        memo:
+          type: string
+          nullable: true
+        escrowId:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [PENDING, CONFIRMED, FAILED, TIMEOUT]
+        ledger:
+          type: string
+          nullable: true
+        errorCode:
+          type: string
+          nullable: true
+        submittedAt:
+          type: string
+          format: date-time
+        confirmedAt:
+          type: string
+          format: date-time
+          nullable: true
+        failedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    PaginatedTransactions:
+      allOf:
+        - $ref: '#/components/schemas/PaginatedResponse'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/TransactionMonitorRecord'
+
   responses:
     Unauthorized:
       description: Missing or invalid authentication token
@@ -2440,6 +2497,112 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+
+  /api/expiry/status:
+    get:
+      tags: [Escrows]
+      summary: Get expiry background job status
+      operationId: getExpiryStatus
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Expiry job status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      active:
+                        type: boolean
+                      pollIntervalMs:
+                        type: integer
+                      lastRunAt:
+                        type: string
+                        format: date-time
+                        nullable: true
+                      processed:
+                        type: integer
+                      succeeded:
+                        type: integer
+                      failed:
+                        type: integer
+                      durationMs:
+                        type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/expiry/run:
+    post:
+      tags: [Escrows]
+      summary: Manually trigger a single expiry run
+      operationId: triggerExpiryRun
+      security:
+        - BearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                batchSize:
+                  type: integer
+                  default: 50
+                  minimum: 1
+                  maximum: 500
+                  description: Maximum number of escrows to process in this run
+      responses:
+        '200':
+          description: Expiry run results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      processed:
+                        type: integer
+                      succeeded:
+                        type: integer
+                      failed:
+                        type: integer
+                      errors:
+                        type: array
+                        items:
+                          type: string
+                      triggeredBy:
+                        type: string
+                      timestamp:
+                        type: string
+                        format: date-time
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/expiry/pending:
+    get:
+      tags: [Escrows]
+      summary: List escrows pending expiry
+      description: Returns Active escrows whose deadline has passed but have not yet been auto-expired.
+      operationId: listPendingExpirations
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Paginated list of escrows pending expiry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedEscrows'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 
   /api/chat/{escrowId}/room-key:
     post:

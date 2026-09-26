@@ -10,6 +10,7 @@
  */
 
 import { useState, useEffect } from 'react';
+import { useRelativeTime } from '../../hooks/useRelativeTime';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
@@ -33,15 +34,20 @@ function truncate(str) {
   return `${str.slice(0, 6)}…${str.slice(-4)}`;
 }
 
-function timeAgo(dateStr) {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const minutes = Math.floor(diff / 60000);
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+function formatAbsoluteDate(dateStr) {
+  const date = new Date(dateStr);
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function getAbsoluteDateTime(dateStr) {
+  const date = new Date(dateStr);
+  return date.toLocaleString();
+}
+
+function shouldShowAbsolute(dateStr) {
+  const date = new Date(dateStr);
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  return date < sevenDaysAgo;
 }
 
 // ── Skeleton ──────────────────────────────────────────────────────────────────
@@ -62,6 +68,21 @@ function TimelineSkeleton() {
         </div>
       ))}
     </div>
+  );
+}
+
+// ── Timeline Item Timestamp ──────────────────────────────────────────────────
+
+function TimelineItemTimestamp({ dateStr }) {
+  const relativeTime = useRelativeTime(dateStr);
+  const absoluteDateTime = getAbsoluteDateTime(dateStr);
+  const isOlderThan7Days = shouldShowAbsolute(dateStr);
+  const displayText = isOlderThan7Days ? formatAbsoluteDate(dateStr) : relativeTime;
+
+  return (
+    <span className="text-xs text-gray-500 ml-auto" aria-live="polite" title={absoluteDateTime}>
+      {displayText}
+    </span>
   );
 }
 
@@ -92,9 +113,7 @@ function TimelineItem({ escrow, address, isLast }) {
           <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${cfg.color} bg-gray-800`}>
             <span aria-hidden="true">{cfg.icon}</span> {cfg.label}
           </span>
-          <span className="text-xs text-gray-500 ml-auto" aria-live="polite">
-            {timeAgo(escrow.updatedAt)}
-          </span>
+          <TimelineItemTimestamp dateStr={escrow.updatedAt} />
         </div>
         <p className="text-xs text-gray-500 mt-1">
           As <span className="text-gray-400 capitalize">{role}</span>
@@ -180,6 +199,9 @@ export default function ActivityTimeline({ address }) {
                 const role = escrow.clientAddress === address ? 'client' : 'freelancer';
                 const counterparty =
                   role === 'client' ? escrow.freelancerAddress : escrow.clientAddress;
+                const displayText = shouldShowAbsolute(escrow.updatedAt)
+                  ? formatAbsoluteDate(escrow.updatedAt)
+                  : 'updated';
                 return (
                   <tr key={escrow.id.toString()}>
                     <td>{escrow.id}</td>
@@ -187,7 +209,7 @@ export default function ActivityTimeline({ address }) {
                     <td>{role}</td>
                     <td>{counterparty}</td>
                     <td>{escrow.totalAmount}</td>
-                    <td>{timeAgo(escrow.updatedAt)}</td>
+                    <td title={getAbsoluteDateTime(escrow.updatedAt)}>{displayText}</td>
                   </tr>
                 );
               })}

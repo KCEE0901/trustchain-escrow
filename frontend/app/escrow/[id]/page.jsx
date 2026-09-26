@@ -24,16 +24,23 @@ import { useState, useEffect } from 'react';
 import { useEscrow } from '../../../hooks/useEscrow';
 import { useRelativeTime } from '../../../hooks/useRelativeTime';
 import { useWallet } from '../../../hooks/useWallet';
+import { useIntersectionObserver } from '../../../hooks/useIntersectionObserver';
 import { useToast } from '../../../contexts/ToastContext';
 import MilestoneList from '../../../components/escrow/MilestoneList';
+import TransactionHistoryList, {
+  buildHistoryFromEscrow,
+} from '../../../components/escrow/TransactionHistoryList';
+import TransactionGraph from '../../../components/escrow/TransactionGraph';
 import DisputeModal from '../../../components/escrow/DisputeModal';
 import CancelEscrowModal from '../../../components/escrow/CancelEscrowModal';
+import ReceiptExportButton from '../../../components/escrow/ReceiptExportButton';
 import Badge from '../../../components/ui/Badge';
 import Button from '../../../components/ui/Button';
 import ReputationBadge from '../../../components/ui/ReputationBadge';
 import CurrencyAmount from '../../../components/ui/CurrencyAmount';
 import TransactionHash from '../../../components/ui/TransactionHash';
 import Avatar from '../../../components/ui/Avatar';
+import Skeleton from '../../../components/ui/Skeleton';
 import {
   buildApproveMilestoneTx,
   buildSubmitMilestoneTx,
@@ -224,6 +231,13 @@ export default function EscrowDetailPage({ params }) {
           />
         </div>
         <div className="flex gap-2 flex-shrink-0">
+          {String(escrow.status).toUpperCase() === 'COMPLETED' && (
+            <ReceiptExportButton
+              escrowId={id}
+              label="Download Receipt (PDF)"
+              onError={(message) => showToast(message, 'error')}
+            />
+          )}
           {escrow.status === 'Active' && (
             <>
               <Button variant="danger" size="sm" onClick={() => setDisputeOpen(true)}>
@@ -300,6 +314,17 @@ export default function EscrowDetailPage({ params }) {
         />
       </section>
 
+      {/* Transaction History */}
+      <div className="card">
+        <TransactionHistoryList
+          history={buildHistoryFromEscrow(escrow)}
+          network={process.env.NEXT_PUBLIC_STELLAR_NETWORK}
+        />
+      </div>
+
+      {/* Transaction Graph (Lazy Loaded) */}
+      <LazyTransactionGraph escrow={escrow} />
+
       {/* Dispute Modal */}
       <DisputeModal 
         isOpen={isDisputeOpen} 
@@ -315,6 +340,20 @@ export default function EscrowDetailPage({ params }) {
         escrowId={id}
         onConfirm={handleCancelEscrow}
       />
+    </div>
+  );
+}
+
+function LazyTransactionGraph({ escrow }) {
+  const { ref, isIntersecting } = useIntersectionObserver({ triggerOnce: true });
+
+  return (
+    <div ref={ref} className="card">
+      {!isIntersecting ? (
+        <Skeleton className="h-96 w-full rounded" />
+      ) : (
+        <TransactionGraph escrow={escrow} />
+      )}
     </div>
   );
 }

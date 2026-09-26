@@ -24,6 +24,24 @@ router.get(
 );
 
 /**
+ * @route  GET /api/v1/escrows/search
+ * @desc   Full-text and filter-based escrow search.
+ * @query  q           free-text search term (matched against addresses)
+ * @query  status      single or comma-separated: Active,Completed,Disputed,Cancelled
+ * @query  creator     exact client Stellar address
+ * @query  arbitrator  exact arbitrator Stellar address
+ * @query  dateFrom    ISO date — createdAt >= dateFrom
+ * @query  dateTo      ISO date — createdAt <= dateTo
+ * @query  minAmount   minimum totalAmount
+ * @query  maxAmount   maximum totalAmount
+ * @query  sortBy      createdAt | totalAmount | status  (default: createdAt)
+ * @query  sortOrder   asc | desc  (default: desc)
+ * @query  page        default 1
+ * @query  limit       default 20, max 100
+ */
+router.get('/search', validatePagination, escrowController.searchEscrowsV1);
+
+/**
  * @route  POST /api/escrows/broadcast
  */
 router.post(

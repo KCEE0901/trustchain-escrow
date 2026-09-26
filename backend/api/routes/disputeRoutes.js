@@ -2,6 +2,8 @@ import express from 'express';
 import disputeController from '../controllers/disputeController.js';
 import { cacheResponse, invalidateOn, TTL } from '../middleware/cache.js';
 import authMiddleware from '../middleware/auth.js';
+import { requireMfa } from '../middleware/mfaAuth.js';
+import { checkPermission, ROLES } from '../middleware/roleGuard.js';
 import { handleUploadError } from '../middleware/fileUpload.js';
 import {
   validate,
@@ -75,6 +77,23 @@ router.get(
   disputeController.getRecommendation,
 );
 
+// ── Arbiter Resolution (requires 2FA for Arbitrator and Admin roles) ──────────
+
+/**
+ * POST /api/disputes/:id/resolve
+ * Arbiter-initiated manual dispute resolution.
+ * Requires MFA verification to prevent unauthorized resolutions.
+ */
+router.post(
+  '/:id/resolve',
+  checkPermission(ROLES.ARBITRATOR, 'resolve_dispute'),
+  requireMfa,
+  invalidateOn({
+    tags: (req) => [`dispute:${req.params.id}`, `escrow:${req.params.id}`, 'disputes', 'escrows'],
+  }),
+  disputeController.autoResolve,
+);
+
 // ── Appeals ───────────────────────────────────────────────────────────────────
 
 router.post(
@@ -85,6 +104,7 @@ router.post(
 
 router.patch(
   '/appeals/:appealId',
+  requireMfa,
   invalidateOn({ tags: ['disputes'] }),
   disputeController.patchAppeal,
 );

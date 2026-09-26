@@ -96,13 +96,7 @@ export function csrfProtection(req, res, next) {
 export function handleValidationErrors(req, res, next) {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
-    return res.status(400).json({
-      error: {
-        code: 'VALIDATION_ERROR',
-        message: 'Request validation failed.',
-        details: errors.array(),
-      },
-    });
+    return res.status(400).json({ errors: errors.array() });
   }
   next();
 }
@@ -122,7 +116,6 @@ export const stellarAddressBody = (field = 'address') =>
 export const paginationQuery = [
   query('page').optional().isInt({ min: 1 }).toInt(),
   query('limit').optional().isInt({ min: 1, max: 100 }).toInt(),
-  query('cursor').optional().isBase64().withMessage('cursor must be a valid cursor token'),
 ];
 
 export const escrowIdParam = param('id')

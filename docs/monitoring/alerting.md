@@ -1,5 +1,27 @@
 # Alerting Rules & Configuration
 
+## Grafana Provisioned Alerts
+
+### High Dispute Rate (> 5%)
+
+**Location**: `backend/monitoring/grafana/provisioning/alerting/rules/dispute-rate-alert.yml`
+
+Fires when the ratio of disputed escrows to active escrows exceeds 5% over a 10-minute window.
+
+```
+Condition: count(disputed_escrows) / count(active_escrows) > 0.05
+Duration: 10 minutes
+Severity: WARNING
+Notification: Via configured contact point (default: email)
+```
+
+**Why this matters**: A spike in dispute rate can indicate:
+- Bad actors attempting fraud or abuse
+- UX issues that frustrate users and lead to disputes
+- Market friction or systemic problems in matching/delivery
+
+**Response**: Investigate recent escrow cancellations, review dispute reasons, and check for patterns.
+
 ## Prometheus Alerting Rules
 
 Create `backend/monitoring/rules.yml`:

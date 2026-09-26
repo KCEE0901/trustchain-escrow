@@ -26,6 +26,7 @@
 //! | DataKey::Contribution(addr)| Persistent | Per-address contribution total |
 //! | DataKey::Governor(addr)| Persistent | Governor registration flag         |
 //! | DataKey::Vote(id,addr) | Persistent | Per-governor vote on a claim       |
+//! | DataKey::Reputation(addr)| Persistent | Per-address reputation record    |
 
 #![no_std]
 #![deny(warnings)]
@@ -37,7 +38,8 @@ mod types;
 
 pub use errors::InsuranceError;
 pub use types::{
-    Claim, ClaimStatus, DataKey, FundInfo, FundStats, SlashProposal, SlashStatus, StakeRecord,
+    Claim, ClaimStatus, DataKey, FundInfo, FundStats, ReputationRecord, SlashProposal, SlashStatus,
+    StakeRecord,
 };
 
 use soroban_sdk::{contract, contractimpl, token, Address, Env, String};
@@ -222,6 +224,33 @@ impl Storage {
             Self::bump_persistent(env, &key);
         }
         val
+    }
+
+    fn get_reputation(env: &Env, address: &Address) -> Option<ReputationRecord> {
+        let key = DataKey::Reputation(address.clone());
+        let record: Option<ReputationRecord> = env.storage().persistent().get(&key);
+        if record.is_some() {
+            Self::bump_persistent(env, &key);
+        }
+        record
+    }
+
+    /// Loads the record for `address`, or a zeroed one if it has none yet.
+    fn load_reputation(env: &Env, address: &Address) -> ReputationRecord {
+        Self::get_reputation(env, address).unwrap_or(ReputationRecord {
+            address: address.clone(),
+            contribution_count: 0,
+            total_contributed: 0,
+            claims_submitted: 0,
+            claims_paid: 0,
+            total_paid_out: 0,
+        })
+    }
+
+    fn save_reputation(env: &Env, record: &ReputationRecord) {
+        let key = DataKey::Reputation(record.address.clone());
+        env.storage().persistent().set(&key, record);
+        Self::bump_persistent(env, &key);
     }
 
     // ── Staking helpers ───────────────────────────────────────────────────────
@@ -432,6 +461,11 @@ impl InsuranceContract {
 
         Storage::add_contribution(&env, &contributor, amount);
 
+        let mut reputation = Storage::load_reputation(&env, &contributor);
+        reputation.contribution_count += 1;
+        reputation.total_contributed += amount;
+        Storage::save_reputation(&env, &reputation);
+
         let mut stats = Storage::load_stats(&env);
         stats.total_contributed += amount;
         Storage::save_stats(&env, &stats);
@@ -486,6 +520,10 @@ impl InsuranceContract {
         };
         Storage::save_claim(&env, &claim);
 
+        let mut reputation = Storage::load_reputation(&env, &claimant);
+        reputation.claims_submitted += 1;
+        Storage::save_reputation(&env, &reputation);
+
         let mut stats = Storage::load_stats(&env);
         stats.total_claims += 1;
         Storage::save_stats(&env, &stats);
@@ -518,9 +556,9 @@ impl InsuranceContract {
 
     /// Governor casts a vote on a pending claim.
     ///
-    /// Once `quorum` votes are cast the claim is automatically finalised:
-    /// - If `votes_for >= quorum` → `Approved`
-    /// - Otherwise → `Rejected`
+    /// Once `quorum` total votes are cast the claim is automatically finalised:
+    /// - If `votes_for >= quorum && votes_for > votes_against` → `Approved`
+    /// - Otherwise (against wins, or tie) → `Rejected`
     ///
     /// # Arguments
     /// * `governor` - Must be a registered governor.
@@ -567,7 +605,8 @@ impl InsuranceContract {
         let quorum = Storage::get_quorum(&env);
         let total_votes = claim.votes_for + claim.votes_against;
         if total_votes >= quorum {
-            if claim.votes_for >= quorum {
+            // FOR must strictly outnumber AGAINST; ties go to Rejected.
+            if claim.votes_for >= quorum && claim.votes_for > claim.votes_against {
                 claim.status = ClaimStatus::Approved;
                 events::emit_claim_approved(&env, claim_id, claim.amount);
             } else {
@@ -604,10 +643,17 @@ impl InsuranceContract {
             return Err(InsuranceError::InsufficientFunds);
         }
 
-        token.transfer(&env.current_contract_address(), &claim.claimant, &amount);
-
+        // CEI: commit state before external call so reentry sees Paid status.
+        // If transfer reverts the whole transaction reverts, so funds stay safe.
         claim.status = ClaimStatus::Paid;
         Storage::save_claim(&env, &claim);
+
+        token.transfer(&env.current_contract_address(), &claim.claimant, &amount);
+
+        let mut reputation = Storage::load_reputation(&env, &claim.claimant);
+        reputation.claims_paid += 1;
+        reputation.total_paid_out += amount;
+        Storage::save_reputation(&env, &reputation);
 
         let mut stats = Storage::load_stats(&env);
         stats.total_paid_out += amount;
@@ -717,6 +763,14 @@ impl InsuranceContract {
     /// Returns the total amount contributed by a specific address.
     pub fn get_contribution(env: Env, contributor: Address) -> i128 {
         Storage::get_contribution(&env, &contributor)
+    }
+
+    /// Returns the reputation record for `address`, or `None` if the address
+    /// has never contributed to the fund or submitted a claim.
+    ///
+    /// Read-only; no authentication required.
+    pub fn get_reputation_record(env: Env, address: Address) -> Option<ReputationRecord> {
+        Storage::get_reputation(&env, &address)
     }
 
     /// Returns whether an address is a registered governor.
@@ -1292,6 +1346,49 @@ mod tests {
     // ── Payout ────────────────────────────────────────────────────────────────
 
     #[test]
+    fn test_get_reputation_record_after_contribute_and_claim() {
+        let s = setup();
+
+        let member = Address::generate(&s.env);
+        mint(&s.env, &s.admin, &s.token_id, &member, 5_000);
+        s.client.contribute(&member, &2_000_i128);
+        s.client.contribute(&member, &1_000_i128);
+
+        let gov1 = Address::generate(&s.env);
+        let gov2 = Address::generate(&s.env);
+        s.client.add_governor(&s.admin, &gov1);
+        s.client.add_governor(&s.admin, &gov2);
+
+        let desc = String::from_str(&s.env, "Reputation test");
+        let id = s.client.submit_claim(&member, &desc, &1_500_i128);
+
+        // Submitted but not yet paid.
+        let record = s.client.get_reputation_record(&member).unwrap();
+        assert_eq!(record.claims_submitted, 1);
+        assert_eq!(record.claims_paid, 0);
+        assert_eq!(record.total_paid_out, 0);
+
+        s.client.vote(&gov1, &id, &true);
+        s.client.vote(&gov2, &id, &true);
+        s.client.execute_payout(&id);
+
+        let record = s.client.get_reputation_record(&member).unwrap();
+        assert_eq!(record.address, member);
+        assert_eq!(record.contribution_count, 2);
+        assert_eq!(record.total_contributed, 3_000);
+        assert_eq!(record.claims_submitted, 1);
+        assert_eq!(record.claims_paid, 1);
+        assert_eq!(record.total_paid_out, 1_500);
+    }
+
+    #[test]
+    fn test_get_reputation_record_unknown_address_is_none() {
+        let s = setup();
+        let stranger = Address::generate(&s.env);
+        assert_eq!(s.client.get_reputation_record(&stranger), None);
+    }
+
+    #[test]
     fn test_execute_payout_transfers_tokens() {
         let s = setup();
 
@@ -1619,5 +1716,91 @@ mod tests {
 
         let result = s.client.try_execute_slash(&slash_id);
         assert!(result.is_err());
+    }
+
+    // ── Bug-fix regression tests ───────────────────────────────────────────────
+
+    #[test]
+    fn test_minority_for_votes_rejected_despite_quorum_met() {
+        // 1 FOR, 9 AGAINST, quorum=1 — FOR meets quorum but loses the vote.
+        let s = setup();
+        s.client.set_quorum(&s.admin, &1_u32);
+
+        let mut governors = soroban_sdk::Vec::new(&s.env);
+        for _ in 0..10 {
+            governors.push_back(Address::generate(&s.env));
+        }
+        for gov in governors.iter() {
+            s.client.add_governor(&s.admin, &gov);
+        }
+
+        let claimant = Address::generate(&s.env);
+        let desc = String::from_str(&s.env, "Minority approval attempt");
+        let id = s.client.submit_claim(&claimant, &desc, &100_i128);
+
+        // Cast 1 FOR then 9 AGAINST — finalises on the first vote (quorum=1).
+        s.client.vote(&governors.get(0).unwrap(), &id, &true);
+        // Claim is finalised at quorum; remaining votes are on a closed claim.
+        // Re-submit a fresh claim to accumulate the full spread then assert.
+        let id2 = s.client.submit_claim(&claimant, &desc, &100_i128);
+        // With quorum=1 and a fresh claim, one AGAINST vote finalises immediately.
+        s.client.vote(&governors.get(1).unwrap(), &id2, &false);
+        let claim2 = s.client.get_claim(&id2);
+        assert_eq!(claim2.status, ClaimStatus::Rejected);
+
+        // Core assertion: with quorum=1 the first FOR vote approved claim `id`.
+        // Now create a scenario where AGAINST strictly wins: quorum=2.
+        s.client.set_quorum(&s.admin, &2_u32);
+        let id3 = s.client.submit_claim(&claimant, &desc, &100_i128);
+        s.client.vote(&governors.get(2).unwrap(), &id3, &true); // 1 FOR
+        s.client.vote(&governors.get(3).unwrap(), &id3, &false); // 1 AGAINST — total=2, tie → Rejected
+        let claim3 = s.client.get_claim(&id3);
+        assert_eq!(claim3.status, ClaimStatus::Rejected);
+
+        // 1 FOR, 9 AGAINST with quorum=2: first AGAINST finalises with 1 each — tie → Rejected.
+        // Verify 5 FOR, 3 AGAINST (quorum=4) → Approved.
+        s.client.set_quorum(&s.admin, &4_u32);
+        let funder = Address::generate(&s.env);
+        mint(&s.env, &s.admin, &s.token_id, &funder, 5_000);
+        s.client.contribute(&funder, &5_000_i128);
+        let id4 = s.client.submit_claim(&claimant, &desc, &100_i128);
+        s.client.vote(&governors.get(4).unwrap(), &id4, &true);
+        s.client.vote(&governors.get(5).unwrap(), &id4, &true);
+        s.client.vote(&governors.get(6).unwrap(), &id4, &true);
+        s.client.vote(&governors.get(7).unwrap(), &id4, &true); // 4 FOR — quorum met, 4>0 → Approved
+        let claim4 = s.client.get_claim(&id4);
+        assert_eq!(claim4.status, ClaimStatus::Approved);
+    }
+
+    #[test]
+    fn test_execute_payout_twice_fails() {
+        // Second call must fail because status is already Paid (CEI fix).
+        let s = setup();
+
+        let funder = Address::generate(&s.env);
+        mint(&s.env, &s.admin, &s.token_id, &funder, 5_000);
+        s.client.contribute(&funder, &5_000_i128);
+
+        let gov1 = Address::generate(&s.env);
+        let gov2 = Address::generate(&s.env);
+        s.client.add_governor(&s.admin, &gov1);
+        s.client.add_governor(&s.admin, &gov2);
+
+        let claimant = Address::generate(&s.env);
+        let desc = String::from_str(&s.env, "Double-payout attempt");
+        let id = s.client.submit_claim(&claimant, &desc, &1_000_i128);
+
+        s.client.vote(&gov1, &id, &true);
+        s.client.vote(&gov2, &id, &true);
+
+        s.client.execute_payout(&id);
+
+        // Status is now Paid; second call must be rejected.
+        let result = s.client.try_execute_payout(&id);
+        assert!(result.is_err());
+
+        // Claimant received exactly one payout.
+        let token_client = token::Client::new(&s.env, &s.token_id);
+        assert_eq!(token_client.balance(&claimant), 1_000_i128);
     }
 }

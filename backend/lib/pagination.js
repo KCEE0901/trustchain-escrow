@@ -7,39 +7,19 @@ function normalizeInteger(value, fallback) {
   return Number.isNaN(parsed) ? fallback : parsed;
 }
 
-function encodeCursor(offset) {
-  return Buffer.from(JSON.stringify({ offset }), 'utf8').toString('base64url');
-}
-
-function decodeCursor(cursor) {
-  if (!cursor) return null;
-  try {
-    const decoded = JSON.parse(Buffer.from(String(cursor), 'base64url').toString('utf8'));
-    return Number.isInteger(decoded.offset) && decoded.offset >= 0 ? decoded.offset : null;
-  } catch {
-    return null;
-  }
-}
-
 export function parsePagination(query = {}) {
   const page = Math.max(DEFAULT_PAGE, normalizeInteger(query.page, DEFAULT_PAGE));
   const limit = Math.min(MAX_LIMIT, Math.max(1, normalizeInteger(query.limit, DEFAULT_LIMIT)));
-  const cursorOffset = decodeCursor(query.cursor);
-  const skip = cursorOffset ?? (page - 1) * limit;
 
   return {
-    page: cursorOffset === null ? page : Math.floor(skip / limit) + 1,
+    page,
     limit,
-    skip,
-    cursor: query.cursor ?? null,
+    skip: (page - 1) * limit,
   };
 }
 
-export function buildPaginatedResponse(data, { page, limit, total, cursor = null, skip = null }) {
+export function buildPaginatedResponse(data, { page, limit, total }) {
   const totalPages = total === 0 ? 0 : Math.ceil(total / limit);
-  const currentOffset = Number.isInteger(skip) ? skip : (page - 1) * limit;
-  const nextOffset = currentOffset + limit;
-  const previousOffset = Math.max(0, currentOffset - limit);
 
   return {
     data,
@@ -48,10 +28,7 @@ export function buildPaginatedResponse(data, { page, limit, total, cursor = null
     total,
     totalPages,
     hasNextPage: page < totalPages,
-    hasPreviousPage: currentOffset > 0,
-    cursor,
-    nextCursor: nextOffset < total ? encodeCursor(nextOffset) : null,
-    previousCursor: currentOffset > 0 ? encodeCursor(previousOffset) : null,
+    hasPreviousPage: page > DEFAULT_PAGE,
   };
 }
 
@@ -60,3 +37,41 @@ export const paginationDocs = {
   defaultLimit: DEFAULT_LIMIT,
   maxLimit: MAX_LIMIT,
 };
+
+// ── Cursor-based pagination ───────────────────────────────────────────────────
+//
+// Offset pagination (LIMIT n OFFSET k) requires Postgres to scan and discard
+// k rows before returning results, making deep pages O(n). Cursor pagination
+// instead starts the scan from the last-seen row's cursor value, giving O(1)
+// per-page cost regardless of depth.
+//
+// Usage:
+//   const { take, cursor } = parseCursorPagination(req.query);
+//   const rows = await prisma.escrow.findMany({
+//     take,
+//     ...(cursor ? { cursor: { id: BigInt(cursor) }, skip: 1 } : {}),
+//     orderBy: { id: 'desc' },
+//   });
+//   res.json(buildCursorResponse(rows, take, 'id'));
+
+export function parseCursorPagination(query = {}) {
+  const take = Math.min(MAX_LIMIT, Math.max(1, normalizeInteger(query.limit, DEFAULT_LIMIT)));
+  const cursor =
+    typeof query.cursor === 'string' && query.cursor.trim() ? query.cursor.trim() : null;
+  return { take, cursor };
+}
+
+/**
+ * Builds a cursor-paged response envelope.
+ *
+ * @template T
+ * @param {T[]} data      — The page of records returned from the DB
+ * @param {number} take   — The requested page size (from parseCursorPagination)
+ * @param {keyof T} field — The field used as cursor (must be sortable & unique)
+ * @returns {{ data: T[], nextCursor: string | null, hasNextPage: boolean }}
+ */
+export function buildCursorResponse(data, take, field) {
+  const hasNextPage = data.length === take;
+  const nextCursor = hasNextPage ? String(data[data.length - 1][field]) : null;
+  return { data, nextCursor, hasNextPage };
+}

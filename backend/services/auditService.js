@@ -10,9 +10,7 @@
 import { stringify } from 'csv-stringify/sync';
 import { createModuleLogger } from '../config/logger.js';
 import prisma from '../lib/prisma.js';
-import { buildPaginatedResponse, parsePagination } from '../lib/pagination.js';
 import { withSpan } from '../lib/tracing.js';
-import { DEFAULT_TENANT_ID, getCurrentTenantId } from '../lib/tenantContext.js';
 
 const auditLogger = createModuleLogger('auditService');
 
@@ -38,7 +36,6 @@ export const AuditAction = {
   CREATE_ESCROW: 'CREATE_ESCROW',
   CANCEL_ESCROW: 'CANCEL_ESCROW',
   COMPLETE_ESCROW: 'COMPLETE_ESCROW',
-  ESCROW_STATE_CHANGE: 'ESCROW_STATE_CHANGE',
   // Milestone
   ADD_MILESTONE: 'ADD_MILESTONE',
   SUBMIT_MILESTONE: 'SUBMIT_MILESTONE',
@@ -98,7 +95,6 @@ export async function log(entry) {
       async () => {
         await prisma.auditLog.create({
           data: {
-            tenantId: entry.tenantId ?? getCurrentTenantId() ?? DEFAULT_TENANT_ID,
             category: entry.category,
             action: entry.action,
             actor: entry.actor,
@@ -156,7 +152,9 @@ function buildWhereClause({ category, action, actor, resourceId, from, to } = {}
  * @returns {{ data: AuditLog[], total: number, page: number, limit: number, pages: number }}
  */
 export async function search(filters = {}) {
-  const { page, limit, skip } = parsePagination({ limit: filters.limit ?? 50, ...filters });
+  const page = Math.max(1, parseInt(filters.page) || 1);
+  const limit = Math.min(200, Math.max(1, parseInt(filters.limit) || 50));
+  const skip = (page - 1) * limit;
 
   const where = buildWhereClause(filters);
 
@@ -170,7 +168,7 @@ export async function search(filters = {}) {
     prisma.auditLog.count({ where }),
   ]);
 
-  return buildPaginatedResponse(data, { total, page, limit });
+  return { data, total, page, limit, pages: Math.ceil(total / limit) };
 }
 
 // ── Export ────────────────────────────────────────────────────────────────────

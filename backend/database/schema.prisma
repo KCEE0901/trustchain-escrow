@@ -350,6 +350,11 @@ model Dispute {
   @@index([resolvedAt])
   // Composite index for listing disputes sorted by raisedAt with resolution filter
   @@index([resolvedAt, raisedAt(sort: Desc)])
+  // Covers the admin listDisputes query: filter by tenant + resolution status, sort by raisedAt.
+  // Without this, Postgres must seq-scan the entire tenant partition then sort.
+  @@index([tenantId, resolvedAt, raisedAt(sort: Desc)])
+  // Covers raisedBy filter + date sort within a tenant (dispute history per freelancer)
+  @@index([tenantId, raisedByAddress, raisedAt(sort: Desc)])
   @@map("disputes")
 }
 
@@ -728,4 +733,35 @@ model ChatMessage {
   @@index([roomId, sentAt])
   @@index([tenantId, roomId])
   @@map("chat_messages")
+}
+
+// ── Stellar Transaction Monitoring ─────────────────────────────────────────────
+
+/// Tracks Stellar transactions submitted through the platform.
+/// Enables real-time status monitoring and historical auditing.
+model TransactionMonitor {
+  id             Int       @id @default(autoincrement())
+  txHash         String    @unique @map("tx_hash")
+  fromAddress    String    @map("from_address")
+  toAddress      String?   @map("to_address")
+  amount         String?
+  memo           String?
+  escrowId       BigInt?   @map("escrow_id")
+  status         String    @default("PENDING") // PENDING | CONFIRMED | FAILED | TIMEOUT
+  ledger         BigInt?
+  errorCode      String?   @map("error_code")
+  submittedAt    DateTime  @default(now()) @map("submitted_at")
+  confirmedAt    DateTime? @map("confirmed_at")
+  failedAt       DateTime? @map("failed_at")
+  lastCheckedAt  DateTime  @default(now()) @map("last_checked_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@index([status])
+  @@index([fromAddress])
+  @@index([toAddress])
+  @@index([escrowId])
+  @@index([submittedAt(sort: Desc)])
+  @@index([status, submittedAt(sort: Asc)])
+  @@index([status, lastCheckedAt(sort: Asc)])
+  @@map("transaction_monitor")
 }

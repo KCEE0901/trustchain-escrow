@@ -1,0 +1,74 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: Stellar Trust Escrow Alerts
+    folder: Alerts
+    interval: 1m
+    rules:
+      - uid: dispute_rate_alert
+        title: High Dispute Rate
+        condition: C
+        data:
+          - refId: A
+            queryType: ''
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: count(escrows{status="Disputed"}) or on() vector(0)
+              interval: ''
+              refId: A
+          - refId: B
+            queryType: ''
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: count(escrows{status!="Cancelled"}) or on() vector(0)
+              interval: ''
+              refId: B
+          - refId: C
+            queryType: ''
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: '__expr__'
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0.05
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - C
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                name: Expression
+              expression: A / B
+              hide: false
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: math
+        noDataState: NoData
+        execErrState: Alerting
+        for: 10m
+        annotations:
+          description: |
+            Dispute rate has exceeded 5% of active escrows.
+            Disputed escrows: {{ $value | humanize }}%
+            This may indicate a bad actor, UX issues, or market friction.
+          runbook_url: ''
+          summary: High dispute rate detected (> 5%)
+        labels:
+          severity: warning

@@ -29,10 +29,8 @@ describe('rate limit middleware', () => {
     const response = await request(app).get('/limited').expect(429);
 
     expect(response.body).toEqual({
-      error: {
-        code: 'RATE_LIMIT_EXCEEDED',
-        message: 'Too many requests',
-      },
+      error: 'Too many requests',
+      code: 'RATE_LIMIT_EXCEEDED',
     });
     expect(response.headers['retry-after']).toBeDefined();
   });

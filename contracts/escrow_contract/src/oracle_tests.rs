@@ -63,7 +63,7 @@ mod oracle_triggered_tests {
         soroban_sdk::token::StellarAssetClient::new(&env, &token_addr)
             .mint(&escrow_client, &100_000);
 
-        let brief_hash = BytesN::from_array(&env, &[0u8; 32]);
+        let brief_hash = BytesN::from_array(&env, &[1u8; 32]);
         let escrow_id = client.create_escrow(
             &escrow_client,
             &freelancer,
@@ -79,6 +79,7 @@ mod oracle_triggered_tests {
                 weights: soroban_sdk::Vec::new(&env),
                 threshold: 0,
             },
+            &None,
         );
 
         let asset = Address::generate(&env);

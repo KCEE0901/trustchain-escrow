@@ -243,6 +243,11 @@ pub fn emit_contract_unpaused(env: &Env, admin: &Address) {
         .publish((ev::CONTRACT_UNPAUSED,), admin.clone());
 }
 
+pub fn emit_contract_version_upgraded(env: &Env, old_version: u32, new_version: u32) {
+    env.events()
+        .publish((ev::CONTRACT_VERSION_UPGRADED,), (old_version, new_version));
+}
+
 pub fn emit_cancellation_executed(
     env: &Env,
     escrow_id: u64,
@@ -447,5 +452,119 @@ pub fn emit_referral_payout(env: &Env, escrow_id: u64, referrer: &Address, amoun
     env.events().publish(
         (symbol_short!("ref_pay"), escrow_id),
         (referrer.clone(), amount),
+    );
+}
+
+/// Emitted when a timelock release time is set on an escrow.
+///
+/// # Arguments
+/// * `escrow_id`    - The escrow ID
+/// * `caller`       - The address that set the timelock
+/// * `release_time` - Absolute ledger timestamp after which release is permitted
+pub fn emit_timelock_release_time_set(
+    env: &Env,
+    escrow_id: u64,
+    caller: &Address,
+    release_time: u64,
+) {
+    env.events().publish(
+        (symbol_short!("tl_set"), escrow_id),
+        (caller.clone(), release_time),
+    );
+}
+
+/// Emitted when funds are released via the timelock mechanism.
+///
+/// # Arguments
+/// * `escrow_id`    - The escrow ID
+/// * `milestone_id` - The milestone whose funds were released
+/// * `caller`       - Who triggered the release
+/// * `amount`       - Token amount transferred to the freelancer
+pub fn emit_timelock_release(
+    env: &Env,
+    escrow_id: u64,
+    milestone_id: u32,
+    caller: &Address,
+    amount: i128,
+) {
+    env.events().publish(
+        (symbol_short!("tl_rel"), escrow_id),
+        (milestone_id, caller.clone(), amount),
+    );
+}
+
+// ── Multi-asset events (#101) ─────────────────────────────────────────────
+
+/// Emitted when an additional asset is deposited into a multi-asset escrow.
+pub fn emit_multi_asset_deposited(env: &Env, escrow_id: u64, token: &Address, amount: i128) {
+    env.events().publish(
+        (symbol_short!("ma_dep"), escrow_id),
+        (token.clone(), amount),
+    );
+}
+
+/// Emitted when a specific asset is released from a multi-asset escrow.
+pub fn emit_multi_asset_released(env: &Env, escrow_id: u64, token: &Address, amount: i128) {
+    env.events().publish(
+        (symbol_short!("ma_rel"), escrow_id),
+        (token.clone(), amount),
+    );
+}
+
+// ── Freeze/unfreeze events (#99) ──────────────────────────────────────────
+
+/// Emitted when an escrow is frozen by the admin.
+pub fn emit_escrow_frozen(env: &Env, escrow_id: u64, caller: &Address) {
+    env.events()
+        .publish((symbol_short!("esc_frz"), escrow_id), caller.clone());
+}
+
+/// Emitted when an escrow is unfrozen by the admin.
+pub fn emit_escrow_unfrozen(env: &Env, escrow_id: u64, caller: &Address) {
+    env.events()
+        .publish((symbol_short!("esc_unf"), escrow_id), caller.clone());
+}
+
+// ── RBAC events (#100) ────────────────────────────────────────────────────
+
+/// Emitted when a role is assigned (e.g. arbiter assignment).
+pub fn emit_role_assigned(env: &Env, escrow_id: u64, address: &Address, role: &str) {
+    env.events().publish(
+        (symbol_short!("role_asg"), escrow_id),
+        (address.clone(), soroban_sdk::String::from_str(env, role)),
+    );
+}
+
+// ── Validation events (#102) ──────────────────────────────────────────────
+
+/// Emitted when input validation rejects a call (useful for off-chain monitoring).
+pub fn emit_validation_rejected(env: &Env, reason: &str) {
+    env.events().publish(
+        (symbol_short!("val_rej"),),
+        soroban_sdk::String::from_str(env, reason),
+    );
+}
+
+// ── Terms acceptance (#121) ──────────────────────────────────────────────
+
+/// Emitted when the client accepts the off-chain terms for an escrow.
+pub fn emit_terms_accepted(env: &Env, escrow_id: u64, client: &Address) {
+    env.events()
+        .publish((ev::TERMS_ACCEPTED, escrow_id), client.clone());
+}
+
+// ── DEX swap (#123) ──────────────────────────────────────────────────────
+
+/// Emitted when a simulated DEX swap is recorded for an escrow.
+pub fn emit_dex_swap(
+    env: &Env,
+    escrow_id: u64,
+    token_in: &Address,
+    token_out: &Address,
+    amount_in: i128,
+) {
+    env.events().publish(
+        (ev::DEX_SWAP, escrow_id),
+        (token_in.clone(), token_out.clone(), amount_in),
     );
 }

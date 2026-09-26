@@ -128,16 +128,6 @@ function _getAdaptiveFactor() {
   return 1.0;
 }
 
-function sendRateLimitExceeded(res, { message, code = 'RATE_LIMIT_EXCEEDED', reason } = {}) {
-  return res.status(429).json({
-    error: {
-      code,
-      message,
-      ...(reason ? { reason } : {}),
-    },
-  });
-}
-
 // ── Public store accessors (backwards compat + testing) ───────────────────────
 
 /** Returns the shared SlidingWindowStore instance. Useful for tests / inspection. */
@@ -210,7 +200,9 @@ export function createSlidingWindowRateLimiter({
         res.set('Retry-After', String(Math.ceil(burstWindowMs / 1000)));
         res.set('X-RateLimit-Limit', String(effectiveMax));
         res.set('X-RateLimit-Remaining', '0');
-        return sendRateLimitExceeded(res, { message, reason: 'burst' });
+        return res
+          .status(429)
+          .json({ error: message, code: 'RATE_LIMIT_EXCEEDED', reason: 'burst' });
       }
       slidingStore.record(burstKey, burstWindowMs, now);
     }
@@ -227,7 +219,7 @@ export function createSlidingWindowRateLimiter({
       const retryAfterMs = oldest ? oldest + windowMs - now : windowMs;
       res.set('Retry-After', String(Math.max(1, Math.ceil(retryAfterMs / 1000))));
       res.set('X-RateLimit-Remaining', '0');
-      return sendRateLimitExceeded(res, { message });
+      return res.status(429).json({ error: message, code: 'RATE_LIMIT_EXCEEDED' });
     }
 
     slidingStore.record(key, windowMs, now);
@@ -254,44 +246,23 @@ export function createPerUserRateLimiter({
   message = 'Too many requests, please try again later.',
   max: maxOverride,
   adaptive = false,
-  enforceIp = false,
 } = {}) {
-  const getUserIdentity = (req) =>
-    req.user?.id ?? req.user?.userId ?? req.user?.address ?? req.headers['x-user-id'];
-
-  const userKeyGenerator = (req) => {
-    const userIdentity = getUserIdentity(req);
-    if (userIdentity) return prefix + ':user:' + userIdentity;
-    return prefix + ':ip:' + (req.ip || 'unknown');
+  const keyGenerator = (req) => {
+    if (req.user?.id) return `${prefix}:user:${req.user.id}`;
+    if (req.headers['x-user-id']) return `${prefix}:user:${req.headers['x-user-id']}`;
+    return `${prefix}:ip:${req.ip || 'unknown'}`;
   };
 
   // Static limiter (fixed max, no burst) — used mainly for testing
   if (maxOverride !== undefined) {
-    return (req, res, next) => {
-      const userLimiter = createSlidingWindowRateLimiter({
-        windowMs: RATE_LIMIT_WINDOW_MS,
-        max: maxOverride,
-        prefix,
-        message,
-        keyGenerator: userKeyGenerator,
-        adaptive,
-      });
-      if (!enforceIp || !getUserIdentity(req)) return userLimiter(req, res, next);
-
-      const ipLimiter = createSlidingWindowRateLimiter({
-        windowMs: RATE_LIMIT_WINDOW_MS,
-        max: maxOverride,
-        prefix: `${prefix}:ip`,
-        message,
-        keyGenerator: (request) => `${prefix}:ip:${request.ip || 'unknown'}`,
-        adaptive,
-      });
-
-      return ipLimiter(req, res, (err) => {
-        if (err) return next(err);
-        return userLimiter(req, res, next);
-      });
-    };
+    return createSlidingWindowRateLimiter({
+      windowMs: RATE_LIMIT_WINDOW_MS,
+      max: maxOverride,
+      prefix,
+      message,
+      keyGenerator,
+      adaptive,
+    });
   }
 
   // Dynamic — resolve tier limits on each request
@@ -300,31 +271,15 @@ export function createPerUserRateLimiter({
     const max = getLimitForTier(tier);
     const burstMax = getBurstLimitForTier(tier);
 
-    const userLimiter = createSlidingWindowRateLimiter({
+    createSlidingWindowRateLimiter({
       windowMs: RATE_LIMIT_WINDOW_MS,
       max,
       burstMax,
       prefix,
       message,
-      keyGenerator: userKeyGenerator,
+      keyGenerator,
       adaptive,
-    });
-    if (!enforceIp || !getUserIdentity(req)) return userLimiter(req, res, next);
-
-    const ipLimiter = createSlidingWindowRateLimiter({
-      windowMs: RATE_LIMIT_WINDOW_MS,
-      max,
-      burstMax,
-      prefix: `${prefix}:ip`,
-      message,
-      keyGenerator: (request) => `${prefix}:ip:${request.ip || 'unknown'}`,
-      adaptive,
-    });
-
-    return ipLimiter(req, res, (err) => {
-      if (err) return next(err);
-      return userLimiter(req, res, next);
-    });
+    })(req, res, next);
   };
 }
 
