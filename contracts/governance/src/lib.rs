@@ -1254,6 +1254,15 @@ impl GovernanceContract {
         arbitrators::get_panel(&env, dispute_id)
     }
 
+    pub fn get_arbitrator_count(env: Env) -> u32 {
+        arbitrators::get_registry(&env).len()
+    }
+
+    pub fn get_governance_timing_params(env: Env) -> Result<(u64, u64), GovError> {
+        let config = Storage::config(&env)?;
+        Ok((config.voting_period, config.voting_delay))
+    }
+
     /// Returns whether `address` is in the selection registry.
     pub fn is_in_registry(env: Env, address: Address) -> bool {
         arbitrators::registry_contains(&env, &address)
