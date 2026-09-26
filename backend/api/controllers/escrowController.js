@@ -11,7 +11,7 @@
 import prisma from '../../lib/prisma.js';
 import cache from '../../lib/cache.js';
 import { buildPaginatedResponse, parsePagination } from '../../lib/pagination.js';
-import { logControllerError } from '../../config/logger.js';
+import { logControllerError, logger } from '../../config/logger.js';
 import { submitTransaction } from '../../services/stellarService.js';
 import { xdr, scValToNative } from '@stellar/stellar-sdk';
 import {
@@ -41,16 +41,22 @@ const VALID_ESCROW_STATUSES = new Set(['Active', 'Completed', 'Disputed', 'Cance
 /** Invalidate all cache entries for a specific escrow and the list collection. */
 async function invalidateEscrowCache(id) {
   await cache.invalidateTags(['escrows', `escrow:${id}`]);
-  console.log(`[Cache] Invalidated escrow:${id} + escrows collection`);
+  logger.info({ action: 'invalidate_escrow_cache', escrowId: String(id), message: `Invalidated escrow:${id} + escrows collection` });
 }
 
-/** Log cache hit/miss metrics to console for monitoring. */
+/** Log cache hit/miss metrics via structured logger for monitoring. */
 function logCacheMetrics() {
   const m = cache.analytics();
-  console.log(
-    `[Cache] backend=${m.backend} hits=${m.hits} misses=${m.misses} ` +
-      `hitRate=${m.hitRate} sets=${m.sets} invalidations=${m.invalidations}`,
-  );
+  logger.info({
+    action: 'cache_metrics',
+    message: 'Cache analytics snapshot',
+    backend: m.backend,
+    hits: m.hits,
+    misses: m.misses,
+    hitRate: m.hitRate,
+    sets: m.sets,
+    invalidations: m.invalidations,
+  });
 }
 
 /** Triggered after any escrow status transition to evict stale cache entries. */
@@ -59,7 +65,7 @@ async function onEscrowStatusChange(id) {
     await invalidateEscrowCache(id);
     logCacheMetrics();
   } catch (err) {
-    console.error('[Cache] invalidateEscrowCache failed:', err.message);
+    logger.error({ action: 'invalidate_escrow_cache', escrowId: String(id), message: 'invalidateEscrowCache failed', error: err.message });
   }
 }
 
@@ -133,9 +139,11 @@ const listEscrows = async (req, res) => {
       prisma.escrow.count({ where }),
     ]);
 
+    logger.info({ action: 'list_escrows', escrowId: null, userId: req.user?.id, message: 'Escrows listed successfully', resultCount: total });
     res.json(buildPaginatedResponse(data, { total, page, limit }));
   } catch (err) {
     logControllerError('escrow.listEscrows', err, req);
+    logger.error({ action: 'list_escrows', userId: req.user?.id, escrowId: null, message: 'listEscrows failed', error: err.message });
     res.status(500).json({ error: err.message });
   }
 };
@@ -175,13 +183,19 @@ const getEscrow = async (req, res) => {
       },
     });
 
-    if (!escrow) return res.status(404).json({ error: 'Escrow not found' });
+    if (!escrow) {
+      logger.warn({ action: 'get_escrow', escrowId: String(id), userId: req.user?.id, message: 'Escrow not found' });
+      return res.status(404).json({ error: 'Escrow not found' });
+    }
+    logger.info({ action: 'get_escrow', escrowId: String(id), userId: req.user?.id, message: 'Escrow fetched successfully' });
     res.json(escrow);
   } catch (err) {
     if (err.message?.includes('Cannot convert')) {
+      logger.warn({ action: 'get_escrow', escrowId: req.params.id, userId: req.user?.id, message: 'Invalid escrow id' });
       return res.status(400).json({ error: 'Invalid escrow id' });
     }
     logControllerError('escrow.getEscrow', err, req);
+    logger.error({ action: 'get_escrow', escrowId: req.params.id, userId: req.user?.id, message: 'getEscrow failed', error: err.message });
     res.status(500).json({ error: err.message });
   }
 };
@@ -190,12 +204,14 @@ const broadcastCreateEscrow = async (req, res) => {
   try {
     const { signedXdr } = req.body;
     if (!signedXdr || typeof signedXdr !== 'string') {
+      logger.warn({ action: 'create_escrow', escrowId: null, userId: req.user?.id, message: 'signedXdr is required' });
       return res.status(400).json({ error: 'signedXdr is required' });
     }
 
     const result = await submitTransaction(signedXdr);
 
     if (result.status !== 'SUCCESS') {
+      logger.warn({ action: 'create_escrow', escrowId: null, userId: req.user?.id, message: 'Transaction failed', sorobanStatus: result.status });
       return res.status(422).json({
         error: 'Transaction failed',
         sorobanStatus: result.status,
@@ -235,9 +251,11 @@ const broadcastCreateEscrow = async (req, res) => {
       });
     }
 
+    logger.info({ action: 'create_escrow', escrowId: escrowId ? String(escrowId) : null, userId: req.user?.id, message: 'Escrow broadcast successful', txHash: result.hash });
     return res.status(200).json({ hash: result.hash, escrowId: escrowId ? String(escrowId) : null });
   } catch (err) {
     logControllerError('escrow.broadcastCreateEscrow', err, req);
+    logger.error({ action: 'create_escrow', escrowId: null, userId: req.user?.id, message: 'broadcastCreateEscrow failed', error: err.message });
     res.status(500).json({ error: err.message });
   }
 };
@@ -266,12 +284,15 @@ const getMilestones = async (req, res) => {
       prisma.milestone.count({ where: { escrowId } }),
     ]);
 
+    logger.info({ action: 'get_milestones', escrowId: String(escrowId), userId: req.user?.id, message: 'Milestones fetched successfully' });
     res.json(buildPaginatedResponse(data, { total, page, limit }));
   } catch (err) {
     if (err.message?.includes('Cannot convert')) {
+      logger.warn({ action: 'get_milestones', escrowId: req.params.id, userId: req.user?.id, message: 'Invalid escrow id' });
       return res.status(400).json({ error: 'Invalid escrow id' });
     }
     logControllerError('escrow.getMilestones', err, req);
+    logger.error({ action: 'get_milestones', escrowId: req.params.id, userId: req.user?.id, message: 'getMilestones failed', error: err.message });
     res.status(500).json({ error: err.message });
   }
 };
@@ -295,10 +316,15 @@ const getMilestone = async (req, res) => {
       },
     });
 
-    if (!milestone) return res.status(404).json({ error: 'Milestone not found' });
+    if (!milestone) {
+      logger.warn({ action: 'get_milestone', escrowId: String(escrowId), userId: req.user?.id, message: 'Milestone not found', milestoneIndex });
+      return res.status(404).json({ error: 'Milestone not found' });
+    }
+    logger.info({ action: 'get_milestone', escrowId: String(escrowId), userId: req.user?.id, message: 'Milestone fetched successfully', milestoneIndex });
     res.json(milestone);
   } catch (err) {
     logControllerError('escrow.getMilestone', err, req);
+    logger.error({ action: 'get_milestone', escrowId: req.params.id, userId: req.user?.id, message: 'getMilestone failed', error: err.message });
     res.status(500).json({ error: err.message });
   }
 };
@@ -316,7 +342,7 @@ async function getCachedStats(cacheKey, dbQuery) {
     // Try to get from cache
     const cached = await cache.get(cacheKey);
     if (cached !== null && cached !== undefined) {
-      console.log(`[Cache] Stats hit: ${cacheKey}`);
+      logger.info({ action: 'cache_stats_hit', escrowId: null, userId: null, message: `Stats cache hit: ${cacheKey}` });
       return JSON.parse(cached);
     }
 
@@ -326,14 +352,14 @@ async function getCachedStats(cacheKey, dbQuery) {
     // Try to set cache (ignore errors if Redis is down)
     try {
       await cache.set(cacheKey, JSON.stringify(result), STATS_CACHE_TTL);
-      console.log(`[Cache] Stats cached: ${cacheKey}`);
+      logger.info({ action: 'cache_stats_set', escrowId: null, userId: null, message: `Stats cached: ${cacheKey}` });
     } catch (cacheErr) {
-      console.warn(`[Cache] Failed to cache ${cacheKey}:`, cacheErr.message);
+      logger.warn({ action: 'cache_stats_set', escrowId: null, userId: null, message: `Failed to cache ${cacheKey}`, error: cacheErr.message });
     }
 
     return result;
   } catch (err) {
-    console.warn(`[Cache] Error getting stats ${cacheKey}:`, err.message);
+    logger.warn({ action: 'cache_stats_get', escrowId: null, userId: null, message: `Error getting stats ${cacheKey}`, error: err.message });
     // Fall back to direct DB query if caching fails completely
     return dbQuery();
   }
@@ -350,7 +376,7 @@ async function invalidateStatsCaches() {
   invalidationInProgress = true;
   try {
     await cache.invalidateTags(['stats:volume', 'stats:active', 'stats:success']);
-    console.log('[Cache] Invalidated stats caches');
+    logger.info({ action: 'invalidate_stats_caches', escrowId: null, userId: null, message: 'Invalidated stats caches' });
   } finally {
     invalidationInProgress = false;
   }
@@ -366,9 +392,11 @@ const getTotalVolume = async (req, res) => {
         totalVolume: result._sum.totalAmount || 0,
       };
     });
+    logger.info({ action: 'get_total_volume', escrowId: null, userId: req.user?.id, message: 'Total volume fetched' });
     res.json(stats);
   } catch (err) {
     logControllerError('escrow.getTotalVolume', err, req);
+    logger.error({ action: 'get_total_volume', escrowId: null, userId: req.user?.id, message: 'getTotalVolume failed', error: err.message });
     res.status(500).json({ error: err.message });
   }
 };
@@ -383,9 +411,11 @@ const getActiveEscrows = async (req, res) => {
         activeEscrowCount: count,
       };
     });
+    logger.info({ action: 'get_active_escrows', escrowId: null, userId: req.user?.id, message: 'Active escrows count fetched' });
     res.json(stats);
   } catch (err) {
     logControllerError('escrow.getActiveEscrows', err, req);
+    logger.error({ action: 'get_active_escrows', escrowId: null, userId: req.user?.id, message: 'getActiveEscrows failed', error: err.message });
     res.status(500).json({ error: err.message });
   }
 };
@@ -404,9 +434,11 @@ const getSuccessRate = async (req, res) => {
         successRate: parseFloat(successRate.toFixed(2)),
       };
     });
+    logger.info({ action: 'get_success_rate', escrowId: null, userId: req.user?.id, message: 'Success rate fetched' });
     res.json(stats);
   } catch (err) {
     logControllerError('escrow.getSuccessRate', err, req);
+    logger.error({ action: 'get_success_rate', escrowId: null, userId: req.user?.id, message: 'getSuccessRate failed', error: err.message });
     res.status(500).json({ error: err.message });
   }
 };
@@ -510,9 +542,11 @@ const searchEscrowsV1 = async (req, res) => {
       prisma.escrow.count({ where }),
     ]);
 
+    logger.info({ action: 'search_escrows', escrowId: null, userId: req.user?.id, message: 'Escrow search executed', resultCount: total });
     res.json(buildPaginatedResponse(data, { total, page, limit }));
   } catch (err) {
     logControllerError('escrow.searchEscrowsV1', err, req);
+    logger.error({ action: 'search_escrows', escrowId: null, userId: req.user?.id, message: 'searchEscrowsV1 failed', error: err.message });
     res.status(500).json({ error: err.message });
   }
 };
