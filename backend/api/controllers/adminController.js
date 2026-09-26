@@ -500,6 +500,83 @@ const updateSettings = async (req, res) => {
   }
 };
 
+// ── Escrow Volume Metrics ──────────────────────────────────────────────────────
+
+/**
+ * GET /api/admin/metrics/escrow-volume
+ *
+ * Returns daily escrow creation counts and total amounts for a given date
+ * range, enabling volume trend analysis on the admin dashboard.
+ *
+ * @query {string} [from] - ISO date string for range start (default: 30 days ago)
+ * @query {string} [to]   - ISO date string for range end (default: today)
+ * @returns {Array<{ date: string, count: number, totalAmount: number }>}
+ */
+const escrowVolume = async (req, res) => {
+  try {
+    const now = new Date();
+    const defaultFrom = new Date(now);
+    defaultFrom.setDate(defaultFrom.getDate() - 30);
+
+    const fromParam = req.query.from;
+    const toParam = req.query.to;
+
+    const from = fromParam ? new Date(fromParam) : defaultFrom;
+    const to = toParam ? new Date(toParam) : now;
+
+    if (isNaN(from.getTime())) {
+      return res.status(400).json({ error: 'Invalid "from" date. Must be an ISO date string.' });
+    }
+    if (isNaN(to.getTime())) {
+      return res.status(400).json({ error: 'Invalid "to" date. Must be an ISO date string.' });
+    }
+    if (from > to) {
+      return res.status(400).json({ error: '"from" date must not be after "to" date.' });
+    }
+
+    const cacheKey = `admin:metrics:escrow-volume:${from.toISOString()}:${to.toISOString()}`;
+    const cached = await cache.get(cacheKey);
+    if (cached) return res.json(cached);
+
+    // Fetch all escrows in the date range and bucket them by day in application
+    // code. Prisma's groupBy does not support date-part extraction natively, so
+    // we pull the lightweight createdAt + totalAmount projection and aggregate
+    // ourselves — still a single indexed query.
+    const escrows = await prisma.escrow.findMany({
+      where: {
+        createdAt: { gte: from, lte: to },
+      },
+      select: {
+        createdAt: true,
+        totalAmount: true,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    // Group by YYYY-MM-DD
+    const buckets = new Map();
+    for (const escrow of escrows) {
+      const date = escrow.createdAt.toISOString().slice(0, 10);
+      if (!buckets.has(date)) {
+        buckets.set(date, { date, count: 0, totalAmount: 0 });
+      }
+      const bucket = buckets.get(date);
+      bucket.count += 1;
+      // totalAmount is stored as a string (BigInt-as-string); parse safely
+      bucket.totalAmount += Number(escrow.totalAmount ?? 0);
+    }
+
+    const result = Array.from(buckets.values());
+
+    // Cache for 5 minutes (300 seconds)
+    await cache.set(cacheKey, result, 300);
+    res.json(result);
+  } catch (err) {
+    logControllerError('admin.escrowVolume', err, req);
+    res.status(500).json({ error: err.message });
+  }
+};
+
 export default {
   listUsers,
   getUserDetail,
@@ -514,4 +591,5 @@ export default {
   getRateLimits,
   updateRateLimit,
   getUserRateLimitUsage,
+  escrowVolume,
 };

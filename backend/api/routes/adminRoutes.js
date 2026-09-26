@@ -217,6 +217,17 @@ router.delete('/cache', requireMfa, async (req, res) => {
   }
 });
 
+// ── Metrics ───────────────────────────────────────────────────────────────────
+
+/**
+ * @route  GET /api/admin/metrics/escrow-volume
+ * @desc   Daily escrow creation counts and total amounts for a date range.
+ *         Defaults to the last 30 days when `from`/`to` are omitted.
+ * @query  from  ISO date string for range start
+ * @query  to    ISO date string for range end
+ */
+router.get('/metrics/escrow-volume', adminController.escrowVolume);
+
 // ── Escrow Archival (scheduled job management) ────────────────────────────────
 
 /**
