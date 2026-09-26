@@ -18,6 +18,13 @@ const captureRawBody = (req, _res, next) => {
     req.rawBody = data;
     next();
   });
+  req.on('error', (err) => {
+    const error = new Error(`Failed to read KYC webhook request body: ${err.message}`, {
+      cause: err,
+    });
+    error.status = 400;
+    next(error);
+  });
 };
 
 /**
