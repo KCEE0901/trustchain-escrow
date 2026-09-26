@@ -5430,6 +5430,13 @@ impl EscrowContract {
         ContractStorage::load_escrow(&env, escrow_id)
     }
 
+    pub fn escrow_exists(env: Env, escrow_id: u64) -> bool {
+        env.storage()
+            .persistent()
+            .has(&PackedDataKey::EscrowMeta(escrow_id))
+            || env.storage().persistent().has(&DataKey::Escrow(escrow_id))
+    }
+
     /// O(1) lightweight view — returns only the escrow header without loading milestones.
     /// Suitable for monitoring dashboards that only need status, balances, and party info.
     pub fn get_escrow_meta(env: Env, escrow_id: u64) -> Result<EscrowMeta, EscrowError> {
