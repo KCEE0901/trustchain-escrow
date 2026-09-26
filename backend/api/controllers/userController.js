@@ -250,4 +250,57 @@ const uploadAvatar = async (req, res) => {
   }
 };
 
-export default { getUserProfile, getUserEscrows, getUserStats, updateUserProfile, uploadAvatar };
+/**
+ * PATCH /api/v1/users/me/profile
+ *
+ * Update the authenticated user's display name and/or avatar URL.
+ * Only the fields present in the request body are updated (PATCH semantics).
+ *
+ * Request body (all fields optional, at least one required):
+ *   displayName — string, max 50 chars
+ *   avatarUrl   — valid http/https URL
+ *
+ * Returns the updated UserProfile record.
+ */
+const updateMyProfile = async (req, res) => {
+  try {
+    const address = req.user?.address;
+    if (!address) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    const { displayName, avatarUrl } = req.body;
+
+    // Require at least one field
+    if (displayName === undefined && avatarUrl === undefined) {
+      return res.status(400).json({
+        error: 'Validation failed',
+        details: [{ field: 'body', message: 'At least one of displayName or avatarUrl must be provided' }],
+      });
+    }
+
+    // Build the partial update — only include fields that were explicitly provided
+    const updateData = {};
+    if (displayName !== undefined) updateData.displayName = displayName;
+    if (avatarUrl !== undefined) updateData.avatarUrl = avatarUrl;
+
+    const updatedProfile = await prisma.userProfile.upsert({
+      where: { address },
+      update: updateData,
+      create: {
+        address,
+        ...updateData,
+      },
+    });
+
+    // Evict the profile cache so subsequent reads reflect the new values
+    await cache.del(`users:profile:${address}`);
+
+    res.json(updatedProfile);
+  } catch (err) {
+    logControllerError('users.updateMyProfile', err, req);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+export default { getUserProfile, getUserEscrows, getUserStats, updateUserProfile, uploadAvatar, updateMyProfile };

@@ -138,3 +138,32 @@ export const webhookSubscribeRules = [
     .withMessage('eventTypes must be a non-empty array with at most 20 entries'),
   body('eventTypes.*').isString().withMessage('each eventType must be a string'),
 ];
+
+// ── User Profile Update schema ────────────────────────────────────────────────
+
+/**
+ * PATCH /api/v1/users/me/profile — request body
+ *
+ * | Field       | Required | Type   | Rules                              |
+ * |-------------|----------|--------|------------------------------------|
+ * | displayName | no       | string | max 50 chars                       |
+ * | avatarUrl   | no       | string | valid URL (http or https)          |
+ *
+ * At least one field must be present (enforced in controller).
+ * Both fields are optional so consumers can update either independently.
+ */
+export const profileUpdateRules = [
+  body('displayName')
+    .optional({ values: 'undefined' })
+    .isString()
+    .withMessage('displayName must be a string')
+    .isLength({ max: 50 })
+    .withMessage('displayName must not exceed 50 characters')
+    .trim(),
+  body('avatarUrl')
+    .optional({ values: 'undefined' })
+    .isString()
+    .withMessage('avatarUrl must be a string')
+    .isURL({ protocols: ['http', 'https'], require_protocol: true })
+    .withMessage('avatarUrl must be a valid URL'),
+];

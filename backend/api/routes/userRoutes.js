@@ -4,6 +4,7 @@ import {
   stellarAddressParam,
   paginationQuery,
   handleValidationErrors,
+  profileUpdateRules,
 } from '../../middleware/validation.js';
 import exportController from '../controllers/exportController.js';
 import authMiddleware from '../middleware/auth.js';
@@ -16,6 +17,7 @@ router.use(optionalAdminAuth, authMiddleware);
 
 const validateAddress = [stellarAddressParam('address'), handleValidationErrors];
 const validatePagination = [...paginationQuery, handleValidationErrors];
+const validateProfileUpdate = [...profileUpdateRules, handleValidationErrors];
 const exportRateLimit = createSlidingWindowRateLimiter({
   windowMs: 60 * 60 * 1000,
   max: 3,
@@ -23,6 +25,18 @@ const exportRateLimit = createSlidingWindowRateLimiter({
   message: 'Too many export requests for this address. Please try again later.',
   keyGenerator: (req) => `data-export:address:${req.params?.address || 'unknown'}`,
 });
+
+/**
+ * @route  PATCH /api/v1/users/me/profile
+ * @desc   Update the authenticated user's display name and/or avatar URL.
+ *         Partial update — only provided fields are changed; omitted fields are preserved.
+ * @body   { displayName?: string (max 50 chars), avatarUrl?: string (valid URL) }
+ * @returns Updated UserProfile object
+ *
+ * NOTE: This route must be declared before /:address to prevent 'me' being
+ *       treated as a Stellar address parameter.
+ */
+router.patch('/me/profile', validateProfileUpdate, userController.updateMyProfile);
 
 router.get('/:address', validateAddress, userController.getUserProfile);
 router.get('/:address/escrows', validateAddress, validatePagination, userController.getUserEscrows);
