@@ -55,6 +55,7 @@
 mod admin_transfer_tests;
 mod amount_limits_tests;
 mod arbiter_allowlist;
+mod formal_verification;
 mod arbiter_allowlist_tests;
 mod arbiter_reputation_tests;
 mod arbiter_validation_tests;
@@ -90,6 +91,7 @@ mod oracle_tests;
 mod partial_cancel_tests;
 mod pause_tests;
 mod platform_fee;
+mod fuzz_tests;
 mod property_invariant_tests;
 mod reentrancy_guard_tests;
 mod self_escrow_tests;
