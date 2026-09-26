@@ -8,6 +8,7 @@
  */
 
 import express from 'express';
+import { parsePagination } from '../../lib/pagination.js';
 import {
   stellarEventsQueue,
   deadLetterQueue,
@@ -94,26 +95,27 @@ router.get('/stats', async (req, res) => {
  */
 router.get('/jobs', async (req, res) => {
   try {
-    const { state = 'waiting', limit = 50, offset = 0, queue = 'main' } = req.query;
+    const { state = 'waiting', offset = 0, queue = 'main' } = req.query;
+    const { limit } = parsePagination({ limit: 50, ...req.query });
 
     const targetQueue = queue === 'dead-letter' ? deadLetterQueue : stellarEventsQueue;
 
     let jobs;
     switch (state) {
       case 'waiting':
-        jobs = await targetQueue.getWaiting(0, parseInt(limit));
+        jobs = await targetQueue.getWaiting(0, limit);
         break;
       case 'active':
         jobs = await targetQueue.getActive();
         break;
       case 'completed':
-        jobs = await targetQueue.getCompleted(0, parseInt(limit));
+        jobs = await targetQueue.getCompleted(0, limit);
         break;
       case 'failed':
-        jobs = await targetQueue.getFailed(0, parseInt(limit));
+        jobs = await targetQueue.getFailed(0, limit);
         break;
       default:
-        jobs = await targetQueue.getWaiting(0, parseInt(limit));
+        jobs = await targetQueue.getWaiting(0, limit);
     }
 
     const jobDetails = await Promise.all(
@@ -137,7 +139,7 @@ router.get('/jobs', async (req, res) => {
     res.json({
       jobs: jobDetails,
       pagination: {
-        limit: parseInt(limit),
+        limit,
         offset: parseInt(offset),
         total: jobDetails.length,
       },

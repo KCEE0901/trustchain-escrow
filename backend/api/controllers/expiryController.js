@@ -6,6 +6,7 @@
  */
 
 import { logControllerError } from '../../config/logger.js';
+import { parsePagination } from '../../lib/pagination.js';
 import {
   processExpiredEscrows,
   getExpiryStatus,
@@ -59,9 +60,7 @@ const triggerRun = async (req, res) => {
  */
 const listPendingExpirations = async (req, res) => {
   try {
-    const page = Math.max(1, parseInt(req.query.page || '1', 10));
-    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || '20', 10)));
-    const skip = (page - 1) * limit;
+    const { page, limit, skip } = parsePagination(req.query);
 
     const now = new Date();
     const [data, total] = await prisma.$transaction([
