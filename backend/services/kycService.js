@@ -90,6 +90,81 @@ async function listAll({ skip = 0, take = 20, status } = {}) {
   return { data, total };
 }
 
+export const KYC_PROVIDER_ACTOR = 'system:sumsub';
+const KYC_STATUSES = ['Pending', 'Init', 'Processing', 'Approved', 'Declined'];
+
+/** Append a status transition row. Skips no-op transitions. */
+async function recordTransition({
+  tenantId,
+  address,
+  actor,
+  source,
+  previousStatus,
+  newStatus,
+  reason,
+}) {
+  if (previousStatus === newStatus) return null;
+  return prisma.kycStatusTransition.create({
+    data: {
+      tenantId,
+      address,
+      actor,
+      source,
+      previousStatus: previousStatus ?? null,
+      newStatus,
+      reason: reason ?? null,
+    },
+  });
+}
+
+/** Get the status transition history for an address (oldest first). */
+async function getHistory(address) {
+  return prisma.kycStatusTransition.findMany({
+    where: { address },
+    orderBy: { createdAt: 'asc' },
+  });
+}
+
+/**
+ * Manually override the KYC status for an address (admin action).
+ * Records the transition with the admin actor and reason.
+ */
+async function overrideStatus({ address, status, actor, reason }) {
+  if (!KYC_STATUSES.includes(status)) throw new Error(`Invalid KYC status: ${status}`);
+  if (!actor) throw new Error('actor is required');
+  if (!reason) throw new Error('reason is required');
+
+  const existing = await prisma.kycVerification.findUnique({ where: { address } });
+  if (!existing) return null;
+
+  const record = await prisma.kycVerification.update({ where: { address }, data: { status } });
+
+  await recordTransition({
+    tenantId: record.tenantId,
+    address,
+    actor,
+    source: 'manual',
+    previousStatus: existing.status,
+    newStatus: status,
+    reason,
+  });
+
+  await auditService.log({
+    category: AuditCategory.KYC,
+    action:
+      status === 'Approved'
+        ? AuditAction.KYC_APPROVED
+        : status === 'Declined'
+          ? AuditAction.KYC_DECLINED
+          : AuditAction.KYC_SUBMITTED,
+    actor,
+    resourceId: address,
+    metadata: { override: true, previousStatus: existing.status, newStatus: status, reason },
+  });
+
+  return record;
+}
+
 /**
  * Process a Sumsub webhook event and update DB status.
  * Returns the updated record.
@@ -106,6 +181,8 @@ async function handleWebhook(payload) {
   const newStatus = statusMap[type];
   if (!newStatus) return null; // unhandled event type
 
+  const existing = await prisma.kycVerification.findUnique({ where: { address: externalUserId } });
+
   const record = await prisma.kycVerification.upsert({
     where: { address: externalUserId },
     update: {
@@ -121,6 +198,16 @@ async function handleWebhook(payload) {
       reviewResult: reviewResult?.reviewAnswer ?? null,
       rejectLabels: reviewResult?.rejectLabels ?? [],
     },
+  });
+
+  await recordTransition({
+    tenantId: record.tenantId,
+    address: externalUserId,
+    actor: KYC_PROVIDER_ACTOR,
+    source: 'provider',
+    previousStatus: existing?.status ?? null,
+    newStatus,
+    reason: reviewResult?.rejectLabels?.length ? reviewResult.rejectLabels.join(', ') : type,
   });
 
   const actionMap = {
@@ -153,6 +240,8 @@ export default {
   generateSdkToken,
   getStatus,
   listAll,
+  getHistory,
+  overrideStatus,
   handleWebhook,
   verifyWebhookSignature,
 };

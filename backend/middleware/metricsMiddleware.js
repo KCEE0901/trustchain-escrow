@@ -16,7 +16,7 @@ import { httpRequestDuration, httpRequestTotal, httpRequestsInFlight } from '../
  * Normalize Express route path from req.route or fall back to the raw URL
  * with common ID patterns replaced.
  */
-function normalizeRoute(req) {
+export function normalizeRoute(req) {
   // Use Express matched route if available (most accurate)
   if (req.route?.path) {
     const base = req.baseUrl || '';
