@@ -27,4 +27,8 @@ router.patch('/:id/status', incidentController.updateStatus);
 /** POST /api/incidents/:id/post-mortem — attach post-mortem */
 router.post('/:id/post-mortem', incidentController.attachPostMortem);
 
+/** POST /api/incidents/:id/link-escrows — link affected escrows to incident */
+router.post('/:id/link-escrows', incidentController.linkEscrows);
+router.post('/:id/escrows', incidentController.linkEscrows);
+
 export default router;

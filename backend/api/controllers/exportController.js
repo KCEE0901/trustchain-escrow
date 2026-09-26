@@ -193,9 +193,104 @@ const deleteUserData = async (req, res) => {
   }
 };
 
+/**
+ * Create a new background export job
+ * @route POST /api/users/:address/export/jobs
+ */
+const createExportJob = async (req, res) => {
+  try {
+    const { address } = req.params;
+    if (!address || !address.startsWith('G')) {
+      return res.status(400).json({ error: 'Invalid Stellar address format' });
+    }
+
+    if (req.user?.address !== address && !req.isAdmin) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const job = exportService.createExportJob(address, {
+      tenantId: req.tenant?.id,
+      requestedBy: req.user?.address ?? (req.isAdmin ? 'admin' : 'unknown'),
+      type: 'escrow_export',
+    });
+
+    return res.status(202).json({
+      status: 'queued',
+      message: 'Export job queued',
+      jobId: job.id,
+      job,
+    });
+  } catch (error) {
+    console.error('Create export job error:', error);
+    return res.status(500).json({ error: 'Failed to create export job' });
+  }
+};
+
+/**
+ * Get status of an export job
+ * @route GET /api/users/:address/export/jobs/:jobId
+ */
+const getExportJobStatus = async (req, res) => {
+  try {
+    const { address, jobId } = req.params;
+    const job = await exportService.getExportJob(jobId);
+    if (!job) {
+      return res.status(404).json({ error: 'Export job not found' });
+    }
+
+    if (job.address !== address && req.user?.address !== address && !req.isAdmin) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    return res.json({ job });
+  } catch (error) {
+    console.error('Get export job status error:', error);
+    return res.status(500).json({ error: 'Failed to retrieve export job' });
+  }
+};
+
+/**
+ * Cancel an export job
+ * @route POST /api/users/:address/export/jobs/:jobId/cancel
+ * @route DELETE /api/users/:address/export/jobs/:jobId
+ */
+const cancelExportJob = async (req, res) => {
+  try {
+    const { address, jobId } = req.params;
+    const existingJob = await exportService.getExportJob(jobId);
+    if (!existingJob) {
+      return res.status(404).json({ error: 'Export job not found' });
+    }
+
+    if (existingJob.address !== address && req.user?.address !== address && !req.isAdmin) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const cancelledBy = req.isAdmin ? 'admin' : (req.user?.address ?? 'user');
+    const job = await exportService.cancelExportJob(jobId, { cancelledBy });
+
+    return res.json({
+      success: true,
+      message: 'Export job cancelled successfully',
+      job,
+    });
+  } catch (error) {
+    console.error('Cancel export job error:', error);
+    const code = error.message.includes('not found')
+      ? 404
+      : error.message.includes('completed')
+        ? 409
+        : 500;
+    return res.status(code).json({ error: error.message });
+  }
+};
+
 export default {
   exportUserData,
   importUserData,
   downloadExportFile,
   deleteUserData,
+  createExportJob,
+  getExportJobStatus,
+  cancelExportJob,
 };

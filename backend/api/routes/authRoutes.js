@@ -4,6 +4,12 @@ import authMiddleware from '../middleware/auth.js';
 
 const router = express.Router();
 
+/** POST /api/auth/register — email/password user registration */
+router.post('/register', authController.register);
+
+/** POST /api/auth/login — email/password user login */
+router.post('/login', authController.login);
+
 /** POST /api/auth/nonce — request a challenge nonce */
 router.post('/nonce', authController.getNonce);
 
@@ -15,6 +21,9 @@ router.post('/refresh', authController.refreshToken);
 
 /** POST /api/auth/logout */
 router.post('/logout', authController.logout);
+
+/** POST /api/auth/revoke-all — emergency revoke all user tokens */
+router.post('/revoke-all', authMiddleware, authController.revokeAll);
 
 /** Session management */
 router.get('/sessions', authMiddleware, authController.listSessions);
