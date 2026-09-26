@@ -14,3 +14,12 @@ if (typeof global.File === 'undefined') {
     }
   };
 }
+
+// ── Mock Cleanup ───────────────────────────────────────────────────────────────
+// Prisma mock call counts and resolved values can bleed between tests when mocks
+// are not reset after each case.  `jest.clearAllMocks()` resets all spy/mock
+// call history, instances, and results without removing the implementation,
+// keeping tests isolated without needing to re-import modules on every run.
+afterEach(() => {
+  jest.clearAllMocks();
+});
