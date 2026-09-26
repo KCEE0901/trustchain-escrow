@@ -4,13 +4,15 @@
  * GET /health        — all components; 200 ok | 200 degraded | 503 error
  * GET /health/live   — liveness probe; always 200 while the process responds
  * GET /health/ready  — readiness probe; 200 when critical deps are up, 503 otherwise
+ * GET /health/detail — deep check including Elasticsearch; always 200 (degraded when ES down)
  *
  * Components checked:
- *   db        — PostgreSQL via Prisma (critical)
- *   cache     — Redis / in-memory fallback
- *   stellar   — Soroban RPC reachability
- *   email     — queue processor state
- *   websocket — active connection pool metrics
+ *   db            — PostgreSQL via Prisma (critical)
+ *   cache         — Redis / in-memory fallback
+ *   stellar       — Soroban RPC reachability
+ *   email         — queue processor state
+ *   websocket     — active connection pool metrics
+ *   elasticsearch — ES connectivity check (deep endpoint only; degraded ≠ error)
  */
 import { Router } from 'express';
 import { SorobanRpc } from '@stellar/stellar-sdk';
@@ -19,6 +21,7 @@ import prisma from '../../lib/prisma.js';
 import cache from '../../lib/cache.js';
 import { pool } from '../websocket/handlers.js';
 import { getQueueSnapshot } from '../../services/emailService.js';
+import searchService from '../../services/searchService.js';
 
 const RPC_URL = process.env.SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org';
 const STELLAR_TIMEOUT_MS = parseInt(process.env.HEALTH_STELLAR_TIMEOUT_MS || '5000', 10);
@@ -100,6 +103,18 @@ function checkWebSocket() {
   } catch (err) {
     return { status: 'error', error: err.message };
   }
+}
+
+/**
+ * Check Elasticsearch connectivity via the searchService ping.
+ *
+ * Returns 'ok' or 'degraded' (never 'error') because the app operates
+ * fully without ES thanks to the Prisma search fallback.
+ *
+ * @returns {Promise<{ status: 'ok'|'degraded', latencyMs: number, error?: string }>}
+ */
+async function checkElasticsearch() {
+  return searchService.ping();
 }
 
 // ── Aggregation ───────────────────────────────────────────────────────────────
@@ -211,6 +226,70 @@ router.get('/ready', async (_req, res) => {
   res.status(status === 'error' ? 503 : 200).json({
     status,
     timestamp: new Date().toISOString(),
+    components,
+  });
+});
+
+/**
+ * @openapi
+ * /health/detail:
+ *   get:
+ *     tags: [Health]
+ *     summary: Deep health check including Elasticsearch
+ *     description: >
+ *       Extends the standard health check with an Elasticsearch connectivity
+ *       probe. The response is always HTTP 200 — even when ES is unreachable —
+ *       because the application falls back to Prisma for search operations.
+ *       The elasticsearch.status field will be "degraded" when ES is down.
+ *     responses:
+ *       200:
+ *         description: Deep health result (ok or degraded; never 503 for ES failure)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/HealthResponse'
+ *                 - type: object
+ *                   properties:
+ *                     components:
+ *                       type: object
+ *                       properties:
+ *                         elasticsearch:
+ *                           type: object
+ *                           properties:
+ *                             status:
+ *                               type: string
+ *                               enum: [ok, degraded]
+ *                             latencyMs:
+ *                               type: number
+ *                               description: Round-trip time in milliseconds (positive when ES is healthy)
+ *                             error:
+ *                               type: string
+ *                               description: Present only when status is degraded
+ */
+router.get('/detail', async (_req, res) => {
+  const [db, cacheResult, stellar, email, elasticsearch] = await Promise.all([
+    checkDatabase(),
+    checkCache(),
+    checkStellar(),
+    checkEmail(),
+    checkElasticsearch(),
+  ]);
+  const websocket = checkWebSocket();
+
+  const components = { db, cache: cacheResult, stellar, email, websocket, elasticsearch };
+
+  // Elasticsearch degraded/down must not cause an overall 'error' status —
+  // the Prisma fallback keeps search functional.
+  const coreComponents = { db, cache: cacheResult, stellar, email, websocket };
+  const coreStatus = aggregateStatus(coreComponents);
+  const esStatus = elasticsearch.status === 'degraded' ? 'degraded' : 'ok';
+  const overallStatus = coreStatus === 'error' ? 'error' : (coreStatus === 'degraded' || esStatus === 'degraded' ? 'degraded' : 'ok');
+
+  // Always return 200 for /health/detail (ES failure is degraded, not critical)
+  res.status(overallStatus === 'error' ? 503 : 200).json({
+    status: overallStatus,
+    ...basePayload(),
     components,
   });
 });

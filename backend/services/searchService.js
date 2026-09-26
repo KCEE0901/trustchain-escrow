@@ -5,7 +5,26 @@
  * unavailable by querying Prisma directly.
  */
 
+import { Client } from '@elastic/elasticsearch';
 import { listArchiveTables } from './escrowArchiveService.js';
+
+// ── Elasticsearch client (lazy, singleton) ────────────────────────────────────
+
+let _esClient = null;
+
+function getEsClient() {
+  if (_esClient) return _esClient;
+  const url = process.env.ELASTICSEARCH_URL;
+  if (!url) return null;
+  _esClient = new Client({
+    node: url,
+    ...(process.env.ELASTICSEARCH_API_KEY && {
+      auth: { apiKey: process.env.ELASTICSEARCH_API_KEY },
+    }),
+    requestTimeout: 5000,
+  });
+  return _esClient;
+}
 
 const analytics = {
   totalSearches: 0,
@@ -213,4 +232,35 @@ async function reindex(prismaClient) {
   return { indexed: total };
 }
 
-export default { search, suggest, getAnalytics, reindex };
+/**
+ * Ping Elasticsearch and return a connectivity result.
+ *
+ * The ping is raced against a 2-second timeout. If ES is unconfigured or
+ * unreachable the result status is 'degraded' (not 'down') because the
+ * service has a Prisma fallback and remains fully operational.
+ *
+ * @returns {Promise<{ status: 'ok'|'degraded', latencyMs: number, error?: string }>}
+ */
+async function ping() {
+  const ES_PING_TIMEOUT_MS = 2000;
+  const t0 = Date.now();
+
+  const client = getEsClient();
+  if (!client) {
+    return { status: 'degraded', latencyMs: 0, error: 'ELASTICSEARCH_URL not configured' };
+  }
+
+  try {
+    await Promise.race([
+      client.ping(),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('ES ping timed out')), ES_PING_TIMEOUT_MS),
+      ),
+    ]);
+    return { status: 'ok', latencyMs: Date.now() - t0 };
+  } catch (err) {
+    return { status: 'degraded', latencyMs: Date.now() - t0, error: err.message };
+  }
+}
+
+export default { search, suggest, getAnalytics, reindex, ping };
