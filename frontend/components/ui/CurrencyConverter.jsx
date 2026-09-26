@@ -18,6 +18,16 @@ function formatAmount(value, asset) {
   });
 }
 
+export function convertCurrencyAmount(amount, price) {
+  const parsed = Number(amount);
+  if (!Number.isFinite(parsed) || !Number.isFinite(price) || price <= 0) return '';
+  return parsed * price;
+}
+
+export function isSupportedCurrency(asset) {
+  return ALL_ASSETS.includes(asset);
+}
+
 async function fetchCoingeckoPrice(asset, fiat) {
   const cacheKey = `${asset}-${fiat}`;
   const cached = marketCache.get(cacheKey);
@@ -129,12 +139,12 @@ export default function CurrencyConverter({ className = '' }) {
 
   useEffect(() => {
     if (!priceInfo?.price) return;
-    const amount = parseFloat(fromValue);
-    if (Number.isNaN(amount)) {
+    const converted = convertCurrencyAmount(fromValue, priceInfo.price);
+    if (converted === '') {
       setToValue('');
       return;
     }
-    setToValue(formatAmount(amount * priceInfo.price, toAsset));
+    setToValue(formatAmount(converted, toAsset));
   }, [fromValue, priceInfo, toAsset]);
 
   const handleToChange = (value) => {

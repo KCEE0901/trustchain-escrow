@@ -91,6 +91,21 @@ describe('Webhook Service and Worker', () => {
     );
   });
 
+  it('deletes a webhook subscription owned by the requester', async () => {
+    prismaMock.webhookSubscription.deleteMany.mockResolvedValue({ count: 1 });
+
+    const { default: webhookService } = await import('../services/webhookService.js');
+    const deleted = await webhookService.deleteSubscription({
+      id: 'sub_1',
+      createdBy: 'GABC',
+    });
+
+    expect(deleted).toBe(true);
+    expect(prismaMock.webhookSubscription.deleteMany).toHaveBeenCalledWith({
+      where: { id: 'sub_1', createdBy: 'GABC' },
+    });
+  });
+
   it('processWebhookJob records successful deliveries', async () => {
     global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200, text: jest.fn() });
     prismaMock.webhookDelivery.update.mockResolvedValue({});

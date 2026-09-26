@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 
 const HORIZON_URL = process.env.NEXT_PUBLIC_HORIZON_URL || 'https://horizon-testnet.stellar.org';
+const LEDGER_PAGE_SIZE = 20;
 
 const OPERATION_ICONS = {
   escrow_creation: FileText,
@@ -135,7 +136,7 @@ export default function WalletLedger() {
         setError(null);
 
         const params = new URLSearchParams({
-          limit: '20',
+          limit: String(LEDGER_PAGE_SIZE),
           order: 'desc',
         });
         if (pageCursor) params.set('cursor', pageCursor);
@@ -168,7 +169,7 @@ export default function WalletLedger() {
 
         setOperations((prev) => (pageCursor ? [...prev, ...parsed] : parsed));
 
-        if (data._embedded?.records.length < 20) {
+        if (data._embedded?.records.length < LEDGER_PAGE_SIZE) {
           setHasMore(false);
         } else {
           const nextLink = data._links?.next?.href;

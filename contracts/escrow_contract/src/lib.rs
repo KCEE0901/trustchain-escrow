@@ -64,6 +64,7 @@ mod batch_approve_release_e2e_tests;
 mod bridge;
 mod bridge_tests;
 mod contract_version_tests;
+mod create_escrow_boundary_tests;
 mod creation_validation_tests;
 mod deployment_tests;
 mod dispute_evidence;
