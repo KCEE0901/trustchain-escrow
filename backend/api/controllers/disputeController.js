@@ -3,6 +3,13 @@
  *
  * Handles dispute resolution, evidence management, and appeals.
  * Evidence files are stored on IPFS with virus scanning and thumbnail generation.
+ *
+ * File metadata security (issue #363):
+ *  - Filenames are sanitized by the sanitizeFilenames middleware in fileUpload.js
+ *    before they reach this controller; no raw client filename is ever stored.
+ *  - MIME type is validated against a strict allowlist (fileUpload.js fileFilter).
+ *  - Files over 50 MB are rejected by multer before reaching this controller.
+ *  - Rejected uploads are audit-logged by handleUploadError in fileUpload.js.
  */
 
 import prisma from '../../lib/prisma.js';

@@ -138,3 +138,83 @@ export const webhookSubscribeRules = [
     .withMessage('eventTypes must be a non-empty array with at most 20 entries'),
   body('eventTypes.*').isString().withMessage('each eventType must be a string'),
 ];
+
+// ── Evidence upload API schemas ───────────────────────────────────────────────
+
+/**
+ * Allowed MIME types for evidence uploads — mirrors the allowlist in fileUpload.js.
+ * Defined here so validation.js can enforce it without importing the multer
+ * middleware (which carries heavy side-effects and is used at request time).
+ */
+const EVIDENCE_ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'application/pdf', 'video/mp4'];
+
+/** Maximum evidence file size in bytes (50 MB). */
+const EVIDENCE_MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
+
+/**
+ * POST /api/disputes/:id/evidence — request body fields
+ *
+ * Validates the optional text description attached to an evidence upload.
+ * File metadata (MIME type, size, filename) is enforced by the multer
+ * middleware chain in fileUpload.js; these rules cover the JSON body fields.
+ *
+ * | Field       | Required | Type   | Rules                                |
+ * |-------------|----------|--------|--------------------------------------|
+ * | description | no       | string | max 2000 chars, stripped of ctrl chars |
+ * | role        | no       | string | client | freelancer | arbiter | admin  |
+ */
+export const evidenceUploadBodyRules = [
+  body('description')
+    .optional({ values: 'falsy' })
+    .isString()
+    .withMessage('description must be a string')
+    .isLength({ max: 2000 })
+    .withMessage('description must not exceed 2000 characters')
+    // Strip ASCII control characters that could corrupt log output
+    // eslint-disable-next-line no-control-regex
+    .customSanitizer((v) => v.replace(/[\x00-\x1F\x7F]/g, '')),
+  body('role')
+    .optional({ values: 'falsy' })
+    .isIn(['client', 'freelancer', 'arbiter', 'admin'])
+    .withMessage('role must be one of: client, freelancer, arbiter, admin'),
+];
+
+/**
+ * Validate file metadata fields when provided as JSON (non-multipart flows).
+ *
+ * Multipart uploads are validated by multer's fileFilter, but some API clients
+ * may pass metadata in the JSON body alongside a pre-uploaded CID. These rules
+ * cover that path.
+ *
+ * | Field      | Required | Type   | Rules                                |
+ * |------------|----------|--------|--------------------------------------|
+ * | mimeType   | no       | string | must be in EVIDENCE_ALLOWED_MIME_TYPES |
+ * | fileSize   | no       | int    | 1 ≤ fileSize ≤ 50MB                  |
+ * | filename   | no       | string | 1–255 chars, alphanumeric + safe chars |
+ */
+export const evidenceMetadataRules = [
+  body('mimeType')
+    .optional({ values: 'falsy' })
+    .isIn(EVIDENCE_ALLOWED_MIME_TYPES)
+    .withMessage(
+      `mimeType must be one of: ${EVIDENCE_ALLOWED_MIME_TYPES.join(', ')}`,
+    ),
+  body('fileSize')
+    .optional({ values: 'falsy' })
+    .isInt({ min: 1, max: EVIDENCE_MAX_FILE_SIZE_BYTES })
+    .withMessage(
+      `fileSize must be a positive integer not exceeding ${EVIDENCE_MAX_FILE_SIZE_BYTES} bytes`,
+    ),
+  body('filename')
+    .optional({ values: 'falsy' })
+    .isString()
+    .withMessage('filename must be a string')
+    .isLength({ min: 1, max: 255 })
+    .withMessage('filename must be between 1 and 255 characters')
+    .matches(/^[a-zA-Z0-9_\-. ]+$/)
+    .withMessage(
+      'filename must contain only letters, digits, spaces, underscores, dashes, or dots',
+    ),
+];
+
+export { EVIDENCE_ALLOWED_MIME_TYPES, EVIDENCE_MAX_FILE_SIZE_BYTES };
