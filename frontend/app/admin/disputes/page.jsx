@@ -10,6 +10,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAdminStore } from '../../../store/app-store';
 import { adminFetch } from '../../../store/admin';
+import AppealDeadlineIndicator from '../../../components/dispute/AppealDeadlineIndicator';
 
 function ResolveModal({ dispute, onClose, onConfirm }) {
   const [clientAmount, setClientAmount] = useState('');
@@ -265,6 +266,16 @@ export default function AdminDisputesPage() {
                   </button>
                 )}
               </div>
+              {/* Appeal deadline — shown for recently resolved disputes that carry an appealDeadline */}
+              {d.resolvedAt && d.appealDeadline && (
+                <div className="mt-3 border-t border-gray-800 pt-3">
+                  <AppealDeadlineIndicator
+                    disputeId={d.id}
+                    deadline={d.appealDeadline}
+                    appealWindowOpen={d.appealWindowOpen ?? true}
+                  />
+                </div>
+              )}
             </div>
           ))
         )}
