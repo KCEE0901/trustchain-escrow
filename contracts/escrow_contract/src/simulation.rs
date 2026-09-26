@@ -35,21 +35,20 @@ pub fn run_lifecycle_simulation(env: &Env) -> Result<u64, EscrowError> {
     token::StellarAssetClient::new(env, &token).mint(&client, &(amount + 1_000_000));
 
     let escrow_id = contract.create_escrow(
-        &client,
-        &freelancer,
-        &token,
-        &amount,
-        &BytesN::from_array(env, &[1u8; 32]),
-        &None,
-        &None,
-        &None,
-        &None,
-        &MultisigConfig {
-            approvers: SorobanVec::new(env),
-            weights: SorobanVec::new(env),
-            threshold: 0,
-        },
-    )?;
+                &client,
+                &freelancer,
+                &token,
+                &amount,
+                &BytesN::from_array(env, &[1u8; 32]),
+                &None,
+                &None,
+                &None,
+                &None,
+                &MultisigConfig { approvers: SorobanVec::new(env),
+                weights: SorobanVec::new(env),
+                threshold: 0, },
+                &None,
+            )?;
 
     let milestone_amount = amount / 2;
     contract.add_milestone(

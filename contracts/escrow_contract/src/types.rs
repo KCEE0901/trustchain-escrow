@@ -758,6 +758,16 @@ pub enum DataKey {
     ContractVersion,
     /// Per-escrow state transition history — key: u64, value: Vec<StateHistoryEntry>
     StateHistory(u64),
+    /// Arbiter allowlist — key: Address, value: bool
+    ArbiterAllowlist(Address),
+    /// Dispute evidence collection by escrow ID — key: u64, value: Vec<BytesN<32>>
+    DisputeEvidences(u64),
+    /// Terms acceptance record by escrow ID — key: u64, value: TermsAcceptance
+    TermsAcceptance(u64),
+    /// DEX swap configuration — value: DexConfig
+    DexConfig,
+    /// DEX swap record by escrow ID — key: u64, value: DexSwapRecord
+    DexSwapRecord(u64),
 }
 
 /// Tracks the contract *code* version (distinct from `storage::STORAGE_VERSION`,

@@ -52,17 +52,18 @@ mod slippage_tests {
         let (env, _admin, client, freelancer, contract) = setup();
         let token = register_token(&env, &_admin, &client, MAX_ESCROW_AMOUNT);
         let escrow_id = contract.create_escrow(
-            &client,
-            &freelancer,
-            &token,
-            &100_000,
-            &hash32(&env),
-            &None,
-            &None,
-            &None,
-            &None,
-            &no_multisig(&env),
-        );
+                    &client,
+                    &freelancer,
+                    &token,
+                    &100_000,
+                    &hash32(&env),
+                    &None,
+                    &None,
+                    &None,
+                    &None,
+                    &no_multisig(&env),
+                    &None,
+                );
         assert!(escrow_id.is_ok());
         let escrow_id = escrow_id.unwrap();
 
@@ -76,17 +77,18 @@ mod slippage_tests {
         let (env, _admin, client, freelancer, contract) = setup();
         let token = register_token(&env, &_admin, &client, MAX_ESCROW_AMOUNT);
         let escrow_id = contract.create_escrow(
-            &client,
-            &freelancer,
-            &token,
-            &100_000,
-            &hash32(&env),
-            &None,
-            &None,
-            &None,
-            &None,
-            &no_multisig(&env),
-        );
+                    &client,
+                    &freelancer,
+                    &token,
+                    &100_000,
+                    &hash32(&env),
+                    &None,
+                    &None,
+                    &None,
+                    &None,
+                    &no_multisig(&env),
+                    &None,
+                );
         assert!(escrow_id.is_ok());
         let escrow_id = escrow_id.unwrap();
 
@@ -100,17 +102,18 @@ mod slippage_tests {
         let (env, _admin, client, freelancer, contract) = setup();
         let token = register_token(&env, &_admin, &client, MAX_ESCROW_AMOUNT);
         let escrow_id = contract.create_escrow(
-            &client,
-            &freelancer,
-            &token,
-            &100_000,
-            &hash32(&env),
-            &None,
-            &None,
-            &None,
-            &None,
-            &no_multisig(&env),
-        );
+                    &client,
+                    &freelancer,
+                    &token,
+                    &100_000,
+                    &hash32(&env),
+                    &None,
+                    &None,
+                    &None,
+                    &None,
+                    &no_multisig(&env),
+                    &None,
+                );
         assert!(escrow_id.is_ok());
         let escrow_id = escrow_id.unwrap();
 

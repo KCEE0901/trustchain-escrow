@@ -255,6 +255,8 @@ impl StorageManager {
                     multisig_threshold: 0,
                     slippage_bps: 0,
                     slippage_reference_price: 0,
+                    terms_hash: crate::OptionalBytesN32::None,
+                    arbiter_fee_bps: 0,
                 };
 
                 // Store meta in v2 format using PackedDataKey
