@@ -34,7 +34,53 @@ export const TxStatus = {
   CONFIRMED: 'CONFIRMED',
   FAILED: 'FAILED',
   TIMEOUT: 'TIMEOUT',
+  FAILED_PERMANENT: 'FAILED_PERMANENT',
+  REVIEW_REQUIRED: 'REVIEW_REQUIRED',
 };
+
+/**
+ * Result codes that can never succeed on retry — escalate to FAILED_PERMANENT.
+ */
+export const PERMANENT_FAILURE_CODES = new Set([
+  'tx_bad_auth',
+  'tx_bad_auth_extra',
+  'tx_no_account',
+  'tx_insufficient_balance',
+  'tx_malformed',
+  'tx_not_supported',
+]);
+
+/**
+ * Statuses that need an operator to look at them.
+ */
+export const REVIEW_NEEDED_STATUSES = [TxStatus.TIMEOUT, TxStatus.REVIEW_REQUIRED];
+
+/**
+ * Deterministically map a network check result onto a monitor state.
+ *
+ * - CONFIRMED stays CONFIRMED
+ * - FAILED with a known permanent code → FAILED_PERMANENT
+ * - FAILED without a usable code → REVIEW_REQUIRED
+ * - other FAILED codes → FAILED
+ * - still pending past the stuck threshold → TIMEOUT (stuck pending, needs review)
+ * - otherwise PENDING
+ *
+ * @param {{ status: string, resultCode?: string }} txResult
+ * @param {number} elapsedMs — time since submission
+ * @param {number} [stuckThresholdMs]
+ * @returns {string} next TxStatus
+ */
+export function resolveTxState(txResult, elapsedMs, stuckThresholdMs = STUCK_THRESHOLD_MS) {
+  if (txResult.status === TxStatus.CONFIRMED) return TxStatus.CONFIRMED;
+  if (txResult.status === TxStatus.FAILED) {
+    const code = String(txResult.resultCode || '').toLowerCase();
+    if (PERMANENT_FAILURE_CODES.has(code)) return TxStatus.FAILED_PERMANENT;
+    if (!code || code === 'unknown') return TxStatus.REVIEW_REQUIRED;
+    return TxStatus.FAILED;
+  }
+  if (elapsedMs > stuckThresholdMs) return TxStatus.TIMEOUT;
+  return TxStatus.PENDING;
+}
 
 /**
  * Record a new transaction to monitor.
@@ -123,10 +169,10 @@ export async function checkTransactionStatus(txHash) {
  *
  * @param {object} [opts]
  * @param {number} [opts.batchSize]
- * @returns {Promise<{ checked: number, confirmed: number, failed: number, stuck: number }>}
+ * @returns {Promise<{ checked: number, confirmed: number, failed: number, stuck: number, reviewRequired: number }>}
  */
 export async function pollPendingTransactions({ batchSize = BATCH_SIZE } = {}) {
-  const results = { checked: 0, confirmed: 0, failed: 0, stuck: 0 };
+  const results = { checked: 0, confirmed: 0, failed: 0, stuck: 0, reviewRequired: 0 };
 
   try {
     const pendingTxs = await prisma.transactionMonitor.findMany({
@@ -145,8 +191,9 @@ export async function pollPendingTransactions({ batchSize = BATCH_SIZE } = {}) {
       const txResult = await checkTransactionStatus(tx.txHash);
       const now = new Date();
       const elapsed = now.getTime() - tx.submittedAt.getTime();
+      const nextStatus = resolveTxState(txResult, elapsed);
 
-      if (txResult.status === TxStatus.CONFIRMED) {
+      if (nextStatus === TxStatus.CONFIRMED) {
         await prisma.transactionMonitor.update({
           where: { txHash: tx.txHash },
           data: {
@@ -158,19 +205,24 @@ export async function pollPendingTransactions({ batchSize = BATCH_SIZE } = {}) {
         });
         results.confirmed++;
         log.info({ message: 'tx_confirmed', txHash: tx.txHash, ledger: txResult.ledger });
-      } else if (txResult.status === TxStatus.FAILED) {
+      } else if (
+        nextStatus === TxStatus.FAILED ||
+        nextStatus === TxStatus.FAILED_PERMANENT ||
+        nextStatus === TxStatus.REVIEW_REQUIRED
+      ) {
         await prisma.transactionMonitor.update({
           where: { txHash: tx.txHash },
           data: {
-            status: TxStatus.FAILED,
+            status: nextStatus,
             failedAt: now,
             errorCode: txResult.resultCode,
             lastCheckedAt: now,
           },
         });
         results.failed++;
-        log.warn({ message: 'tx_failed', txHash: tx.txHash, resultCode: txResult.resultCode });
-      } else if (elapsed > STUCK_THRESHOLD_MS) {
+        if (nextStatus === TxStatus.REVIEW_REQUIRED) results.reviewRequired++;
+        log.warn({ message: 'tx_failed', txHash: tx.txHash, resultCode: txResult.resultCode, status: nextStatus });
+      } else if (nextStatus === TxStatus.TIMEOUT) {
         await prisma.transactionMonitor.update({
           where: { txHash: tx.txHash },
           data: {
@@ -210,20 +262,29 @@ export async function pollPendingTransactions({ batchSize = BATCH_SIZE } = {}) {
  * Get monitoring status summary.
  */
 export async function getMonitorStatus() {
-  const [total, pending, confirmed, failed, timeout] = await Promise.all([
+  const [total, pending, confirmed, failed, timeout, failedPermanent, reviewRequired] = await Promise.all([
     prisma.transactionMonitor.count(),
     prisma.transactionMonitor.count({ where: { status: TxStatus.PENDING } }),
     prisma.transactionMonitor.count({ where: { status: TxStatus.CONFIRMED } }),
     prisma.transactionMonitor.count({ where: { status: TxStatus.FAILED } }),
     prisma.transactionMonitor.count({ where: { status: TxStatus.TIMEOUT } }),
+    prisma.transactionMonitor.count({ where: { status: TxStatus.FAILED_PERMANENT } }),
+    prisma.transactionMonitor.count({ where: { status: TxStatus.REVIEW_REQUIRED } }),
   ]);
 
   return {
     active: isRunning,
     pollIntervalMs: POLL_INTERVAL_MS,
     stuckThresholdMs: STUCK_THRESHOLD_MS,
-    totals: { total, pending, confirmed, failed, timeout },
+    totals: { total, pending, confirmed, failed, timeout, failedPermanent, reviewRequired },
   };
+}
+
+/**
+ * List transactions that need manual review (stuck pending or ambiguous failure).
+ */
+export async function getReviewNeededTransactions({ page, limit } = {}) {
+  return getRecentTransactions({ status: REVIEW_NEEDED_STATUSES, page, limit });
 }
 
 /**
@@ -235,7 +296,8 @@ export async function getRecentTransactions({ status, page = 1, limit = 20 } = {
   const skip = (pg - 1) * lim;
 
   const where = {};
-  if (status) where.status = status;
+  if (Array.isArray(status)) where.status = { in: status };
+  else if (status) where.status = status;
 
   const [data, total] = await prisma.$transaction([
     prisma.transactionMonitor.findMany({
@@ -305,6 +367,8 @@ export default {
   pollPendingTransactions,
   getMonitorStatus,
   getRecentTransactions,
+  getReviewNeededTransactions,
+  resolveTxState,
   startMonitor,
   stopMonitor,
 };

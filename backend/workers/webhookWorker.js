@@ -1,6 +1,7 @@
 import { Worker } from 'bullmq';
 import prisma from '../lib/prisma.js';
 import { connection } from '../queues/index.js';
+import { runWithCorrelation } from '../config/logger.js';
 
 export async function processWebhookJob(job) {
   const { url, payload, headers = {}, deliveryId } = job.data;
@@ -50,8 +51,12 @@ export async function processWebhookJob(job) {
 const webhookWorker =
   process.env.NODE_ENV === 'test'
     ? null
-    : new Worker('webhook', processWebhookJob, {
-        connection,
-      });
+    : new Worker(
+        'webhook',
+        (job) => runWithCorrelation(job.data?.correlationId, () => processWebhookJob(job)),
+        {
+          connection,
+        },
+      );
 
 export default webhookWorker;

@@ -20,6 +20,8 @@ const log = createModuleLogger('expiryService');
 
 const DEFAULT_BATCH_SIZE = parseInt(process.env.EXPIRY_BATCH_SIZE || '50', 10);
 const DEFAULT_POLL_INTERVAL_MS = parseInt(process.env.EXPIRY_POLL_INTERVAL_MS || '60000', 10);
+// Catch-up window: escrows whose deadline is older than this are skipped as stale (0 = unbounded).
+const DEFAULT_MAX_AGE_MS = parseInt(process.env.EXPIRY_MAX_AGE_MS || '0', 10);
 
 let pollTimer = null;
 
@@ -28,17 +30,20 @@ let pollTimer = null;
  *
  * @param {object} [opts]
  * @param {number} [opts.batchSize] — max escrows to process per run
+ * @param {number} [opts.maxAgeMs] — skip escrows whose deadline is older than this (0 = unbounded)
  * @param {PrismaClient} [opts.tx] — optional Prisma transaction client
  * @returns {Promise<Array>} escrows past deadline
  */
-export async function findExpiredEscrows({ batchSize = DEFAULT_BATCH_SIZE, tx } = {}) {
+export async function findExpiredEscrows({ batchSize = DEFAULT_BATCH_SIZE, maxAgeMs = 0, tx } = {}) {
   const now = new Date();
   const client = tx || prisma;
+  const deadline = { lt: now };
+  if (maxAgeMs > 0) deadline.gte = new Date(now.getTime() - maxAgeMs);
 
   return client.escrow.findMany({
     where: {
       status: 'Active',
-      deadline: { lt: now },
+      deadline,
     },
     select: {
       id: true,
@@ -138,15 +143,36 @@ export async function expireEscrow(escrow, actor = 'system') {
  *
  * @param {object} [opts]
  * @param {number} [opts.batchSize]
+ * @param {number} [opts.maxAgeMs] — catch-up window; older escrows are skipped as stale
  * @param {string} [opts.actor]
- * @returns {Promise<{ processed: number, succeeded: number, failed: number, errors: string[] }>}
+ * @returns {Promise<{ processed: number, succeeded: number, failed: number, stale: number, errors: string[] }>}
  */
-export async function processExpiredEscrows({ batchSize = DEFAULT_BATCH_SIZE, actor = 'system', tx } = {}) {
+export async function processExpiredEscrows({
+  batchSize = DEFAULT_BATCH_SIZE,
+  maxAgeMs = DEFAULT_MAX_AGE_MS,
+  actor = 'system',
+  tx,
+} = {}) {
   const startTime = Date.now();
-  const results = { processed: 0, succeeded: 0, failed: 0, skipped: 0, errors: [] };
+  const results = { processed: 0, succeeded: 0, failed: 0, skipped: 0, stale: 0, errors: [] };
 
   try {
-    const expired = await findExpiredEscrows({ batchSize, tx });
+    if (maxAgeMs > 0) {
+      const cutoff = new Date(startTime - maxAgeMs);
+      results.stale = await (tx || prisma).escrow.count({
+        where: { status: 'Active', deadline: { lt: cutoff } },
+      });
+      if (results.stale > 0) {
+        log.warn({
+          message: 'expiry_stale_records_skipped',
+          stale: results.stale,
+          cutoff: cutoff.toISOString(),
+          maxAgeMs,
+        });
+      }
+    }
+
+    const expired = await findExpiredEscrows({ batchSize, maxAgeMs, tx });
     results.processed = expired.length;
 
     if (expired.length === 0) {

@@ -1,6 +1,7 @@
 import { Worker } from 'bullmq';
 import crypto from 'crypto';
 import { connection } from '../queues/index.js';
+import { runWithCorrelation } from '../config/logger.js';
 
 import disputeRaisedTemplate from '../templates/emails/disputeRaised.js';
 import escrowStatusChangedTemplate from '../templates/emails/escrowStatusChanged.js';
@@ -79,33 +80,36 @@ async function sendWithProvider(message, eventType) {
 
 const emailWorker = new Worker(
   'email',
-  async (job) => {
-    const { eventType, payload, recipients } = job.data;
+  async (job) =>
+    runWithCorrelation(job.data?.correlationId, async () => {
+      const { eventType, payload, recipients, correlationId } = job.data;
 
-    for (const rawRecipient of recipients) {
-      const recipient = {
-        email: rawRecipient.email.toLowerCase().trim(),
-        name: rawRecipient.name || rawRecipient.address || rawRecipient.email,
-      };
+      for (const rawRecipient of recipients) {
+        const recipient = {
+          email: rawRecipient.email.toLowerCase().trim(),
+          name: rawRecipient.name || rawRecipient.address || rawRecipient.email,
+        };
 
-      const template = createTemplate(eventType, payload);
-      const content = template({
-        recipient,
-        unsubscribeUrl: `/api/notifications/unsubscribe?email=${encodeURIComponent(recipient.email)}&token=TOKEN_PLACEHOLDER`, // Migrate unsubscribe logic later
-        fromName: config.fromName,
-      });
+        const template = createTemplate(eventType, payload);
+        const content = template({
+          recipient,
+          unsubscribeUrl: `/api/notifications/unsubscribe?email=${encodeURIComponent(recipient.email)}&token=TOKEN_PLACEHOLDER`, // Migrate unsubscribe logic later
+          fromName: config.fromName,
+        });
 
-      const message = {
-        to: recipient,
-        subject: content.subject,
-        text: content.text,
-        html: content.html,
-      };
+        const message = {
+          to: recipient,
+          subject: content.subject,
+          text: content.text,
+          html: content.html,
+        };
 
-      const result = await sendWithProvider(message, eventType);
-      console.log(`[EmailWorker] Sent to ${recipient.email}: ${result.messageId}`);
-    }
-  },
+        const result = await sendWithProvider(message, eventType);
+        console.log(
+          `[EmailWorker] Sent to ${recipient.email}: ${result.messageId} correlationId=${correlationId ?? '-'}`,
+        );
+      }
+    }),
   {
     connection,
   },

@@ -24,6 +24,7 @@ export async function handleExpiryJob(job) {
 
   const results = await processExpiredEscrows({
     batchSize: job?.data?.batchSize || 50,
+    maxAgeMs: job?.data?.maxAgeMs,
     actor: 'expiry-worker',
   });
 
@@ -33,6 +34,7 @@ export async function handleExpiryJob(job) {
     processed: results.processed,
     succeeded: results.succeeded,
     failed: results.failed,
+    stale: results.stale,
   });
 
   return results;
