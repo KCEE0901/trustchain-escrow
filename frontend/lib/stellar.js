@@ -17,6 +17,7 @@ import {
   BASE_FEE,
   xdr,
   nativeToScVal,
+  scValToNative,
   Address,
   StrKey,
 } from '@stellar/stellar-sdk';
@@ -30,6 +31,48 @@ const _NETWORK_PASSPHRASE =
   _NETWORK === 'mainnet'
     ? 'Public Global Stellar Network ; September 2015'
     : 'Test SDF Network ; September 2015';
+
+const PAYMENT_TOKEN_ADDRESSES = {
+  usdc: process.env.NEXT_PUBLIC_USDC_TOKEN_ADDRESS || '',
+  xlm: process.env.NEXT_PUBLIC_XLM_TOKEN_ADDRESS || '',
+};
+
+export function classifyPaymentTokenStatus({ isPaused, whitelistEnabled, approved }) {
+  if (isPaused) return 'paused';
+  if (whitelistEnabled && !approved) return 'unsupported';
+  if (approved) return 'whitelisted';
+  return 'supported';
+}
+
+export async function getPaymentTokenStatus({ sourceAddress, tokenSymbol }) {
+  const tokenAddress = PAYMENT_TOKEN_ADDRESSES[tokenSymbol];
+  if (!tokenAddress) throw new Error(`No ${tokenSymbol.toUpperCase()} token address is configured.`);
+  if (!_CONTRACT_ADDRESS) {
+    throw new Error('Contract address not configured. Set NEXT_PUBLIC_CONTRACT_ADDRESS.');
+  }
+
+  const server = new SorobanRpc.Server(_SOROBAN_RPC_URL);
+  const account = await server.getAccount(sourceAddress);
+  const contract = new Contract(_CONTRACT_ADDRESS);
+  const tx = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: _NETWORK_PASSPHRASE,
+  })
+    .addOperation(contract.call('get_token_status', new Address(tokenAddress).toScVal()))
+    .setTimeout(30)
+    .build();
+
+  const simulation = await server.simulateTransaction(tx);
+  if (SorobanRpc.isSimulationError(simulation)) {
+    throw new Error(`Token status check failed: ${simulation.error}`);
+  }
+
+  const returnValue = simulation.results?.[0]?.xdr || simulation.result?.retval;
+  if (!returnValue) throw new Error('Token status response was empty.');
+  const scVal = typeof returnValue === 'string' ? xdr.ScVal.fromXDR(returnValue, 'base64') : returnValue;
+  const [isPaused, whitelistEnabled, approved] = scValToNative(scVal);
+  return classifyPaymentTokenStatus({ isPaused, whitelistEnabled, approved });
+}
 
 /**
  * Builds an unsigned `create_escrow` Soroban transaction XDR.
