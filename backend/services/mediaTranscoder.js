@@ -23,10 +23,29 @@ import { createModuleLogger } from '../config/logger.js';
 
 const logger = createModuleLogger('service.mediaTranscoder');
 
-const WEBP_QUALITY = parseInt(process.env.WEBP_QUALITY || '85', 10);
-const THUMBNAIL_SIZE = parseInt(process.env.THUMBNAIL_SIZE || '300', 10);
-const WEB_STANDARD_SIZE = parseInt(process.env.WEB_STANDARD_SIZE || '1920', 10);
-const MAX_TRANSCODE_SIZE = parseInt(process.env.MAX_TRANSCODE_SIZE || String(50 * 1024 * 1024), 10);
+export const WEBP_QUALITY = parseInt(process.env.WEBP_QUALITY || '85', 10);
+export const THUMBNAIL_SIZE = parseInt(process.env.THUMBNAIL_SIZE || '300', 10);
+export const WEB_STANDARD_SIZE = parseInt(process.env.WEB_STANDARD_SIZE || '1920', 10);
+export const MAX_TRANSCODE_SIZE = parseInt(
+  process.env.MAX_TRANSCODE_SIZE || String(50 * 1024 * 1024),
+  10,
+);
+
+export const SUPPORTED_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'video/mp4',
+  'video/webm',
+  'video/quicktime',
+]);
+
+export const MAX_MEDIA_DIMENSION = parseInt(process.env.MAX_MEDIA_DIMENSION || '4096', 10);
+export const MAX_MEDIA_DURATION_SECONDS = parseInt(
+  process.env.MAX_MEDIA_DURATION_SECONDS || '300',
+  10,
+); // 5 minutes
 
 // Optional: fluent-ffmpeg for video transcoding
 let ffmpeg;
@@ -53,6 +72,121 @@ class MediaTranscoder {
     const magicBytes = buffer.toString('hex', 0, 4);
     // JPEG: FF D8, PNG: 89 50, GIF: 47 49 46, WebP: 52 49 46 46 (RIFF)
     return /^ffd8|^8950|^4749|^52494646/.test(magicBytes);
+  }
+
+  /**
+   * Validate media dimensions, duration, and MIME type before submitting evidence to transcoder.
+   * Throws user-readable errors if input validation fails.
+   *
+   * @param {object} media
+   * @param {string} media.mimeType
+   * @param {number} [media.duration] Duration in seconds
+   * @param {number} [media.width] Width in pixels
+   * @param {number} [media.height] Height in pixels
+   * @param {object} [media.dimensions] Dimensions object { width, height }
+   * @throws {Error} User-readable validation error with error.code
+   * @returns {boolean} true if valid
+   */
+  validateMediaInput(media) {
+    if (!media) {
+      const err = new Error('Media file or descriptor is required.');
+      err.code = 'INVALID_MEDIA_PAYLOAD';
+      throw err;
+    }
+
+    const mimeType = (media.mimeType || media.mimetype || '').toLowerCase();
+    if (!mimeType) {
+      const err = new Error('Media MIME type is required.');
+      err.code = 'INVALID_MIME_TYPE';
+      throw err;
+    }
+
+    if (!SUPPORTED_MIME_TYPES.has(mimeType)) {
+      const err = new Error(
+        `Unsupported media type "${mimeType}". Allowed types: ${[...SUPPORTED_MIME_TYPES].join(', ')}.`,
+      );
+      err.code = 'UNSUPPORTED_MEDIA_TYPE';
+      throw err;
+    }
+
+    // Validate duration (e.g. video / audio evidence)
+    const duration = media.duration ?? media.durationSeconds;
+    if (duration !== undefined && duration !== null) {
+      const durNum = Number(duration);
+      if (isNaN(durNum) || durNum < 0) {
+        const err = new Error('Media duration must be a non-negative number.');
+        err.code = 'INVALID_DURATION';
+        throw err;
+      }
+      if (durNum > MAX_MEDIA_DURATION_SECONDS) {
+        const err = new Error(
+          `Media duration of ${durNum} seconds exceeds the maximum allowed limit of ${MAX_MEDIA_DURATION_SECONDS} seconds.`,
+        );
+        err.code = 'DURATION_EXCEEDED';
+        throw err;
+      }
+    }
+
+    // Validate dimensions
+    const width = media.width ?? media.dimensions?.width;
+    const height = media.height ?? media.dimensions?.height;
+
+    if (width !== undefined && width !== null) {
+      const w = Number(width);
+      if (isNaN(w) || w <= 0) {
+        const err = new Error('Media width must be a positive integer.');
+        err.code = 'INVALID_DIMENSION';
+        throw err;
+      }
+      if (w > MAX_MEDIA_DIMENSION) {
+        const err = new Error(
+          `Media width (${w}px) exceeds the maximum allowed limit of ${MAX_MEDIA_DIMENSION}px.`,
+        );
+        err.code = 'DIMENSIONS_EXCEEDED';
+        throw err;
+      }
+    }
+
+    if (height !== undefined && height !== null) {
+      const h = Number(height);
+      if (isNaN(h) || h <= 0) {
+        const err = new Error('Media height must be a positive integer.');
+        err.code = 'INVALID_DIMENSION';
+        throw err;
+      }
+      if (h > MAX_MEDIA_DIMENSION) {
+        const err = new Error(
+          `Media height (${h}px) exceeds the maximum allowed limit of ${MAX_MEDIA_DIMENSION}px.`,
+        );
+        err.code = 'DIMENSIONS_EXCEEDED';
+        throw err;
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * Validates media and enqueues it for transcoding.
+   * Unsupported files fail BEFORE enqueue with user-readable errors.
+   *
+   * @param {object} attachment
+   * @param {string} originalCid
+   * @returns {Promise<object>} Transcoding result promise
+   */
+  async enqueue(attachment, originalCid) {
+    // Validate inputs BEFORE enqueueing
+    this.validateMediaInput(attachment);
+
+    // Enqueue transcoding
+    return this.transcodeAsync(attachment, originalCid);
+  }
+
+  /**
+   * Submit evidence to mediaTranscoder with pre-enqueue validation.
+   */
+  async submitEvidence(attachment, originalCid) {
+    return this.enqueue(attachment, originalCid);
   }
 
   /**

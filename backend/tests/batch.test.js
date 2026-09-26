@@ -97,4 +97,46 @@ describe('POST /api/batch', () => {
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/array/i);
   });
+
+  it('Test 4 (#200 Partial-Failure Reporting): returns success, failure code, and reason for each item in mixed batch', async () => {
+    const res = await request.post('/api/batch').send([
+      { method: 'GET', url: '/api/escrows/health' },
+      { method: 'GET', url: '/api/escrows/not-found' },
+      { method: 'GET', url: '/api/escrows/abc123' }, // unauthorized
+      { method: 'TRACE', url: '/api/escrows/health' }, // disallowed method
+      { method: 'GET', url: '/admin/secret' }, // forbidden route
+    ]);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(5);
+
+    // Item 1: Successful GET
+    expect(res.body[0].success).toBe(true);
+    expect(res.body[0].failureCode).toBeNull();
+    expect(res.body[0].reason).toBeNull();
+    expect(res.body[0].status).toBe(200);
+
+    // Item 2: 404 Not Found
+    expect(res.body[1].success).toBe(false);
+    expect(res.body[1].status).toBe(404);
+    expect(res.body[1].failureCode).toBe('NOT_FOUND');
+    expect(res.body[1].reason).toMatch(/not found/i);
+
+    // Item 3: 401 Unauthorized
+    expect(res.body[2].success).toBe(false);
+    expect(res.body[2].status).toBe(401);
+    expect(res.body[2].failureCode).toBe('UNAUTHORIZED');
+    expect(res.body[2].reason).toMatch(/access denied/i);
+
+    // Item 4: Method Not Allowed
+    expect(res.body[3].success).toBe(false);
+    expect(res.body[3].failureCode).toBe('METHOD_NOT_ALLOWED');
+    expect(res.body[3].reason).toMatch(/method not allowed/i);
+
+    // Item 5: Forbidden Route
+    expect(res.body[4].success).toBe(false);
+    expect(res.body[4].status).toBe(403);
+    expect(res.body[4].failureCode).toBe('FORBIDDEN');
+    expect(res.body[4].reason).toMatch(/route not permitted/i);
+  });
 });

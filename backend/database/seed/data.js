@@ -3,25 +3,76 @@
  * All amounts are in base token units (7 decimal places — e.g. 1 USDC = 10_000_000).
  */
 
-export const USERS = [
+export const DEFAULT_TENANT_ID = 'tenant_default';
+export const DEFAULT_TENANT_SLUG = 'default';
+
+export const TENANTS = [
   {
-    email: 'client@example.com',
-    // bcrypt hash of "password123" — never use real passwords in seeds
-    password: '$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31l',
-  },
-  {
-    email: 'freelancer@example.com',
-    password: '$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW',
+    id: DEFAULT_TENANT_ID,
+    slug: DEFAULT_TENANT_SLUG,
+    name: 'Default Tenant',
+    status: 'active',
   },
 ];
 
 export const CLIENT_ADDR = 'GABCDE1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ234567890ABC';
 export const FREELANCER_ADDR = 'GXYZ1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ234567890ABCDE';
+export const ADMIN_ADDR = 'GADMIN1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ234567890ABC';
 export const TOKEN_ADDR = 'USDC_SAC_CONTRACT_ADDRESS_TESTNET';
+
+export const USERS = [
+  {
+    email: 'client@example.com',
+    // bcrypt hash of "password123" — never use real passwords in seeds
+    password: '$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31l',
+    role: 'user',
+    tenantId: DEFAULT_TENANT_ID,
+    walletAddress: CLIENT_ADDR,
+  },
+  {
+    email: 'freelancer@example.com',
+    password: '$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW',
+    role: 'user',
+    tenantId: DEFAULT_TENANT_ID,
+    walletAddress: FREELANCER_ADDR,
+  },
+  {
+    email: 'admin@example.com',
+    password: '$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31l',
+    role: 'admin',
+    tenantId: DEFAULT_TENANT_ID,
+    walletAddress: ADMIN_ADDR,
+  },
+];
+
+export const FEATURE_FLAGS = [
+  {
+    key: 'dispute_appeals',
+    isEnabled: true,
+    percentage: 100,
+    targetUsers: [],
+    description: 'Enable dispute appeal submissions and deadline enforcement',
+  },
+  {
+    key: 'media_transcoding',
+    isEnabled: true,
+    percentage: 100,
+    targetUsers: [],
+    description: 'Enable async media transcoding for dispute evidence',
+  },
+  {
+    key: 'batch_operations',
+    isEnabled: true,
+    percentage: 100,
+    targetUsers: [],
+    description: 'Enable batch API routes with partial failure reporting',
+  },
+];
 
 export const ESCROWS = [
   {
     id: BigInt(1),
+    tenantId: DEFAULT_TENANT_ID,
     clientAddress: CLIENT_ADDR,
     freelancerAddress: FREELANCER_ADDR,
     tokenAddress: TOKEN_ADDR,
@@ -35,6 +86,7 @@ export const ESCROWS = [
   },
   {
     id: BigInt(2),
+    tenantId: DEFAULT_TENANT_ID,
     clientAddress: CLIENT_ADDR,
     freelancerAddress: FREELANCER_ADDR,
     tokenAddress: TOKEN_ADDR,
@@ -48,6 +100,7 @@ export const ESCROWS = [
   },
   {
     id: BigInt(3),
+    tenantId: DEFAULT_TENANT_ID,
     clientAddress: CLIENT_ADDR,
     freelancerAddress: FREELANCER_ADDR,
     tokenAddress: TOKEN_ADDR,
@@ -65,6 +118,7 @@ export const MILESTONES = [
   // Escrow 1
   {
     escrowId: BigInt(1),
+    tenantId: DEFAULT_TENANT_ID,
     milestoneIndex: 0,
     title: 'Design Mockups',
     amount: '500_0000000'.replace('_', ''),
@@ -75,6 +129,7 @@ export const MILESTONES = [
   },
   {
     escrowId: BigInt(1),
+    tenantId: DEFAULT_TENANT_ID,
     milestoneIndex: 1,
     title: 'Frontend Dev',
     amount: '1000_0000000'.replace('_', ''),
@@ -85,6 +140,7 @@ export const MILESTONES = [
   },
   {
     escrowId: BigInt(1),
+    tenantId: DEFAULT_TENANT_ID,
     milestoneIndex: 2,
     title: 'Final Delivery',
     amount: '500_0000000'.replace('_', ''),
@@ -96,6 +152,7 @@ export const MILESTONES = [
   // Escrow 2 (all approved)
   {
     escrowId: BigInt(2),
+    tenantId: DEFAULT_TENANT_ID,
     milestoneIndex: 0,
     title: 'Logo Concepts',
     amount: '150_0000000'.replace('_', ''),
@@ -106,6 +163,7 @@ export const MILESTONES = [
   },
   {
     escrowId: BigInt(2),
+    tenantId: DEFAULT_TENANT_ID,
     milestoneIndex: 1,
     title: 'Revisions',
     amount: '200_0000000'.replace('_', ''),
@@ -116,6 +174,7 @@ export const MILESTONES = [
   },
   {
     escrowId: BigInt(2),
+    tenantId: DEFAULT_TENANT_ID,
     milestoneIndex: 2,
     title: 'Final Files',
     amount: '150_0000000'.replace('_', ''),
@@ -127,6 +186,7 @@ export const MILESTONES = [
   // Escrow 3 (disputed)
   {
     escrowId: BigInt(3),
+    tenantId: DEFAULT_TENANT_ID,
     milestoneIndex: 0,
     title: 'Architecture Design',
     amount: '2000_0000000'.replace('_', ''),
@@ -137,6 +197,7 @@ export const MILESTONES = [
   },
   {
     escrowId: BigInt(3),
+    tenantId: DEFAULT_TENANT_ID,
     milestoneIndex: 1,
     title: 'Backend API',
     amount: '3000_0000000'.replace('_', ''),
@@ -150,6 +211,7 @@ export const MILESTONES = [
 export const REPUTATION = [
   {
     address: CLIENT_ADDR,
+    tenantId: DEFAULT_TENANT_ID,
     totalScore: BigInt(120),
     completedEscrows: 8,
     disputedEscrows: 1,
@@ -159,6 +221,7 @@ export const REPUTATION = [
   },
   {
     address: FREELANCER_ADDR,
+    tenantId: DEFAULT_TENANT_ID,
     totalScore: BigInt(85),
     completedEscrows: 5,
     disputedEscrows: 0,
