@@ -433,6 +433,14 @@ jobs:
           NEXT_PUBLIC_API_URL: http://localhost:4000
           NEXT_PUBLIC_CONTRACT_ADDRESS: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 
+      - name: Bundle Size Budget Check
+        if: steps.changes.outputs.changed == 'true'
+        run: node scripts/bundle-report.js --check
+        continue-on-error: false
+        env:
+          BUNDLE_SIZE_BUDGET_BYTES: '512000'
+          BUNDLE_SIZE_CHUNK_BUDGET_BYTES: '262144'
+
       - name: Unit Tests
         if: steps.changes.outputs.changed == 'true'
         run: npm run test:unit -w frontend

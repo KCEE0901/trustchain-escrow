@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 /**
- * Bundle size historical tracker and trend reporter.
+ * Bundle size historical tracker, trend reporter, and CI budget enforcer.
  *
  * Usage:
- *   node scripts/bundle-report.js [--save] [--trend]
+ *   node scripts/bundle-report.js [--save] [--trend] [--check]
  *
  * --save   Append current build stats to bundle-stats.json
  * --trend  Print trend report comparing last N snapshots
+ * --check  Fail with exit code 1 if any budget threshold is exceeded (used in CI)
  */
 
 import fs from 'fs';
@@ -20,6 +21,24 @@ const NEXT_DIR = path.join(__dirname, '..', 'frontend', '.next');
 const args = process.argv.slice(2);
 const shouldSave = args.includes('--save');
 const showTrend = args.includes('--trend');
+const checkBudget = args.includes('--check');
+
+// ── Budget Configuration ──────────────────────────────────────────────────────
+//
+// BUNDLE_SIZE_BUDGET_BYTES controls the maximum allowed size for the combined
+// static + pages JS bundle. Set via env var or default to 500 KB.
+//
+// To override in CI: BUNDLE_SIZE_BUDGET_BYTES=524288 node scripts/bundle-report.js --check
+const BUDGET_TOTAL_JS_BYTES = parseInt(
+  process.env.BUNDLE_SIZE_BUDGET_BYTES || String(500 * 1024), // 500 KB default
+  10,
+);
+
+// Per-chunk budget: individual static chunks must not exceed this limit.
+const BUDGET_SINGLE_CHUNK_BYTES = parseInt(
+  process.env.BUNDLE_SIZE_CHUNK_BUDGET_BYTES || String(250 * 1024), // 250 KB default
+  10,
+);
 
 /** Recursively sum sizes of all .js files under a directory */
 function sumJsSizes(dir) {
@@ -179,6 +198,61 @@ if (showTrend) {
   printTrendReport(history);
 }
 
-if (!shouldSave && !showTrend) {
-  console.log('\nTip: run with --save to record this snapshot, --trend to view history.');
+// ── Budget Check ──────────────────────────────────────────────────────────────
+if (checkBudget) {
+  let budgetFailed = false;
+
+  console.log('\n=== Bundle Budget Check ===\n');
+  console.log(`Total JS budget  : ${formatBytes(BUDGET_TOTAL_JS_BYTES)}`);
+  console.log(`Single chunk cap : ${formatBytes(BUDGET_SINGLE_CHUNK_BYTES)}`);
+  console.log('');
+
+  // Check total bundle size
+  if (snapshot.totalJs > BUDGET_TOTAL_JS_BYTES) {
+    console.error(
+      `❌ BUDGET EXCEEDED: Total JS (${formatBytes(snapshot.totalJs)}) exceeds the ` +
+        `${formatBytes(BUDGET_TOTAL_JS_BYTES)} budget by ` +
+        `${formatBytes(snapshot.totalJs - BUDGET_TOTAL_JS_BYTES)}.`,
+    );
+    budgetFailed = true;
+  } else {
+    console.log(
+      `✅ Total JS (${formatBytes(snapshot.totalJs)}) is within the ` +
+        `${formatBytes(BUDGET_TOTAL_JS_BYTES)} budget.`,
+    );
+  }
+
+  // Check individual static chunks
+  const staticDir = path.join(NEXT_DIR, 'static', 'chunks');
+  if (fs.existsSync(staticDir)) {
+    for (const entry of fs.readdirSync(staticDir, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith('.js')) continue;
+      const chunkPath = path.join(staticDir, entry.name);
+      const chunkSize = fs.statSync(chunkPath).size;
+      if (chunkSize > BUDGET_SINGLE_CHUNK_BYTES) {
+        console.error(
+          `❌ CHUNK BUDGET EXCEEDED: ${entry.name} (${formatBytes(chunkSize)}) exceeds ` +
+            `the ${formatBytes(BUDGET_SINGLE_CHUNK_BYTES)} per-chunk limit by ` +
+            `${formatBytes(chunkSize - BUDGET_SINGLE_CHUNK_BYTES)}.`,
+        );
+        budgetFailed = true;
+      }
+    }
+  }
+
+  if (budgetFailed) {
+    console.error(
+      '\n💥 Bundle budget check FAILED. Reduce bundle size before merging this PR.\n' +
+        '   Tips: use dynamic imports, check for duplicate dependencies, or increase the budget\n' +
+        '   threshold in BUNDLE_SIZE_BUDGET_BYTES if the growth is intentional.\n',
+    );
+    process.exit(1);
+  } else {
+    console.log('\n✅ All bundle budget checks passed.\n');
+  }
+}
+
+if (!shouldSave && !showTrend && !checkBudget) {
+  console.log('\nTip: run with --save to record this snapshot, --trend to view history,');
+  console.log('     or --check to enforce the bundle size budget.\n');
 }
