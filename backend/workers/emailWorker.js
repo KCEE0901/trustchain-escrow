@@ -12,6 +12,8 @@ const config = {
   fromEmail: process.env.EMAIL_FROM || 'no-reply@stellartrustescrow.local',
   fromName: process.env.EMAIL_FROM_NAME || 'Stellar Trust Escrow',
   sendgridApiKey: process.env.SENDGRID_API_KEY || '',
+  // Explicit opt-in: 'console' or 'sendgrid'. Unset/'none' disables fallback.
+  fallbackProvider: process.env.EMAIL_FALLBACK_PROVIDER || 'none',
 };
 
 function createTemplate(eventType, payload) {
@@ -27,23 +29,25 @@ function createTemplate(eventType, payload) {
   }
 }
 
-async function sendWithProvider(message, eventType) {
-  if (config.provider === 'console' || !config.sendgridApiKey) {
-    console.log('[EmailWorker] Console delivery', {
-      to: message.to.email,
-      subject: message.subject,
-      eventType,
-    });
-    return {
-      provider: 'console',
-      messageId: `console-${crypto.randomUUID()}`,
-    };
-  }
+async function sendViaConsole(message, eventType) {
+  console.log('[EmailWorker] Console delivery', {
+    to: message.to.email,
+    subject: message.subject,
+    eventType,
+  });
+  return {
+    provider: 'console',
+    messageId: `console-${crypto.randomUUID()}`,
+  };
+}
+
+async function sendViaSendgrid(message, eventType, cfg) {
+  if (!cfg.sendgridApiKey) throw new Error('SendGrid API key is not configured');
 
   const response = await fetch('https://api.sendgrid.com/v3/mail/send', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${config.sendgridApiKey}`,
+      Authorization: `Bearer ${cfg.sendgridApiKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
@@ -54,8 +58,8 @@ async function sendWithProvider(message, eventType) {
         },
       ],
       from: {
-        email: config.fromEmail,
-        name: config.fromName,
+        email: cfg.fromEmail,
+        name: cfg.fromName,
       },
       content: [
         { type: 'text/plain', value: message.text },
@@ -76,6 +80,38 @@ async function sendWithProvider(message, eventType) {
     provider: 'sendgrid',
     messageId: response.headers.get('x-message-id') || `sendgrid-${crypto.randomUUID()}`,
   };
+}
+
+const providers = { console: sendViaConsole, sendgrid: sendViaSendgrid };
+
+function resolvePrimary(cfg) {
+  // Preserve legacy behaviour: SendGrid without an API key delivers to console.
+  if (cfg.provider === 'sendgrid' && !cfg.sendgridApiKey) return 'console';
+  return providers[cfg.provider] ? cfg.provider : 'console';
+}
+
+export async function sendWithProvider(message, eventType, cfg = config) {
+  const primary = resolvePrimary(cfg);
+  try {
+    const result = await providers[primary](message, eventType, cfg);
+    console.log(`[EmailWorker] Delivered via primary provider: ${result.provider}`);
+    return result;
+  } catch (err) {
+    const fallback = cfg.fallbackProvider;
+    if (!providers[fallback] || fallback === primary) {
+      console.error(
+        `[EmailWorker] Primary provider ${primary} failed, fallback disabled`,
+        err.message,
+      );
+      throw err;
+    }
+    console.warn(
+      `[EmailWorker] Primary provider ${primary} failed (${err.message}); falling back to ${fallback}`,
+    );
+    const result = await providers[fallback](message, eventType, cfg);
+    console.log(`[EmailWorker] Delivered via fallback provider: ${result.provider}`);
+    return { ...result, fallback: true };
+  }
 }
 
 const emailWorker = new Worker(
