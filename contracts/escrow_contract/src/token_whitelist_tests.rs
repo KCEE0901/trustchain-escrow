@@ -1,13 +1,18 @@
 //! # Token whitelist tests
 //!
 //! Restored against the current contract API.
+//! Issue #209: assert that add, remove, and toggle actions emit events that
+//! backend indexers can consume.
 
 #[cfg(test)]
 #[allow(clippy::module_inception)]
 mod token_whitelist_tests {
     use crate::{EscrowContract, EscrowContractClient, EscrowError, MultisigConfig};
 
-    use soroban_sdk::{testutils::Address as _, Address, Env};
+    use soroban_sdk::{
+        testutils::{Address as _, Events},
+        Address, Env, Symbol, TryFromVal, Val,
+    };
 
     fn no_multisig(env: &Env) -> MultisigConfig {
         MultisigConfig {
@@ -33,6 +38,29 @@ mod token_whitelist_tests {
         sac.mint(recipient, &amount);
         token_id.address()
     }
+
+    /// Collect only events emitted by the escrow contract (not the SAC).
+    fn contract_events(
+        env: &Env,
+        contract_id: &Address,
+    ) -> soroban_sdk::Vec<(Address, soroban_sdk::Vec<Val>, Val)> {
+        let all = env.events().all();
+        let mut out = soroban_sdk::Vec::new(env);
+        for ev in all.iter() {
+            if ev.0 == *contract_id {
+                out.push_back(ev);
+            }
+        }
+        out
+    }
+
+    /// Returns the first topic symbol of an event.
+    fn topic0(env: &Env, topics: &soroban_sdk::Vec<Val>) -> Symbol {
+        Symbol::try_from_val(env, &topics.get(0).expect("at least one topic"))
+            .expect("topic[0] should be a Symbol")
+    }
+
+    // ── Existing access-control tests ─────────────────────────────────────────
 
     #[test]
     fn test_add_remove_approved_token_admin_only() {
@@ -139,5 +167,165 @@ mod token_whitelist_tests {
             &None,
         );
         assert!(escrow_id2 > escrow_id);
+    }
+
+    // ── Issue #209: event assertions ──────────────────────────────────────────
+
+    /// Adding a token emits `tok_wl_add` with (admin, token, active=true).
+    #[test]
+    fn test_add_approved_token_emits_event() {
+        let (env, admin, contract_id, client) = setup();
+        let token = register_token(&env, &admin, &admin, 1000);
+
+        client.add_approved_token(&admin, &token);
+
+        let events = contract_events(&env, &contract_id);
+        assert!(!events.is_empty(), "expected at least one contract event");
+
+        let last = events.get(events.len() - 1).unwrap();
+        let (_contract, topics, data) = last;
+
+        // Topic[0] must be the symbol `tok_wl_add`
+        let sym = topic0(&env, &topics);
+        assert_eq!(
+            sym,
+            soroban_sdk::symbol_short!("tok_wl_add"),
+            "expected topic tok_wl_add, got {:?}",
+            sym
+        );
+
+        // Data payload: (admin_address, token_address, active=true)
+        let payload: (Address, Address, bool) =
+            soroban_sdk::FromVal::from_val(&env, &data);
+        assert_eq!(payload.0, admin, "event admin address mismatch");
+        assert_eq!(payload.1, token, "event token address mismatch");
+        assert!(payload.2, "active flag should be true on add");
+    }
+
+    /// Removing a token emits `tok_wl_rm` with (admin, token, active=false).
+    #[test]
+    fn test_remove_approved_token_emits_event() {
+        let (env, admin, contract_id, client) = setup();
+        let token = register_token(&env, &admin, &admin, 1000);
+
+        // Add first so removal is valid
+        client.add_approved_token(&admin, &token);
+
+        // Clear events recorded so far before testing the remove event
+        let events_before = contract_events(&env, &contract_id).len();
+
+        client.remove_approved_token(&admin, &token);
+
+        let events = contract_events(&env, &contract_id);
+        // At least one new event must have been emitted
+        assert!(
+            events.len() > events_before,
+            "expected a new event after remove_approved_token"
+        );
+
+        let last = events.get(events.len() - 1).unwrap();
+        let (_contract, topics, data) = last;
+
+        let sym = topic0(&env, &topics);
+        assert_eq!(
+            sym,
+            soroban_sdk::symbol_short!("tok_wl_rm"),
+            "expected topic tok_wl_rm, got {:?}",
+            sym
+        );
+
+        let payload: (Address, Address, bool) =
+            soroban_sdk::FromVal::from_val(&env, &data);
+        assert_eq!(payload.0, admin, "event admin address mismatch");
+        assert_eq!(payload.1, token, "event token address mismatch");
+        assert!(!payload.2, "active flag should be false on remove");
+    }
+
+    /// Enabling the whitelist emits `tok_wl_set` with (admin, enabled=true).
+    #[test]
+    fn test_set_whitelist_enabled_emits_event() {
+        let (env, admin, contract_id, client) = setup();
+
+        client.set_token_whitelist_enabled(&admin, &true);
+
+        let events = contract_events(&env, &contract_id);
+        assert!(!events.is_empty(), "expected at least one contract event");
+
+        let last = events.get(events.len() - 1).unwrap();
+        let (_contract, topics, data) = last;
+
+        let sym = topic0(&env, &topics);
+        assert_eq!(
+            sym,
+            soroban_sdk::symbol_short!("tok_wl_set"),
+            "expected topic tok_wl_set, got {:?}",
+            sym
+        );
+
+        let payload: (Address, bool) = soroban_sdk::FromVal::from_val(&env, &data);
+        assert_eq!(payload.0, admin, "event admin address mismatch");
+        assert!(payload.1, "enabled flag should be true");
+    }
+
+    /// Disabling the whitelist emits `tok_wl_set` with (admin, enabled=false).
+    #[test]
+    fn test_set_whitelist_disabled_emits_event() {
+        let (env, admin, contract_id, client) = setup();
+
+        // Enable first
+        client.set_token_whitelist_enabled(&admin, &true);
+        let events_after_enable = contract_events(&env, &contract_id).len();
+
+        // Now disable
+        client.set_token_whitelist_enabled(&admin, &false);
+
+        let events = contract_events(&env, &contract_id);
+        assert!(
+            events.len() > events_after_enable,
+            "expected a new event after disabling whitelist"
+        );
+
+        let last = events.get(events.len() - 1).unwrap();
+        let (_contract, topics, data) = last;
+
+        let sym = topic0(&env, &topics);
+        assert_eq!(
+            sym,
+            soroban_sdk::symbol_short!("tok_wl_set"),
+            "expected topic tok_wl_set for disable, got {:?}",
+            sym
+        );
+
+        let payload: (Address, bool) = soroban_sdk::FromVal::from_val(&env, &data);
+        assert_eq!(payload.0, admin, "event admin address mismatch");
+        assert!(!payload.1, "enabled flag should be false on disable");
+    }
+
+    /// Sequence test: add then remove and verify both events are present in order.
+    #[test]
+    fn test_add_then_remove_emits_two_whitelist_events() {
+        let (env, admin, contract_id, client) = setup();
+        let token = register_token(&env, &admin, &admin, 1000);
+
+        client.add_approved_token(&admin, &token);
+        client.remove_approved_token(&admin, &token);
+
+        let events = contract_events(&env, &contract_id);
+        // Last two contract events must be tok_wl_add and tok_wl_rm in that order
+        let len = events.len();
+        assert!(
+            len >= 2,
+            "expected at least 2 whitelist events, got {}",
+            len
+        );
+
+        let add_event = events.get(len - 2).unwrap();
+        let rem_event = events.get(len - 1).unwrap();
+
+        let add_sym = topic0(&env, &add_event.1);
+        let rem_sym = topic0(&env, &rem_event.1);
+
+        assert_eq!(add_sym, soroban_sdk::symbol_short!("tok_wl_add"));
+        assert_eq!(rem_sym, soroban_sdk::symbol_short!("tok_wl_rm"));
     }
 }

@@ -122,3 +122,11 @@ pub const TERMS_ACCEPTED: Symbol = symbol_short!("terms_acc");
 
 // ── DEX swap (#123) ──────────────────────────────────────────────────────
 pub const DEX_SWAP: Symbol = symbol_short!("dex_swap");
+
+// ── Token whitelist (#209) ────────────────────────────────────────────────
+/// Emitted when a token is added to the approved whitelist.
+pub const TOKEN_WHITELIST_ADDED: Symbol = symbol_short!("tok_wl_add");
+/// Emitted when a token is removed from the approved whitelist.
+pub const TOKEN_WHITELIST_REMOVED: Symbol = symbol_short!("tok_wl_rm");
+/// Emitted when the whitelist enforcement flag is toggled.
+pub const TOKEN_WHITELIST_SET: Symbol = symbol_short!("tok_wl_set");
