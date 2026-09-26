@@ -43,8 +43,11 @@ const {
   disableSchedule,
   exportReport,
   generateReport,
+  getExportJob,
+  getExportJobResult,
   listSchedules,
   processDueSchedules,
+  startExportJob,
 } = await import('../services/complianceService.js');
 
 beforeEach(() => {
@@ -197,5 +200,49 @@ describe('complianceService', () => {
 
     const disabled = await disableSchedule(schedule.id, 'admin');
     expect(disabled.disabled).toBe(true);
+  });
+
+  describe('export jobs', () => {
+    async function waitForJob(id) {
+      for (let i = 0; i < 50; i++) {
+        const job = getExportJob(id);
+        if (job.status === 'complete' || job.status === 'failed') return job;
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      throw new Error('export job did not finish');
+    }
+
+    it('transitions queued -> running -> complete with queryable progress', async () => {
+      let releasePayments;
+      const payments = await prismaMock.payment.findMany();
+      prismaMock.payment.findMany.mockImplementationOnce(
+        () => new Promise((resolve) => (releasePayments = () => resolve(payments))),
+      );
+
+      const queued = startExportJob('transactions', 'csv', {}, 'admin');
+      expect(queued).toMatchObject({ status: 'queued', progress: 0, ready: false });
+
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(getExportJob(queued.id)).toMatchObject({ status: 'running', progress: 10 });
+
+      releasePayments();
+      const complete = await waitForJob(queued.id);
+      expect(complete).toMatchObject({ status: 'complete', progress: 100, ready: true });
+      expect(getExportJobResult(queued.id).body).toContain('pay_1');
+    });
+
+    it('transitions to failed when report generation throws', async () => {
+      const job = startExportJob('unknown-type', 'json', {}, 'admin');
+
+      const failed = await waitForJob(job.id);
+      expect(failed.status).toBe('failed');
+      expect(failed.error).toMatch(/Unsupported/);
+      expect(getExportJobResult(job.id)).toBeNull();
+    });
+
+    it('rejects unsupported formats and unknown job ids', () => {
+      expect(() => startExportJob('transactions', 'xml')).toThrow(/Unsupported export format/);
+      expect(getExportJob('export_missing')).toBeNull();
+    });
   });
 });

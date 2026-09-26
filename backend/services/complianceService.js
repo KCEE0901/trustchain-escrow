@@ -13,6 +13,16 @@ const EXPORT_FORMATS = {
   PDF: 'pdf',
 };
 
+const EXPORT_JOB_STATUS = {
+  QUEUED: 'queued',
+  RUNNING: 'running',
+  COMPLETE: 'complete',
+  FAILED: 'failed',
+};
+
+const exportJobs = new Map();
+let nextExportJobId = 1;
+
 const SCHEDULE_FREQUENCIES = {
   DAILY: 'daily',
   WEEKLY: 'weekly',
@@ -664,8 +674,62 @@ async function disableSchedule(scheduleId, actor = 'admin') {
   return schedule;
 }
 
+function toExportJobView(job) {
+  const { result, done, ...view } = job;
+  return { ...view, ready: Boolean(result) };
+}
+
+function updateExportJob(job, changes) {
+  Object.assign(job, changes, { updatedAt: new Date().toISOString() });
+}
+
+async function runExportJob(job) {
+  updateExportJob(job, { status: EXPORT_JOB_STATUS.RUNNING, progress: 10 });
+  try {
+    const result = await exportReport(job.type, job.format, job.filters, job.actor);
+    updateExportJob(job, { status: EXPORT_JOB_STATUS.COMPLETE, progress: 100, result });
+  } catch (error) {
+    updateExportJob(job, { status: EXPORT_JOB_STATUS.FAILED, error: error.message });
+  }
+}
+
+/**
+ * Queue a compliance export to run in the background.
+ * Returns immediately with a job whose status/progress can be polled.
+ */
+function startExportJob(type, format = EXPORT_FORMATS.JSON, filters = {}, actor = 'system') {
+  ensureValidExportFormat(format);
+  const now = new Date().toISOString();
+  const job = {
+    id: `export_${nextExportJobId++}`,
+    type,
+    format,
+    filters,
+    actor,
+    status: EXPORT_JOB_STATUS.QUEUED,
+    progress: 0,
+    error: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+  exportJobs.set(job.id, job);
+  job.done = new Promise((resolve) => setImmediate(() => runExportJob(job).then(resolve)));
+  return toExportJobView(job);
+}
+
+function getExportJob(jobId) {
+  const job = exportJobs.get(jobId);
+  return job ? toExportJobView(job) : null;
+}
+
+function getExportJobResult(jobId) {
+  return exportJobs.get(jobId)?.result ?? null;
+}
+
 function __resetForTests() {
   stopScheduler();
+  exportJobs.clear();
+  nextExportJobId = 1;
   scheduleState.definitions = [];
   scheduleState.history = [];
   scheduleState.nextId = 1;
@@ -673,6 +737,7 @@ function __resetForTests() {
 
 export {
   EXPORT_FORMATS,
+  EXPORT_JOB_STATUS,
   REPORT_TYPES,
   SCHEDULE_FREQUENCIES,
   __resetForTests,
@@ -680,9 +745,12 @@ export {
   disableSchedule,
   exportReport,
   generateReport,
+  getExportJob,
+  getExportJobResult,
   listSchedules,
   processDueSchedules,
   runScheduledReport,
+  startExportJob,
   startScheduler,
   stopScheduler,
 };
@@ -693,6 +761,9 @@ export default {
   SCHEDULE_FREQUENCIES,
   generateReport,
   exportReport,
+  startExportJob,
+  getExportJob,
+  getExportJobResult,
   createSchedule,
   listSchedules,
   getSchedule,

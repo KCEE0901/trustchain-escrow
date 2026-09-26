@@ -136,6 +136,101 @@ describe('Lock auto-renewal', () => {
   });
 });
 
+describe('Lock lease renewal (simulated Redis)', () => {
+  // Minimal in-memory Redis honouring SET NX PX and the release/renew Lua scripts
+  let store;
+
+  function live(key) {
+    const entry = store.get(key);
+    if (entry && entry.expiresAt <= Date.now()) {
+      store.delete(key);
+      return undefined;
+    }
+    return entry;
+  }
+
+  async function flush() {
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+  }
+
+  beforeEach(() => {
+    store = new Map();
+    mockRedis.set.mockImplementation(async (key, token, _px, ttl) => {
+      if (live(key)) return null;
+      store.set(key, { token, expiresAt: Date.now() + Number(ttl) });
+      return 'OK';
+    });
+    mockRedis.eval.mockImplementation(async (script, _n, key, token, ttl) => {
+      const entry = live(key);
+      if (!entry || entry.token !== token) return 0;
+      if (script.includes('pexpire')) {
+        entry.expiresAt = Date.now() + Number(ttl);
+        return 1;
+      }
+      store.delete(key);
+      return 1;
+    });
+  });
+
+  it('keeps the lease alive past its original TTL while renewals succeed', async () => {
+    const ttl = 1_000;
+    const lock = await LockManager.acquire('lease', ttl, { autoRenew: true });
+
+    for (let i = 0; i < 4; i++) {
+      jest.advanceTimersByTime(ttl * 0.5);
+      await flush();
+    }
+
+    expect(await LockManager.acquire('lease', ttl, { autoRenew: false })).toBeNull();
+    await lock.release();
+    expect(store.has('lease')).toBe(false);
+  });
+
+  it('fails renewal after expiry and stops renewing', async () => {
+    const ttl = 1_000;
+    const lock = await LockManager.acquire('expiring', ttl, { autoRenew: false });
+
+    jest.advanceTimersByTime(ttl + 1);
+    lock.startRenewal();
+    jest.advanceTimersByTime(ttl * 0.5);
+    await flush();
+
+    expect(mockRedis.eval).toHaveBeenCalledTimes(1);
+    expect(store.has('expiring')).toBe(false);
+
+    jest.advanceTimersByTime(ttl * 2);
+    await flush();
+    expect(mockRedis.eval).toHaveBeenCalledTimes(1);
+  });
+
+  it('prevents a competing worker from acquiring until the lease expires', async () => {
+    const ttl = 1_000;
+    await LockManager.acquire('shared', ttl, { autoRenew: false });
+
+    jest.advanceTimersByTime(ttl - 1);
+    expect(await LockManager.acquire('shared', ttl, { autoRenew: false })).toBeNull();
+
+    jest.advanceTimersByTime(2);
+    expect(await LockManager.acquire('shared', ttl, { autoRenew: false })).not.toBeNull();
+  });
+
+  it('does not let a non-owner release the current holder lease', async () => {
+    const ttl = 1_000;
+    const stale = await LockManager.acquire('owned', ttl, { autoRenew: false });
+
+    jest.advanceTimersByTime(ttl + 1);
+    const current = await LockManager.acquire('owned', ttl, { autoRenew: false });
+    const currentToken = store.get('owned').token;
+
+    await stale.release();
+    expect(store.get('owned')?.token).toBe(currentToken);
+    expect(await LockManager.acquire('owned', ttl, { autoRenew: false })).toBeNull();
+
+    await current.release();
+    expect(store.has('owned')).toBe(false);
+  });
+});
+
 describe('LockManager.disconnect', () => {
   it('calls quit on the Redis client', async () => {
     await LockManager.disconnect();
