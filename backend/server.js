@@ -105,10 +105,36 @@ app.use((req, res, next) => {
   next();
 });
 app.use(
-  cors({
-    origin: process.env.ALLOWED_ORIGINS?.split(',') || 'http://localhost:3000',
-    credentials: true,
-  }),
+  cors((() => {
+    // In development, allow all origins for convenience.
+    // In production, only origins listed in ALLOWED_ORIGINS are permitted.
+    if (process.env.NODE_ENV === 'development') {
+      return { origin: '*', credentials: true };
+    }
+
+    const rawOrigins = process.env.ALLOWED_ORIGINS || '';
+    const allowedOrigins = rawOrigins
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean);
+
+    return {
+      credentials: true,
+      origin(requestOrigin, callback) {
+        // Allow same-origin / non-browser requests (no Origin header)
+        if (!requestOrigin) return callback(null, true);
+
+        if (allowedOrigins.includes(requestOrigin)) {
+          return callback(null, true);
+        }
+
+        // Return 403 for preflight requests from disallowed origins
+        const err = new Error(`CORS: origin '${requestOrigin}' is not allowed.`);
+        err.statusCode = 403;
+        return callback(err);
+      },
+    };
+  })()),
 );
 app.use(express.json({ limit: REQUEST_SIZE_LIMIT }));
 app.use(express.urlencoded({ extended: true, limit: REQUEST_SIZE_LIMIT }));
