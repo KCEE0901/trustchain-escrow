@@ -41,6 +41,39 @@ export function useAuth(walletAddress) {
     }
   }, []);
 
+  // Check for expired token on mount and auto-logout if expired.
+  useEffect(() => {
+    if (!token) return;
+
+    try {
+      // Decode JWT without verification (client-side only for UX)
+      const [, payload] = token.split('.');
+      if (!payload) {
+        clearToken();
+        setAuthAddress(null);
+        return;
+      }
+
+      const decoded = JSON.parse(atob(payload));
+      const expiryTime = decoded.exp ? decoded.exp * 1000 : null;
+
+      // If token is expired, auto-logout
+      if (expiryTime && expiryTime < Date.now()) {
+        clearToken();
+        setAuthAddress(null);
+        try {
+          localStorage.removeItem(ADDRESS_KEY);
+        } catch {
+          // ignore storage errors
+        }
+      }
+    } catch {
+      // If token is malformed, clear it
+      clearToken();
+      setAuthAddress(null);
+    }
+  }, [token, clearToken]);
+
   const isAuthenticated = !!token && authAddress === walletAddress;
 
   /**

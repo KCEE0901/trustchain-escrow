@@ -6,6 +6,10 @@
  * @param {object} props
  * @param {number} props.score  — 0–1000+
  * @param {'sm'|'md'|'lg'} [props.size='md']
+ * @param {object} [props.scoreBreakdown] — Optional breakdown of score components
+ * @param {number} [props.scoreBreakdown.completed] — Number of completed escrows
+ * @param {number} [props.scoreBreakdown.disputeWins] — Number of dispute wins
+ * @param {number} [props.scoreBreakdown.disputeLosses] — Number of dispute losses
  *
  * TODO (contributor — easy, Issue #28):
  * - Color ring based on score tier (matches BADGE_THRESHOLDS in reputationService)
@@ -16,7 +20,7 @@
 
 import Tooltip from './Tooltip';
 
-export default function ReputationBadge({ score, size = 'md' }) {
+export default function ReputationBadge({ score, size = 'md', scoreBreakdown }) {
   const color =
     score >= 500
       ? 'text-amber-400 ring-amber-400/30'
@@ -40,10 +44,17 @@ export default function ReputationBadge({ score, size = 'md' }) {
     return 'New';
   };
 
-  const tooltipContent = `${getTier(score)} • Score: ${score}`;
+  const getTooltipContent = () => {
+    if (!scoreBreakdown) {
+      return `${getTier(score)} • Score: ${score}`;
+    }
+
+    const { completed = 0, disputeWins = 0, disputeLosses = 0 } = scoreBreakdown;
+    return `Score: ${score} | Completed: ${completed} | Dispute Wins: ${disputeWins} | Dispute Losses: ${disputeLosses}`;
+  };
 
   return (
-    <Tooltip content={tooltipContent} position="top">
+    <Tooltip content={getTooltipContent()} position="top">
       <div
         className={`${sizeClass} ${color} rounded-full ring-2 flex items-center justify-center font-bold cursor-help`}
         aria-label={`Reputation: ${getTier(score)} (${score} points)`}
