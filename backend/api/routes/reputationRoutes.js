@@ -27,6 +27,12 @@ router.get(
 router.post('/admin/recalculate', reputationController.recalculate);
 
 /**
+ * @route  GET /api/reputation/:address/events?cursor=<c>&limit=<n>
+ * Public, paginated reputation event history for an address (#455).
+ */
+router.get('/:address/events', reputationController.getReputationEvents);
+
+/**
  * @route  GET /api/reputation/:address
  */
 router.get(

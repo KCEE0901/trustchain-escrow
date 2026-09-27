@@ -14,6 +14,25 @@ jest.mock('../../hooks/useEscrow', () => ({
   }),
 }));
 
+// Mock the wallet so DisputeModal's handleRaise can run without Freighter.
+const mockSignTx = jest.fn().mockResolvedValue('signed-xdr');
+jest.mock('../../hooks/useWallet', () => ({
+  useWallet: () => ({
+    address: 'GCLIENTTESTADDRESS',
+    signTx: mockSignTx,
+  }),
+}));
+
+// Mock the Stellar tx build/broadcast calls DisputeModal drives.
+const mockBuildRaiseDisputeTx = jest.fn().mockResolvedValue('unsigned-xdr');
+const mockBroadcastTransaction = jest.fn().mockResolvedValue({ hash: 'tx-hash-123' });
+jest.mock('../../lib/stellar', () => ({
+  buildApproveMilestoneTx: jest.fn(),
+  buildSubmitMilestoneTx: jest.fn(),
+  buildRaiseDisputeTx: (...args) => mockBuildRaiseDisputeTx(...args),
+  broadcastTransaction: (...args) => mockBroadcastTransaction(...args),
+}));
+
 // Mock components that require context providers not set up in tests.
 jest.mock(
   '../../components/ui/CurrencyAmount',
@@ -41,6 +60,9 @@ const params = { id: '1' };
 
 beforeEach(() => {
   mockMutate.mockClear();
+  mockSignTx.mockClear();
+  mockBuildRaiseDisputeTx.mockClear().mockResolvedValue('unsigned-xdr');
+  mockBroadcastTransaction.mockClear().mockResolvedValue({ hash: 'tx-hash-123' });
 });
 
 describe('EscrowDetailPage', () => {
@@ -133,6 +155,77 @@ describe('EscrowDetailPage', () => {
 
       await waitFor(() => expect(mockMutate).toHaveBeenCalledTimes(1));
       expect(screen.getByTestId('last-refreshed')).toHaveTextContent(/Last updated:/);
+    });
+  });
+
+  // Optimistic UI for raising a dispute (#454)
+  describe('optimistic dispute status', () => {
+    function openAndConfirmDispute() {
+      fireEvent.click(screen.getByRole('button', { name: /Raise Dispute/ }));
+      fireEvent.click(screen.getByText('Confirm Dispute'));
+    }
+
+    it('shows the Disputed status badge immediately, before the transaction resolves', () => {
+      // Never resolves within this test — isolates the *immediate* optimistic
+      // update from anything that happens once the transaction completes.
+      mockBuildRaiseDisputeTx.mockReturnValue(new Promise(() => {}));
+
+      renderWithAppProviders(<EscrowDetailPage params={params} />);
+      expect(screen.getByText('Active')).toBeInTheDocument();
+
+      openAndConfirmDispute();
+
+      expect(screen.getByText('Disputed')).toBeInTheDocument();
+      expect(screen.queryByText('Active')).not.toBeInTheDocument();
+    });
+
+    it('hides the Raise Dispute / Cancel Escrow buttons once the optimistic status applies', () => {
+      mockBuildRaiseDisputeTx.mockReturnValue(new Promise(() => {}));
+
+      renderWithAppProviders(<EscrowDetailPage params={params} />);
+      openAndConfirmDispute();
+
+      expect(screen.queryByRole('button', { name: /Raise Dispute/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Cancel Escrow/ })).not.toBeInTheDocument();
+    });
+
+    it('confirms the Disputed status and calls mutate on a successful transaction', async () => {
+      renderWithAppProviders(<EscrowDetailPage params={params} />);
+
+      await act(async () => {
+        openAndConfirmDispute();
+      });
+
+      await waitFor(() => expect(mockBroadcastTransaction).toHaveBeenCalledTimes(1));
+      expect(screen.getByText('Disputed')).toBeInTheDocument();
+      expect(mockMutate).toHaveBeenCalled();
+    });
+
+    it('reverts to the Active status badge when the transaction fails', async () => {
+      mockBuildRaiseDisputeTx.mockRejectedValue(new Error('Simulated network failure'));
+
+      renderWithAppProviders(<EscrowDetailPage params={params} />);
+
+      await act(async () => {
+        openAndConfirmDispute();
+      });
+
+      await waitFor(() => expect(screen.getByText('Active')).toBeInTheDocument());
+      expect(screen.queryByText('Disputed')).not.toBeInTheDocument();
+    });
+
+    it('re-enables the Raise Dispute button after a reverted (failed) attempt', async () => {
+      mockBuildRaiseDisputeTx.mockRejectedValue(new Error('Simulated network failure'));
+
+      renderWithAppProviders(<EscrowDetailPage params={params} />);
+
+      await act(async () => {
+        openAndConfirmDispute();
+      });
+
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /Raise Dispute/ })).not.toBeDisabled(),
+      );
     });
   });
 });

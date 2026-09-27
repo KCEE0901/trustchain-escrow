@@ -13,6 +13,7 @@ import auditRoutes from '../routes/auditRoutes.js';
 import complianceRoutes from '../routes/complianceRoutes.js';
 import authRoutes from '../routes/authRoutes.js';
 import escrowController, { validateEscrowId } from '../controllers/escrowController.js';
+import reputationController from '../controllers/reputationController.js';
 import { invalidateOn } from '../middleware/cache.js';
 
 const router = express.Router();
@@ -29,6 +30,10 @@ router.patch(
 );
 
 router.use('/escrows', escrowRoutes);
+// Registered ahead of `router.use('/users', userRoutes)` (which requires auth
+// for every route on that router) so this specific, explicitly-public
+// endpoint (#455) is served without ever reaching that auth gate.
+router.get('/users/:address/reputation/events', reputationController.getReputationEvents);
 router.use('/users', userRoutes);
 router.use('/reputation', reputationRoutes);
 router.use('/disputes', disputeRoutes);

@@ -22,6 +22,8 @@
  * @param {Function} props.onReject(id)
  * @param {Function} props.onSubmit(id)
  * @param {boolean}  props.isLast
+ * @param {boolean}  [props.actionsDisabled] — disable action buttons (e.g. while an
+ *                                             optimistic dispute is in flight)
  *
  * TODO (contributor — medium, Issue #40):
  * - Add confirmation modal before approve/reject
@@ -47,6 +49,7 @@ export default function MilestoneItem({
   onReject,
   onSubmit,
   isLast,
+  actionsDisabled = false,
 }) {
   const [isActing, setIsActing] = useState(false);
   const { t, formatDate } = useI18n();
@@ -119,6 +122,7 @@ export default function MilestoneItem({
               onApprove={() => handleAction(onApprove, 'approve')}
               onReject={() => handleAction(onReject, 'reject')}
               onSubmit={() => handleAction(onSubmit, 'submit')}
+              disabled={actionsDisabled}
               t={t}
             />
           ) : (
@@ -133,14 +137,14 @@ export default function MilestoneItem({
 /**
  * Renders the correct set of action buttons based on role + status.
  */
-function ActionButtons({ status, role, onApprove, onReject, onSubmit, t }) {
+function ActionButtons({ status, role, onApprove, onReject, onSubmit, disabled, t }) {
   if (role === 'client' && status === 'Submitted') {
     return (
       <div className="flex gap-2">
-        <Button variant="primary" size="sm" onClick={onApprove}>
+        <Button variant="primary" size="sm" onClick={onApprove} disabled={disabled}>
           ✓ {t('escrow.actions.approve')}
         </Button>
-        <Button variant="danger" size="sm" onClick={onReject}>
+        <Button variant="danger" size="sm" onClick={onReject} disabled={disabled}>
           ✗ {t('escrow.actions.reject')}
         </Button>
       </div>
@@ -149,7 +153,7 @@ function ActionButtons({ status, role, onApprove, onReject, onSubmit, t }) {
 
   if (role === 'freelancer' && (status === 'Pending' || status === 'Rejected')) {
     return (
-      <Button variant="secondary" size="sm" onClick={onSubmit}>
+      <Button variant="secondary" size="sm" onClick={onSubmit} disabled={disabled}>
         📤 {t('escrow.actions.submit')}
       </Button>
     );

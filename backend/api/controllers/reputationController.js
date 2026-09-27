@@ -101,6 +101,30 @@ const search = async (req, res) => {
 };
 
 /**
+ * GET /api/v1/users/:address/reputation/events?cursor=<c>&limit=<n>
+ *
+ * Public (no auth) paginated history of an address's reputation events —
+ * completions and dispute outcomes — newest first, each with the score delta
+ * it contributed (#455).
+ */
+const getReputationEvents = async (req, res) => {
+  try {
+    const { address } = req.params;
+    if (!STELLAR_ADDRESS_RE.test(address)) {
+      return res.status(400).json({ error: 'Invalid Stellar address' });
+    }
+
+    const { page, limit, skip, cursor } = parsePagination(req.query);
+    const { events, total } = await reputationService.fetchEvents(address, { limit, skip });
+
+    res.json(buildPaginatedResponse(events, { page, limit, total, cursor, skip }));
+  } catch (err) {
+    logControllerError('reputation.getReputationEvents', err, req);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+/**
  * POST /api/reputation/admin/recalculate
  *
  * Admin-only endpoint to recompute all reputation scores from event history.
@@ -130,4 +154,4 @@ const recalculate = async (req, res) => {
   }
 };
 
-export default { getReputation, getLeaderboard, search, recalculate };
+export default { getReputation, getReputationEvents, getLeaderboard, search, recalculate };

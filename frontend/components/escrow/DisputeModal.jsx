@@ -26,7 +26,14 @@ import { useToast } from '../../contexts/ToastContext';
 import { buildRaiseDisputeTx, broadcastTransaction } from '../../lib/stellar';
 import Modal from '../ui/Modal';
 
-export default function DisputeModal({ isOpen, onClose, escrowId, onSuccess }) {
+export default function DisputeModal({
+  isOpen,
+  onClose,
+  escrowId,
+  onSuccess,
+  onOptimisticStart,
+  onOptimisticRevert,
+}) {
   const [reason, setReason] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState(null);
@@ -37,6 +44,9 @@ export default function DisputeModal({ isOpen, onClose, escrowId, onSuccess }) {
   const handleRaise = async () => {
     setIsSubmitting(true);
     setError(null);
+    // Optimistically reflect the dispute immediately, before the transaction
+    // is even built — the caller reverts this if anything below fails.
+    onOptimisticStart?.();
     try {
       if (!address) throw new Error('Please connect your wallet first');
 
@@ -58,6 +68,7 @@ export default function DisputeModal({ isOpen, onClose, escrowId, onSuccess }) {
     } catch (err) {
       setError(err.message);
       showToast(err.message || 'Failed to raise dispute', 'error');
+      onOptimisticRevert?.();
     } finally {
       setIsSubmitting(false);
     }

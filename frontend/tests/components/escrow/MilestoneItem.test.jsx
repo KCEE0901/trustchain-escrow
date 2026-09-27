@@ -143,6 +143,35 @@ describe('MilestoneItem', () => {
     });
   });
 
+  it('disables the Submit Work button when actionsDisabled is true', () => {
+    renderWithAppProviders(
+      <MilestoneItem {...defaultProps} role="freelancer" actionsDisabled />,
+    );
+    expect(screen.getByText(/Submit Work/).closest('button')).toBeDisabled();
+  });
+
+  it('disables the Approve and Reject buttons when actionsDisabled is true', () => {
+    renderWithAppProviders(
+      <MilestoneItem
+        {...defaultProps}
+        role="client"
+        milestone={{ ...baseMilestone, status: 'Submitted' }}
+        actionsDisabled
+      />,
+    );
+    expect(screen.getByText(/Approve/).closest('button')).toBeDisabled();
+    expect(screen.getByText(/Reject/).closest('button')).toBeDisabled();
+  });
+
+  it('does not call onSubmit when actionsDisabled is true and Submit Work is clicked', () => {
+    const onSubmit = jest.fn();
+    renderWithAppProviders(
+      <MilestoneItem {...defaultProps} role="freelancer" onSubmit={onSubmit} actionsDisabled />,
+    );
+    fireEvent.click(screen.getByText(/Submit Work/));
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
   it('renders connector line when not last', () => {
     const { container } = renderWithAppProviders(
       <MilestoneItem {...defaultProps} isLast={false} />,

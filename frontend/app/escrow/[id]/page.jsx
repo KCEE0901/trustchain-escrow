@@ -24,6 +24,7 @@ import { useState, useEffect } from 'react';
 import { useEscrow } from '../../../hooks/useEscrow';
 import { useRelativeTime } from '../../../hooks/useRelativeTime';
 import { useWallet } from '../../../hooks/useWallet';
+import { useOptimisticAction } from '../../../hooks/useOptimisticAction';
 import { useToast } from '../../../contexts/ToastContext';
 import MilestoneList from '../../../components/escrow/MilestoneList';
 import DisputeModal from '../../../components/escrow/DisputeModal';
@@ -94,6 +95,17 @@ export default function EscrowDetailPage({ params }) {
 
   // Use fetched data when available, fall back to placeholder during development.
   const escrow = fetchedEscrow ?? PLACEHOLDER_ESCROW;
+
+  // Optimistic status: "Raise Dispute" flips this to 'Disputed' the instant the
+  // user confirms, before the transaction even signs, and reverts it if the
+  // transaction fails. On success it stays 'Disputed' until the next `mutate()`
+  // confirms the same value from the server (see useOptimisticAction).
+  const {
+    value: displayStatus,
+    isPending: isDisputePending,
+    apply: applyOptimisticDispute,
+    revert: revertOptimisticDispute,
+  } = useOptimisticAction(escrow.status);
 
   // Update the last-refreshed timestamp whenever data arrives from SWR
   // (initial load, scheduled poll, or manual refresh).
@@ -215,7 +227,7 @@ export default function EscrowDetailPage({ params }) {
         <div>
           <div className="flex items-center gap-3 mb-1">
             <h1 className="text-2xl font-bold text-white">{escrow.title}</h1>
-            <Badge status={escrow.status} />
+            <Badge status={displayStatus} />
           </div>
           <p className="text-gray-400 text-sm">Escrow #{id}</p>
           <StellarExpertLink
@@ -224,12 +236,22 @@ export default function EscrowDetailPage({ params }) {
           />
         </div>
         <div className="flex gap-2 flex-shrink-0">
-          {escrow.status === 'Active' && (
+          {displayStatus === 'Active' && (
             <>
-              <Button variant="danger" size="sm" onClick={() => setDisputeOpen(true)}>
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={() => setDisputeOpen(true)}
+                disabled={isDisputePending}
+              >
                 ⚠ Raise Dispute
               </Button>
-              <Button variant="secondary" size="sm" onClick={() => setCancelOpen(true)}>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setCancelOpen(true)}
+                disabled={isDisputePending}
+              >
                 Cancel Escrow
               </Button>
             </>
@@ -297,15 +319,18 @@ export default function EscrowDetailPage({ params }) {
           onApprove={handleApproveMilestone}
           onReject={handleRejectMilestone}
           onSubmit={handleSubmitMilestone}
+          actionsDisabled={isDisputePending}
         />
       </section>
 
       {/* Dispute Modal */}
-      <DisputeModal 
-        isOpen={isDisputeOpen} 
-        onClose={() => setDisputeOpen(false)} 
+      <DisputeModal
+        isOpen={isDisputeOpen}
+        onClose={() => setDisputeOpen(false)}
         escrowId={id}
         onSuccess={async () => await mutate()}
+        onOptimisticStart={() => applyOptimisticDispute('Disputed')}
+        onOptimisticRevert={revertOptimisticDispute}
       />
 
       {/* Cancel Escrow Modal */}

@@ -10,6 +10,8 @@
  * @param {Function} props.onApprove(id)     — client approves milestone
  * @param {Function} props.onReject(id)      — client rejects milestone
  * @param {Function} props.onSubmit(id)      — freelancer submits milestone
+ * @param {boolean}  [props.actionsDisabled] — disable all action buttons (e.g. while
+ *                                             an optimistic dispute is in flight)
  *
  * TODO (contributor — medium, Issue #40):
  * - Add animated connector line between milestone items
@@ -19,7 +21,14 @@
 
 import MilestoneItem from './MilestoneItem';
 
-export default function MilestoneList({ milestones = [], role, onApprove, onReject, onSubmit }) {
+export default function MilestoneList({
+  milestones = [],
+  role,
+  onApprove,
+  onReject,
+  onSubmit,
+  actionsDisabled = false,
+}) {
   if (milestones.length === 0) {
     return (
       <div className="card text-center py-10 text-gray-500">
@@ -77,6 +86,7 @@ export default function MilestoneList({ milestones = [], role, onApprove, onReje
               onApprove={onApprove}
               onReject={onReject}
               onSubmit={onSubmit}
+              actionsDisabled={actionsDisabled}
               isLast={index === milestones.length - 1}
             />
           ))}

@@ -204,6 +204,46 @@ const recordEscrowCancellation = async (address, wasAtFault, escrowId, tenantId)
   }
 };
 
+// Maps internal `reputationEvent.eventType` values to the public event-history
+// API's `type` field (#455). Only these three are user-facing history entries;
+// CANCELLATION is an internal penalty record, not part of this endpoint's shape.
+const PUBLIC_EVENT_TYPE = {
+  ESCROW_COMPLETED: 'COMPLETION',
+  DISPUTE_WON: 'DISPUTE_WIN',
+  DISPUTE_LOST: 'DISPUTE_LOSS',
+};
+
+/**
+ * Fetch an address's reputation event history, newest first, for the public
+ * `GET /users/:address/reputation/events` endpoint (#455).
+ *
+ * @param {string} address - Stellar address
+ * @param {{ limit?: number, skip?: number }} options - pagination window
+ * @returns {Promise<{ events: Array<{type: string, escrowId: string, timestamp: Date, scoreDelta: number}>, total: number }>}
+ */
+const fetchEvents = async (address, { limit = 20, skip = 0 } = {}) => {
+  const where = { address, eventType: { in: Object.keys(PUBLIC_EVENT_TYPE) } };
+
+  const [records, total] = await Promise.all([
+    prisma.reputationEvent.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      skip,
+    }),
+    prisma.reputationEvent.count({ where }),
+  ]);
+
+  const events = records.map((record) => ({
+    type: PUBLIC_EVENT_TYPE[record.eventType],
+    escrowId: record.escrowId?.toString?.() ?? record.escrowId,
+    timestamp: record.createdAt,
+    scoreDelta: record.scoreDelta,
+  }));
+
+  return { events, total };
+};
+
 /**
  * Recalculate all reputation scores from event history.
  * Used for corrections after bugs or audits.
@@ -257,6 +297,7 @@ const recalculateFromEventHistory = async (tenantId) => {
 export {
   BADGE_THRESHOLDS,
   computeCompletionRate,
+  fetchEvents,
   getBadge,
   getLeaderboard,
   getPercentileRank,
@@ -271,6 +312,7 @@ export default {
   getReputationByAddress,
   getBadge,
   computeCompletionRate,
+  fetchEvents,
   getLeaderboard,
   getPercentileRank,
   BADGE_THRESHOLDS,
