@@ -72,6 +72,62 @@ security:
   - BearerAuth: []
 
 paths:
+  /api/v1/escrows/stats:
+    get:
+      tags: [Escrows]
+      summary: Get summary statistics for the authenticated user's escrows
+      operationId: getEscrowStats
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Escrow summary statistics for the current user in the current tenant
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: object
+                    required:
+                      - activeCount
+                      - completedCount
+                      - disputedCount
+                      - totalValueLocked
+                      - totalValueReleased
+                    properties:
+                      activeCount:
+                        type: integer
+                        example: 3
+                      completedCount:
+                        type: integer
+                        example: 12
+                      disputedCount:
+                        type: integer
+                        example: 1
+                      totalValueLocked:
+                        type: string
+                        description: Sum of remaining amounts in active and disputed escrows, in stroops.
+                        example: '15000000'
+                      totalValueReleased:
+                        type: string
+                        description: Amount released from the user's escrows, in stroops.
+                        example: '42000000'
+                  meta:
+                    type: object
+                    properties:
+                      requestId:
+                        type: string
+                        nullable: true
+                      timestamp:
+                        type: string
+                        format: date-time
+                      version:
+                        type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /health:
     get:
       tags: [Health]

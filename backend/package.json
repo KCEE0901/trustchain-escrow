@@ -9,6 +9,7 @@
     "build": "echo 'No build step required for backend'",
     "prestart": "node ../scripts/check-env.js",
     "start": "node server.js",
+    "validate:openapi": "swagger-cli validate openapi.yaml",
     "test": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --runInBand --passWithNoTests",
     "test:chaos": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --runInBand --testPathPattern=tests/chaos --passWithNoTests",
     "lint": "eslint .",
@@ -85,6 +86,7 @@
     "jest": "^29.7.0",
     "nodemon": "^3.0.0",
     "prisma": "^5.0.0",
+    "swagger-cli": "^4.0.4",
     "supertest": "^6.3.4"
   },
   "validate-branch-name": {

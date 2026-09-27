@@ -303,6 +303,69 @@ const getMilestone = async (req, res) => {
   }
 };
 
+const ESCROW_STATS_CACHE_TTL = 60;
+
+const getEscrowStats = async (req, res) => {
+  try {
+    const address = req.user?.address;
+    const tenantId = req.tenant?.id;
+
+    if (!address) return res.status(401).json({ error: 'Authenticated user address is required' });
+    if (!tenantId) return res.status(400).json({ error: 'Tenant context is required' });
+
+    const cacheKey = `escrow:stats:${tenantId}:${address}`;
+    let stats = await cache.get(cacheKey).catch(() => null);
+    if (stats !== null && stats !== undefined) return res.json(stats);
+
+    const escrows = await prisma.escrow.findMany({
+      where: {
+        tenantId,
+        OR: [{ clientAddress: address }, { freelancerAddress: address }],
+      },
+      select: { status: true, totalAmount: true, remainingBalance: true },
+    });
+
+    const totals = escrows.reduce(
+      (summary, escrow) => {
+        const totalAmount = BigInt(escrow.totalAmount || '0');
+        const remainingBalance = BigInt(escrow.remainingBalance || '0');
+
+        if (escrow.status === 'Active') summary.activeCount++;
+        if (escrow.status === 'Completed') summary.completedCount++;
+        if (escrow.status === 'Disputed') summary.disputedCount++;
+        if (escrow.status === 'Active' || escrow.status === 'Disputed') {
+          summary.totalValueLocked += remainingBalance;
+        }
+        summary.totalValueReleased += totalAmount - remainingBalance;
+        return summary;
+      },
+      {
+        activeCount: 0,
+        completedCount: 0,
+        disputedCount: 0,
+        totalValueLocked: 0n,
+        totalValueReleased: 0n,
+      },
+    );
+
+    stats = {
+      activeCount: totals.activeCount,
+      completedCount: totals.completedCount,
+      disputedCount: totals.disputedCount,
+      totalValueLocked: totals.totalValueLocked.toString(),
+      totalValueReleased: totals.totalValueReleased.toString(),
+    };
+
+    await cache.set(cacheKey, stats, ESCROW_STATS_CACHE_TTL).catch((err) => {
+      console.warn('[Cache] Failed to cache escrow stats:', err.message);
+    });
+    return res.json(stats);
+  } catch (err) {
+    logControllerError('escrow.getEscrowStats', err, req);
+    return res.status(500).json({ error: err.message });
+  }
+};
+
 // ── Stats endpoints (with Redis caching) ─────────────────────────────────────
 
 const STATS_CACHE_TTL = 3600; // 1 hour in seconds
@@ -520,6 +583,7 @@ const searchEscrowsV1 = async (req, res) => {
 export default {
   listEscrows,
   getEscrow,
+  getEscrowStats,
   broadcastCreateEscrow,
   getMilestones,
   getMilestone,

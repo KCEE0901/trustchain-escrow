@@ -11,6 +11,11 @@ const router = express.Router();
 router.use(authMiddleware);
 
 /**
+ * @route  GET /api/v1/escrows/stats
+ */
+router.get('/stats', escrowController.getEscrowStats);
+
+/**
  * @route  GET /api/escrows
  */
 router.get(

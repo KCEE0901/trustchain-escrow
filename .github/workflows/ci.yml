@@ -294,6 +294,34 @@ jobs:
   # ─────────────────────────────────────────
   # ⚙️ Backend (Node.js)
   # ─────────────────────────────────────────
+  openapi:
+    name: OpenAPI Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect backend changes
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+
+      - name: Setup Node
+        if: steps.changes.outputs.backend == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        if: steps.changes.outputs.backend == 'true'
+        run: npm ci --ignore-scripts
+
+      - name: Validate OpenAPI spec
+        if: steps.changes.outputs.backend == 'true'
+        run: npm run validate:openapi --workspace backend
+
   backend:
     name: Backend (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
