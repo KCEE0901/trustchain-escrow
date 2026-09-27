@@ -1,14 +1,14 @@
 import { jest } from '@jest/globals';
 
 const prismaMock = {
-  payment: { findMany: jest.fn() },
-  escrow: { findMany: jest.fn() },
-  contractEvent: { findMany: jest.fn() },
-  user: { findMany: jest.fn() },
-  kycVerification: { findMany: jest.fn() },
+  payment: { findMany: jest.fn(), count: jest.fn() },
+  escrow: { findMany: jest.fn(), count: jest.fn() },
+  contractEvent: { findMany: jest.fn(), count: jest.fn() },
+  user: { findMany: jest.fn(), count: jest.fn() },
+  kycVerification: { findMany: jest.fn(), count: jest.fn() },
   userProfile: { findMany: jest.fn() },
   reputationRecord: { findMany: jest.fn() },
-  auditLog: { findMany: jest.fn() },
+  auditLog: { findMany: jest.fn(), count: jest.fn() },
   adminAuditLog: { findMany: jest.fn() },
 };
 
@@ -41,6 +41,7 @@ const {
   __resetForTests,
   createSchedule,
   disableSchedule,
+  estimateResultSize,
   exportReport,
   generateReport,
   getExportJob,
@@ -48,6 +49,7 @@ const {
   listSchedules,
   processDueSchedules,
   startExportJob,
+  validateFilters,
 } = await import('../services/complianceService.js');
 
 beforeEach(() => {
@@ -137,6 +139,14 @@ beforeEach(() => {
       performedAt: new Date('2026-03-01T03:00:00Z'),
     },
   ]);
+
+  // Default count mocks (match findMany lengths above)
+  prismaMock.payment.count.mockResolvedValue(1);
+  prismaMock.escrow.count.mockResolvedValue(1);
+  prismaMock.contractEvent.count.mockResolvedValue(1);
+  prismaMock.user.count.mockResolvedValue(1);
+  prismaMock.kycVerification.count.mockResolvedValue(1);
+  prismaMock.auditLog.count.mockResolvedValue(0);
   auditServiceMock.search.mockResolvedValue({
     total: 1,
     data: [
@@ -244,5 +254,182 @@ describe('complianceService', () => {
       expect(() => startExportJob('transactions', 'xml')).toThrow(/Unsupported export format/);
       expect(getExportJob('export_missing')).toBeNull();
     });
+  });
+});
+
+// ── validateFilters ───────────────────────────────────────────────────────────
+
+describe('validateFilters', () => {
+  it('passes for a valid transactions filter set', () => {
+    expect(() =>
+      validateFilters('transactions', {
+        from: '2026-01-01',
+        to: '2026-03-31',
+        status: 'Completed',
+        format: 'csv',
+        tenant: 'acme',
+      }),
+    ).not.toThrow();
+  });
+
+  it('passes for a valid users filter with kycStatus', () => {
+    expect(() =>
+      validateFilters('users', { status: 'Approved', format: 'json' }),
+    ).not.toThrow();
+  });
+
+  it('passes for activity report with no status constraint', () => {
+    expect(() => validateFilters('activity', { from: '2026-01-01' })).not.toThrow();
+  });
+
+  it('throws for an unknown report type', () => {
+    expect(() => validateFilters('unknown', {})).toThrow(/Unsupported report type/);
+  });
+
+  it('throws when "from" is an invalid date string', () => {
+    expect(() =>
+      validateFilters('transactions', { from: 'not-a-date' }),
+    ).toThrow(/Invalid "from" date/);
+  });
+
+  it('throws when "to" is an invalid date string', () => {
+    expect(() =>
+      validateFilters('transactions', { to: 'not-a-date' }),
+    ).toThrow(/Invalid "to" date/);
+  });
+
+  it('throws when "from" is later than "to"', () => {
+    expect(() =>
+      validateFilters('transactions', { from: '2026-06-01', to: '2026-01-01' }),
+    ).toThrow(/"from" date must not be later than "to" date/);
+  });
+
+  it('accepts equal "from" and "to" dates (same-day range)', () => {
+    expect(() =>
+      validateFilters('transactions', { from: '2026-03-01', to: '2026-03-01' }),
+    ).not.toThrow();
+  });
+
+  it('throws for an invalid export format', () => {
+    expect(() =>
+      validateFilters('transactions', { format: 'xlsx' }),
+    ).toThrow(/Invalid export format/);
+  });
+
+  it('throws for an invalid status on a transactions report', () => {
+    expect(() =>
+      validateFilters('transactions', { status: 'Unknown' }),
+    ).toThrow(/Invalid status/);
+  });
+
+  it('throws for an invalid KYC status on a users report', () => {
+    expect(() =>
+      validateFilters('users', { status: 'Completed' }),
+    ).toThrow(/Invalid status/);
+  });
+
+  it('ignores empty-string status (treated as "any")', () => {
+    expect(() => validateFilters('transactions', { status: '' })).not.toThrow();
+    expect(() => validateFilters('users', { status: '' })).not.toThrow();
+  });
+
+  it('ignores undefined / null optional fields', () => {
+    expect(() =>
+      validateFilters('transactions', { from: undefined, to: null, tenant: undefined, status: null }),
+    ).not.toThrow();
+  });
+});
+
+// ── estimateResultSize ────────────────────────────────────────────────────────
+
+describe('estimateResultSize', () => {
+  it('returns payment + escrow + event counts for transactions', async () => {
+    prismaMock.payment.count.mockResolvedValue(5);
+    prismaMock.escrow.count.mockResolvedValue(3);
+    prismaMock.contractEvent.count.mockResolvedValue(10);
+
+    const result = await estimateResultSize('transactions', {});
+
+    expect(result.type).toBe('transactions');
+    expect(result.counts).toEqual({ payments: 5, escrows: 3, ledgerEvents: 10 });
+    expect(result.totalEstimate).toBe(18);
+  });
+
+  it('returns user + kyc counts for users', async () => {
+    prismaMock.user.count.mockResolvedValue(50);
+    prismaMock.kycVerification.count.mockResolvedValue(40);
+
+    const result = await estimateResultSize('users', {});
+
+    expect(result.type).toBe('users');
+    expect(result.counts).toEqual({ users: 50, kycRecords: 40 });
+    expect(result.totalEstimate).toBe(50); // totalEstimate is user count
+  });
+
+  it('returns auditLog + contractEvent counts for activity', async () => {
+    prismaMock.auditLog.count.mockResolvedValue(100);
+    prismaMock.contractEvent.count.mockResolvedValue(20);
+
+    const result = await estimateResultSize('activity', {});
+
+    expect(result.type).toBe('activity');
+    expect(result.counts).toEqual({ auditLogs: 100, contractEvents: 20 });
+    expect(result.totalEstimate).toBe(120);
+  });
+
+  it('propagates date range filter to count queries', async () => {
+    prismaMock.payment.count.mockResolvedValue(2);
+    prismaMock.escrow.count.mockResolvedValue(1);
+    prismaMock.contractEvent.count.mockResolvedValue(3);
+
+    await estimateResultSize('transactions', {
+      from: '2026-01-01',
+      to: '2026-03-31',
+    });
+
+    expect(prismaMock.payment.count).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          createdAt: expect.objectContaining({ gte: expect.any(Date), lte: expect.any(Date) }),
+        }),
+      }),
+    );
+  });
+
+  it('propagates status filter for transactions', async () => {
+    prismaMock.payment.count.mockResolvedValue(1);
+    prismaMock.escrow.count.mockResolvedValue(1);
+    prismaMock.contractEvent.count.mockResolvedValue(1);
+
+    await estimateResultSize('transactions', { status: 'Completed' });
+
+    expect(prismaMock.payment.count).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: 'Completed' }),
+      }),
+    );
+  });
+
+  it('propagates kycStatus filter for users', async () => {
+    prismaMock.user.count.mockResolvedValue(10);
+    prismaMock.kycVerification.count.mockResolvedValue(8);
+
+    await estimateResultSize('users', { status: 'Approved' });
+
+    expect(prismaMock.kycVerification.count).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: 'Approved' }),
+      }),
+    );
+  });
+
+  it('throws for an invalid date range (from > to)', async () => {
+    await expect(
+      estimateResultSize('transactions', { from: '2026-12-01', to: '2026-01-01' }),
+    ).rejects.toThrow(/"from" date must not be later than "to" date/);
+  });
+
+  it('throws for an unknown report type', async () => {
+    await expect(estimateResultSize('unknown', {})).rejects.toThrow(/Unsupported report type/);
   });
 });
