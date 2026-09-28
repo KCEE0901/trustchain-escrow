@@ -169,6 +169,8 @@ export const searchApi = {
 
 export const kycApi = {
   getStatus: (address: string) => api.get(`/api/kyc/status/${address}`),
+  getKycStatus: (address: string) =>
+    api.get<{ address: string; status?: string }>(`/api/kyc/status/${address}`),
   getToken: (address: string) => api.post('/api/kyc/token', { address }),
 };
 

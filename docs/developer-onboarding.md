@@ -16,9 +16,10 @@ Welcome to **Trustchain Escrow**! This guide will take you step-by-step through 
    - [Backend API Gateway](#1-backend-api-gateway)
    - [Event Indexer & Workers](#2-event-indexer--workers)
    - [Frontend Web Application](#3-frontend-web-application)
-8. [Testing & Quality Verification](#testing--quality-verification)
-9. [Troubleshooting Guide](#troubleshooting-guide)
-10. [Cross-References](#cross-references)
+8. [Mobile App Setup (Expo / React Native)](#mobile-app-setup-expo--react-native)
+9. [Testing & Quality Verification](#testing--quality-verification)
+10. [Troubleshooting Guide](#troubleshooting-guide)
+11. [Cross-References](#cross-references)
 
 ---
 
@@ -216,6 +217,50 @@ npm install
 npm run dev
 ```
 - Web Application will start at [`http://localhost:3000`](http://localhost:3000)
+
+---
+
+## Mobile App Setup (Expo / React Native)
+
+The mobile app (`mobile/`) is an Expo + React Native (Expo Router) client for iOS and Android. See [`mobile/README.md`](../mobile/README.md) for the full architecture overview.
+
+### Prerequisites
+
+| Tool | Minimum Version | Verification Command |
+| :--- | :--- | :--- |
+| **Node.js** | `>= 20.x` (LTS) | `node -v` |
+| **Expo CLI** | via `npx expo` (no global install required) | `npx expo --version` |
+| **iOS Simulator** (macOS only) | Xcode `>= 15` | `xcrun simctl list` |
+| **Android Emulator** | Android Studio + an AVD image | `emulator -list-avds` |
+
+You only need one of the iOS Simulator or Android Emulator to get started; Expo Go on a physical device also works.
+
+### Setup Steps
+
+```bash
+cd mobile
+
+# Install dependencies
+npm install
+
+# Configure environment variables
+cp .env.example .env
+# Set EXPO_PUBLIC_API_URL to your backend URL (e.g. http://localhost:4000)
+
+# Start the Expo dev server
+npx expo start
+```
+
+From the Expo dev server, press `i` to launch the iOS Simulator, `a` for the Android Emulator, or scan the QR code with Expo Go on a physical device.
+
+Required environment variables are documented in [`mobile/.env.example`](../mobile/.env.example), including `EXPO_PUBLIC_API_URL`, `EXPO_PUBLIC_STELLAR_NETWORK`, and `EXPO_PUBLIC_SOROBAN_RPC_URL`.
+
+### Mobile Troubleshooting
+
+- **Metro bundler cache issues** (stale bundle, "Unable to resolve module" after adding a dependency): clear the cache with `npx expo start -c`.
+- **iOS Simulator won't boot / "no devices available"**: open Xcode once to accept the license, then run `xcrun simctl list` to confirm a simulator runtime is installed.
+- **Android emulator not detected**: ensure `ANDROID_HOME`/`ANDROID_SDK_ROOT` is set and an AVD exists (`Android Studio → Device Manager`); verify with `emulator -list-avds`.
+- **App can't reach the backend from a physical device**: `localhost` on your machine isn't reachable from a phone — set `EXPO_PUBLIC_API_URL` to your machine's LAN IP (e.g. `http://192.168.1.20:4000`) instead.
 
 ---
 

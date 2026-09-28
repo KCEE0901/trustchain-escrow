@@ -6,10 +6,12 @@ const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
   Completed: { bg: '#1e3a5f', text: '#60a5fa' },
   Disputed: { bg: '#7c2d12', text: '#fb923c' },
   Cancelled: { bg: '#1f2937', text: '#9ca3af' },
-  Pending: { bg: '#1c1917', text: '#a8a29e' },
+  Pending: { bg: '#78350f', text: '#fbbf24' },
   Submitted: { bg: '#1e3a5f', text: '#93c5fd' },
   Approved: { bg: '#064e3b', text: '#6ee7b7' },
   Rejected: { bg: '#7c2d12', text: '#fca5a5' },
+  Verified: { bg: '#064e3b', text: '#34d399' },
+  Unverified: { bg: '#1f2937', text: '#9ca3af' },
 };
 
 interface BadgeProps {

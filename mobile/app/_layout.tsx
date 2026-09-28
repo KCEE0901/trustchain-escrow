@@ -3,14 +3,33 @@
  */
 
 import React, { useEffect } from 'react';
+import { View, Text, StyleSheet } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useWalletStore } from '../store/useWalletStore';
 import { initOfflineDb } from '../services/offlineCache';
 import { setupNotificationListeners } from '../services/notifications';
+import { isTestnet } from '../lib/stellar';
+
+/** Small pill indicating the active Stellar network. Hidden on mainnet. */
+function NetworkBadge() {
+  const insets = useSafeAreaInsets();
+
+  if (!isTestnet) return null;
+
+  return (
+    <View
+      style={[styles.networkBadge, { top: insets.top + 6 }]}
+      pointerEvents="none"
+      accessibilityLabel="Connected to Stellar testnet"
+    >
+      <Text style={styles.networkBadgeText}>TESTNET</Text>
+    </View>
+  );
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -78,8 +97,29 @@ export default function RootLayout() {
             <Stack.Screen name="kyc/index" options={{ title: 'KYC Verification' }} />
             <Stack.Screen name="settings/index" options={{ title: 'Settings' }} />
           </Stack>
+          <NetworkBadge />
         </QueryClientProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
 }
+
+const styles = StyleSheet.create({
+  networkBadge: {
+    position: 'absolute',
+    right: 12,
+    backgroundColor: '#78350f',
+    borderColor: '#fbbf24',
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    zIndex: 999,
+  },
+  networkBadgeText: {
+    color: '#fbbf24',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+});

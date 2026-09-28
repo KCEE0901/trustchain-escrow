@@ -2,6 +2,8 @@
 
 React Native (Expo) app for iOS and Android.
 
+> New to the project? See the [mobile setup section in the Developer Onboarding Guide](../docs/developer-onboarding.md#mobile-app-setup-expo--react-native) for prerequisites and troubleshooting.
+
 ## Stack
 
 - Expo SDK 52 + Expo Router (file-based navigation)

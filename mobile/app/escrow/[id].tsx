@@ -1,80 +1,3 @@
-import { useState, useEffect } from 'react';
-import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
-import * as LocalAuthentication from 'expo-local-authentication';
-import { getCachedEscrow, type Escrow } from '../../services/offlineCache';
-
-function isBiometricEnabled(): boolean {
-  return true;
-}
-
-export default function EscrowDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
-  const [escrow, setEscrow] = useState<Escrow | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [authed, setAuthed] = useState(false);
-  const [authChecked, setAuthChecked] = useState(false);
-
-  useEffect(() => {
-    async function authenticate() {
-      if (!isBiometricEnabled()) {
-        setAuthed(true);
-        setAuthChecked(true);
-        return;
-      }
-
-      try {
-        const result = await LocalAuthentication.authenticateAsync({
-          promptMessage: 'Authenticate to view escrow details',
-          fallbackLabel: 'Use passcode',
-        });
-        setAuthed(result.success);
-      } catch {
-        setAuthed(false);
-      } finally {
-        setAuthChecked(true);
-      }
-    }
-
-    authenticate();
-  }, []);
-
-  useEffect(() => {
-    if (!authChecked || !authed || !id) return;
-
-    async function loadEscrow() {
-      setIsLoading(true);
-      try {
-        const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:4000';
-        const res = await fetch(`${API_URL}/api/escrows/${id}`);
-        if (!res.ok) throw new Error(`API error: ${res.status}`);
-        const data = await res.json();
-        setEscrow(data);
-      } catch {
-        const cached = getCachedEscrow(id);
-        setEscrow(cached);
-      } finally {
-        setIsLoading(false);
-      }
-    }
-
-    loadEscrow();
-  }, [id, authChecked, authed]);
-
-  if (!authChecked) {
-    return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color="#6366f1" />
-        <Text style={styles.loadingText}>Verifying identity...</Text>
-      </View>
-    );
-  }
-
-  if (!authed) {
-    return (
-      <View style={styles.center}>
-        <Text style={styles.errorText}>Authentication required to view escrow details.</Text>
-      </View>
 /**
  * Escrow Detail Screen — biometric-gated.
  */
@@ -90,7 +13,7 @@ import Card from '../../components/ui/Card';
 import MilestoneItem from '../../components/escrow/MilestoneItem';
 import Button from '../../components/ui/Button';
 import EmptyState from '../../components/ui/EmptyState';
-import { truncateAddress, stroopsToXlm, explorerUrl } from '../../lib/stellar';
+import { truncateAddress, stroopsToXlm, explorerUrl, parseTransactionError } from '../../lib/stellar';
 import { authenticate, isBiometricEnabled } from '../../services/biometrics';
 
 export default function EscrowDetailScreen() {
@@ -99,10 +22,24 @@ export default function EscrowDetailScreen() {
   const router = useRouter();
   const [authed, setAuthed] = useState(!isBiometricEnabled());
 
-  const { data: escrow, isLoading, refetch } = useEscrow(authed && id ? id : null);
+  const {
+    data: escrow,
+    isLoading,
+    error: escrowError,
+    refetch,
+  } = useEscrow(authed && id ? id : null);
   const { data: milestones = [], isLoading: milestonesLoading } = useMilestones(
     authed && escrow && id ? id : null,
   );
+
+  useEffect(() => {
+    if (escrowError) {
+      // Raw error always logged for debugging; UI only ever shows the parsed message.
+      console.error('[Escrow] transaction error:', escrowError);
+    }
+  }, [escrowError]);
+
+  const errorMessage = escrowError ? parseTransactionError(escrowError) : null;
 
   useEffect(() => {
     if (!authed && isBiometricEnabled()) {
@@ -133,10 +70,6 @@ export default function EscrowDetailScreen() {
 
   if (isLoading) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color="#6366f1" />
-        <Text style={styles.loadingText}>Loading escrow...</Text>
-      </View>
       <SafeAreaView style={styles.safe}>
         <EmptyState icon="⏳" title="Loading escrow…" />
       </SafeAreaView>
@@ -145,18 +78,6 @@ export default function EscrowDetailScreen() {
 
   if (!escrow) {
     return (
-      <View style={styles.center}>
-        <Text style={styles.errorText}>Escrow not found.</Text>
-      </View>
-    );
-  }
-
-  return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Escrow #{escrow.id}</Text>
-      <View style={styles.statusRow}>
-        <Text style={styles.label}>Status:</Text>
-        <Text style={styles.value}>{escrow.status}</Text>
       <SafeAreaView style={styles.safe}>
         <EmptyState
           icon="❌"
@@ -242,6 +163,12 @@ export default function EscrowDetailScreen() {
                 style={styles.actionBtn}
               />
             )}
+          </View>
+        )}
+
+        {errorMessage && (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorBannerText}>⚠️ {errorMessage}</Text>
           </View>
         )}
 
@@ -355,4 +282,13 @@ const styles = StyleSheet.create({
   disputeCard: { marginTop: 16, borderColor: '#7c2d12', backgroundColor: '#1c0a00' },
   disputeTitle: { fontSize: 15, fontWeight: '700', color: '#fb923c', marginBottom: 6 },
   disputeText: { fontSize: 13, color: '#9ca3af', lineHeight: 20 },
+  errorBanner: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: '#1c0a00',
+    borderWidth: 1,
+    borderColor: '#7c2d12',
+  },
+  errorBannerText: { fontSize: 13, color: '#fca5a5', lineHeight: 18 },
 });
