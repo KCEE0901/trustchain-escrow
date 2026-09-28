@@ -140,10 +140,10 @@ A public, open-source blockchain network optimised for fast, low-cost asset
 transfers and programmable financial logic via the Soroban smart contract runtime.
 Stellar uses the Federated Byzantine Agreement (FBA) consensus protocol.
 
-**XLM (Lumen)**
+<a id="xlm-lumen"></a>**XLM (Lumen)**
 The native asset of the Stellar network, used to pay transaction fees and maintain
 account reserves. XLM can be used directly as the funding token in a Trustchain
-escrow.
+escrow. See also [stroops](#stroops), the unit XLM is denominated in on-chain.
 
 **Stellar Address**
 A base32-encoded public key (e.g. `GBBD47...`) that identifies an account on the
@@ -174,6 +174,18 @@ simulate, and broadcast contract transactions.
 An incrementing integer that identifies each closed ledger (block) on the Stellar
 network. Timelocks and event timestamps are expressed in ledger sequences or Unix
 timestamps derived from them.
+
+<a id="ledger-entry"></a>**Ledger Entry**
+A single piece of state stored on the Stellar ledger — an account, a trustline, a
+contract's data key, or a contract's Wasm code. Every read or write a transaction
+performs is against one or more ledger entries, and Soroban transactions must
+declare theirs up front in the transaction's [footprint](#footprint).
+
+<a id="stroops"></a>**Stroops**
+The smallest indivisible unit of [XLM](#xlm-lumen): 1 XLM = 10,000,000 stroops.
+Soroban contracts represent all token amounts, including escrow balances, as
+`i128` stroops rather than fractional XLM to avoid floating-point rounding in
+financial logic.
 
 **Testnet**
 Stellar's public test network, which mirrors mainnet functionality but uses
@@ -211,6 +223,17 @@ Soroban's key-value persistence layer. Trustchain uses `Persistent` storage for
 escrow state (survives ledger expiry cycles) and `Temporary` storage for short-lived
 nonces. See [contracts/escrow_contract/src/storage.rs](../contracts/escrow_contract/src/storage.rs).
 
+<a id="rent-reserve"></a>**Rent Reserve**
+The XLM balance an account or contract must hold to keep its [ledger entries](#ledger-entry)
+from being archived. Soroban charges rent to fund network-wide state size, and an
+entry whose rent lapses is evicted from the ledger until restored.
+
+**TTL Bump**
+A contract call (`extend_ttl`, or the higher-level `bump_footprint_expiration`) that
+pays additional [stroops](#stroops) of [rent reserve](#rent-reserve) to push out a
+ledger entry's time-to-live, preventing it from being archived before Trustchain's
+escrow or milestone state is next read or written.
+
 **Authorization (`require_auth`)**
 A Soroban host call that enforces that a specific `Address` signed the current
 transaction. Trustchain calls `client.require_auth()` before releasing funds and
@@ -221,10 +244,10 @@ A dry-run of a Soroban invocation via Soroban RPC that returns estimated resourc
 usage and the expected return value without committing to the ledger. The frontend
 always simulates before broadcasting to catch errors early.
 
-**Footprint**
-The set of ledger entries a Soroban transaction declares it will read or write.
-The Soroban host validates that the transaction only accesses entries in its
-declared footprint, preventing unexpected side effects.
+<a id="footprint"></a>**Footprint**
+The set of [ledger entries](#ledger-entry) a Soroban transaction declares it will
+read or write. The Soroban host validates that the transaction only accesses
+entries in its declared footprint, preventing unexpected side effects.
 
 ---
 
