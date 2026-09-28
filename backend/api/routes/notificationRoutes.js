@@ -34,6 +34,20 @@ async function enqueueNotification(eventType, data) {
   }
 }
 
+router.post('/push-token', async (req, res) => {
+  try {
+    const { address, token, platform } = req.body || {};
+    if (!address || !token) {
+      return res.status(400).json({ error: 'address and token are required' });
+    }
+
+    const registered = emailService.registerPushToken(address, token, platform);
+    return res.status(200).json(registered);
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+});
+
 router.post('/events', adminAuth, async (req, res) => {
   try {
     const { eventType, data } = req.body || {};

@@ -16,6 +16,8 @@ const {
   getPreference,
   getQueueSnapshot,
   notifyEscrowStatusChange,
+  notifyMilestoneCompleted,
+  registerPushToken,
   resubscribe,
   unsubscribe,
 } = await import('../services/emailService.js');
@@ -71,5 +73,49 @@ describe('emailService', () => {
     expect(buildUnsubscribeUrl(updated.email, updated.unsubscribeToken)).toContain(
       encodeURIComponent(updated.email),
     );
+  });
+
+  it('rejects registering a malformed push token', () => {
+    expect(() => registerPushToken('GABC...', 'not-a-real-token')).toThrow(
+      'A valid Expo push token is required',
+    );
+  });
+
+  it('sends a push notification alongside the email when a milestone is submitted', async () => {
+    const fetchMock = jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValue({ ok: true, json: async () => ({}) });
+
+    registerPushToken('GABC123', 'ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]', 'ios');
+
+    const result = await notifyMilestoneCompleted({
+      escrowId: 7,
+      milestoneIndex: 1,
+      milestoneTitle: 'Design mockups',
+      dashboardUrl: 'http://localhost:4000/escrows/7',
+      recipients: [{ email: 'client@example.com', address: 'GABC123' }],
+    });
+
+    expect(result.queued).toBe(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toBe('https://exp.host/--/api/v2/push/send');
+    const body = JSON.parse(options.body);
+    expect(body[0].to).toBe('ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]');
+    expect(body[0].data).toEqual({ type: 'milestone.submitted', escrowId: '7' });
+  });
+
+  it('does not fail the email flow when no push token is registered', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch');
+
+    const result = await notifyMilestoneCompleted({
+      escrowId: 8,
+      milestoneIndex: 1,
+      dashboardUrl: 'http://localhost:4000/escrows/8',
+      recipients: [{ email: 'other@example.com', address: 'GNOACCOUNT' }],
+    });
+
+    expect(result.queued).toBe(1);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

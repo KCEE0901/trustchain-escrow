@@ -32,6 +32,19 @@
         "CAMERA",
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE"
+      ],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": false,
+          "data": [
+            {
+              "scheme": "trustchain",
+              "host": "escrow"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
       ]
     },
     "web": {
@@ -55,7 +68,7 @@
         }
       ]
     ],
-    "scheme": "stellartrustescrow",
+    "scheme": ["stellartrustescrow", "trustchain"],
     "experiments": {
       "typedRoutes": true
     }

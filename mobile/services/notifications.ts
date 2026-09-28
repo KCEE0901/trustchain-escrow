@@ -80,6 +80,32 @@ export async function registerForPushNotifications(stellarAddress: string): Prom
   return token;
 }
 
+const VALID_ESCROW_ID = /^[0-9]+$/;
+
+/**
+ * Resolves the escrow deep link a notification should navigate to, if any.
+ * `milestone.submitted` is the event the backend fires when a contractor
+ * submits a milestone for client review; other event types also carry an
+ * `escrowId` and fall back to the same generic route.
+ */
+export function resolveNotificationEscrowId(
+  response: Notifications.NotificationResponse,
+): string | null {
+  const data = response.notification.request.content.data as
+    | Record<string, unknown>
+    | undefined;
+  const escrowId = data?.escrowId;
+
+  if (typeof escrowId !== 'string' || !VALID_ESCROW_ID.test(escrowId)) {
+    if (escrowId !== undefined) {
+      console.error(`[Security] Invalid escrowId in notification: ${String(escrowId)}`);
+    }
+    return null;
+  }
+
+  return escrowId;
+}
+
 /**
  * Sets up notification response listener (user taps a notification).
  * Returns a cleanup function.

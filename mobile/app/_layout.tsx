@@ -5,12 +5,17 @@
 import React, { useEffect } from 'react';
 import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import * as Linking from 'expo-linking';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useWalletStore } from '../store/useWalletStore';
 import { initOfflineDb } from '../services/offlineCache';
-import { setupNotificationListeners } from '../services/notifications';
+import {
+  setupNotificationListeners,
+  resolveNotificationEscrowId,
+  registerForPushNotifications,
+} from '../services/notifications';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -30,6 +35,22 @@ function resolveDeepLinkEscrowId(raw: unknown): string | null {
   return s;
 }
 
+/**
+ * Extracts the escrow id from a `trustchain://escrow/:id` (or
+ * `stellartrustescrow://escrow/:id`) deep link URL.
+ */
+function escrowIdFromDeepLink(url: string | null): string | null {
+  if (!url) return null;
+  try {
+    const { hostname, path } = Linking.parse(url);
+    if (hostname === 'escrow' && path) return resolveDeepLinkEscrowId(path);
+    if (path?.startsWith('escrow/')) return resolveDeepLinkEscrowId(path.slice('escrow/'.length));
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export default function RootLayout() {
   const hydrate = useWalletStore((s) => s.hydrate);
   const router = useRouter();
@@ -38,23 +59,39 @@ export default function RootLayout() {
     hydrate();
     initOfflineDb();
 
+    // Re-register the push token on every launch for an already-connected wallet
+    // (connect.tsx registers it the first time a wallet is connected).
+    const address = useWalletStore.getState().address;
+    if (address) {
+      void registerForPushNotifications(address);
+    }
+
     const cleanup = setupNotificationListeners(
       () => {}, // foreground — banner handles it
       (response) => {
-        const data = response.notification.request.content.data as Record<string, string>;
-        if (data?.escrowId) {
-          // Validate escrowId: only numeric chars, reject path traversal
-          const VALID_ESCROW_ID = /^[0-9]+$/;
-          if (VALID_ESCROW_ID.test(data.escrowId)) {
-            void router.push(`/escrow/${data.escrowId}`);
-          } else {
-            console.error(`[Security] Invalid escrowId in notification: ${data.escrowId}`);
-          }
+        const escrowId = resolveNotificationEscrowId(response);
+        if (escrowId) {
+          void router.push(`/escrow/${escrowId}`);
         }
       },
     );
 
-    return cleanup;
+    // Cold start: app was opened from a dead state via a trustchain:// link.
+    void Linking.getInitialURL().then((url) => {
+      const escrowId = escrowIdFromDeepLink(url);
+      if (escrowId) void router.push(`/escrow/${escrowId}`);
+    });
+
+    // Warm: app is already open and a trustchain:// link is tapped.
+    const linkingSub = Linking.addEventListener('url', ({ url }) => {
+      const escrowId = escrowIdFromDeepLink(url);
+      if (escrowId) void router.push(`/escrow/${escrowId}`);
+    });
+
+    return () => {
+      cleanup();
+      linkingSub.remove();
+    };
   }, [hydrate, router]);
 
   return (

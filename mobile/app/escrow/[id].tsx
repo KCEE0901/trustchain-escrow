@@ -1,80 +1,3 @@
-import { useState, useEffect } from 'react';
-import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
-import * as LocalAuthentication from 'expo-local-authentication';
-import { getCachedEscrow, type Escrow } from '../../services/offlineCache';
-
-function isBiometricEnabled(): boolean {
-  return true;
-}
-
-export default function EscrowDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
-  const [escrow, setEscrow] = useState<Escrow | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [authed, setAuthed] = useState(false);
-  const [authChecked, setAuthChecked] = useState(false);
-
-  useEffect(() => {
-    async function authenticate() {
-      if (!isBiometricEnabled()) {
-        setAuthed(true);
-        setAuthChecked(true);
-        return;
-      }
-
-      try {
-        const result = await LocalAuthentication.authenticateAsync({
-          promptMessage: 'Authenticate to view escrow details',
-          fallbackLabel: 'Use passcode',
-        });
-        setAuthed(result.success);
-      } catch {
-        setAuthed(false);
-      } finally {
-        setAuthChecked(true);
-      }
-    }
-
-    authenticate();
-  }, []);
-
-  useEffect(() => {
-    if (!authChecked || !authed || !id) return;
-
-    async function loadEscrow() {
-      setIsLoading(true);
-      try {
-        const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:4000';
-        const res = await fetch(`${API_URL}/api/escrows/${id}`);
-        if (!res.ok) throw new Error(`API error: ${res.status}`);
-        const data = await res.json();
-        setEscrow(data);
-      } catch {
-        const cached = getCachedEscrow(id);
-        setEscrow(cached);
-      } finally {
-        setIsLoading(false);
-      }
-    }
-
-    loadEscrow();
-  }, [id, authChecked, authed]);
-
-  if (!authChecked) {
-    return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color="#6366f1" />
-        <Text style={styles.loadingText}>Verifying identity...</Text>
-      </View>
-    );
-  }
-
-  if (!authed) {
-    return (
-      <View style={styles.center}>
-        <Text style={styles.errorText}>Authentication required to view escrow details.</Text>
-      </View>
 /**
  * Escrow Detail Screen — biometric-gated.
  */
@@ -83,7 +6,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, Alert, Linking, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEscrow, useMilestones } from '../../hooks/useEscrows';
+import { useEscrow, useMilestones, useApproveMilestone } from '../../hooks/useEscrows';
 import { useWalletStore } from '../../store/useWalletStore';
 import Badge from '../../components/ui/Badge';
 import Card from '../../components/ui/Card';
@@ -91,18 +14,51 @@ import MilestoneItem from '../../components/escrow/MilestoneItem';
 import Button from '../../components/ui/Button';
 import EmptyState from '../../components/ui/EmptyState';
 import { truncateAddress, stroopsToXlm, explorerUrl } from '../../lib/stellar';
-import { authenticate, isBiometricEnabled } from '../../services/biometrics';
+import { authenticate, isBiometricAvailable, isBiometricEnabled } from '../../services/biometrics';
+import type { Milestone } from '../../lib/api';
+
+/**
+ * Gates a sensitive action behind biometric re-authentication.
+ * Runs on every call — approval must never be cached across invocations.
+ * Falls back to an explicit warning when biometrics are unavailable/unenrolled,
+ * since failing open would let anyone approve a milestone release unattended.
+ */
+async function requireBiometricApproval(reason: string): Promise<boolean> {
+  const available = await isBiometricAvailable();
+
+  if (!available) {
+    return new Promise((resolve) => {
+      Alert.alert(
+        'Biometric authentication unavailable',
+        'This device has no biometrics enrolled, so we can’t verify it’s you. ' +
+          'Set up Face ID / Fingerprint in your device settings, or continue with reduced security.',
+        [
+          { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Continue anyway', style: 'destructive', onPress: () => resolve(true) },
+        ],
+      );
+    });
+  }
+
+  const ok = await authenticate(reason);
+  if (!ok) {
+    Alert.alert('Authentication failed', 'Biometric verification failed. The action was cancelled.');
+  }
+  return ok;
+}
 
 export default function EscrowDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const address = useWalletStore((s) => s.address);
   const router = useRouter();
   const [authed, setAuthed] = useState(!isBiometricEnabled());
+  const [approvingIndex, setApprovingIndex] = useState<number | null>(null);
 
   const { data: escrow, isLoading, refetch } = useEscrow(authed && id ? id : null);
   const { data: milestones = [], isLoading: milestonesLoading } = useMilestones(
     authed && escrow && id ? id : null,
   );
+  const approveMilestone = useApproveMilestone(id ?? null);
 
   useEffect(() => {
     if (!authed && isBiometricEnabled()) {
@@ -115,6 +71,24 @@ export default function EscrowDetailScreen() {
       });
     }
   }, [authed, router]);
+
+  async function handleApproveMilestone(milestone: Milestone) {
+    const ok = await requireBiometricApproval('Approve milestone release');
+    if (!ok) return;
+
+    setApprovingIndex(milestone.milestoneIndex);
+    try {
+      await approveMilestone.mutateAsync(milestone.milestoneIndex);
+      Alert.alert('Milestone approved', 'The milestone release transaction was submitted.');
+    } catch (err) {
+      Alert.alert(
+        'Approval failed',
+        err instanceof Error ? err.message : 'Something went wrong. Please try again.',
+      );
+    } finally {
+      setApprovingIndex(null);
+    }
+  }
 
   // Render skeleton while biometric auth is pending
   if (!authed && isBiometricEnabled()) {
@@ -133,10 +107,6 @@ export default function EscrowDetailScreen() {
 
   if (isLoading) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color="#6366f1" />
-        <Text style={styles.loadingText}>Loading escrow...</Text>
-      </View>
       <SafeAreaView style={styles.safe}>
         <EmptyState icon="⏳" title="Loading escrow…" />
       </SafeAreaView>
@@ -145,18 +115,6 @@ export default function EscrowDetailScreen() {
 
   if (!escrow) {
     return (
-      <View style={styles.center}>
-        <Text style={styles.errorText}>Escrow not found.</Text>
-      </View>
-    );
-  }
-
-  return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Escrow #{escrow.id}</Text>
-      <View style={styles.statusRow}>
-        <Text style={styles.label}>Status:</Text>
-        <Text style={styles.value}>{escrow.status}</Text>
       <SafeAreaView style={styles.safe}>
         <EmptyState
           icon="❌"
@@ -214,7 +172,21 @@ export default function EscrowDetailScreen() {
           {milestones.length === 0 ? (
             <Text style={styles.emptyMilestones}>No milestones yet.</Text>
           ) : (
-            milestones.map((m, i) => <MilestoneItem key={m.id} milestone={m} index={i} />)
+            milestones.map((m, i) => (
+              <View key={m.id}>
+                <MilestoneItem milestone={m} index={i} />
+                {isClient && m.status === 'Submitted' && (
+                  <Button
+                    title={
+                      approvingIndex === m.milestoneIndex ? 'Approving…' : 'Approve Milestone'
+                    }
+                    onPress={() => void handleApproveMilestone(m)}
+                    disabled={approvingIndex !== null}
+                    style={styles.approveBtn}
+                  />
+                )}
+              </View>
+            ))
           )}
         </Card>
 
@@ -271,46 +243,6 @@ function PartyRow({ label, address, isYou }: { label: string; address: string; i
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    padding: 16,
-    backgroundColor: '#0f172a',
-  },
-  center: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#0f172a',
-  },
-  title: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#ffffff',
-    marginBottom: 16,
-  },
-  statusRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 8,
-  },
-  label: {
-    color: '#94a3b8',
-    fontSize: 14,
-  },
-  value: {
-    color: '#ffffff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  loadingText: {
-    color: '#94a3b8',
-    marginTop: 12,
-    fontSize: 14,
-  },
-  errorText: {
-    color: '#ef4444',
-    fontSize: 16,
-  },
   safe: { flex: 1, backgroundColor: '#0f0f0f' },
   content: { padding: 16, paddingBottom: 48 },
   skeleton: {
@@ -350,6 +282,7 @@ const styles = StyleSheet.create({
   },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: '#f9fafb', marginBottom: 10 },
   emptyMilestones: { color: '#6b7280', textAlign: 'center', padding: 16 },
+  approveBtn: { marginBottom: 12, marginTop: -4 },
   actionsSection: { marginTop: 24 },
   actionBtn: { marginBottom: 10 },
   disputeCard: { marginTop: 16, borderColor: '#7c2d12', backgroundColor: '#1c0a00' },

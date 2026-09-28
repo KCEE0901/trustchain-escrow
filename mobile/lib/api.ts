@@ -141,6 +141,11 @@ export const escrowApi = {
 
   broadcast: (signedXdr: string) =>
     api.post<{ hash: string; status: string }>('/api/escrows/broadcast', { signedXdr }),
+
+  approveMilestone: (id: string, milestoneIndex: number) =>
+    api.post<{ hash: string; status: string }>(
+      `/api/escrows/${id}/milestones/${milestoneIndex}/approve`,
+    ),
 };
 
 export const userApi = {
