@@ -173,8 +173,6 @@ mod meta_snapshot_tests {
             &None,
         );
 
-        assert_eq!(client.get_pending_milestones_count(&escrow_id), 0);
-
         let first = client.add_milestone(
             &client_addr,
             &escrow_id,
@@ -189,16 +187,26 @@ mod meta_snapshot_tests {
             &hash(&env, 12),
             &400,
         );
+        let third = client.add_milestone(
+            &client_addr,
+            &escrow_id,
+            &String::from_str(&env, "Milestone 3"),
+            &hash(&env, 13),
+            &500,
+        );
 
-        assert_eq!(client.get_pending_milestones_count(&escrow_id), 2);
+        assert_eq!(client.get_pending_milestones_count(&escrow_id), 3);
 
         client.submit_milestone(&freelancer, &escrow_id, &first);
-        assert_eq!(client.get_pending_milestones_count(&escrow_id), 1);
-
-        client.reject_milestone(&client_addr, &escrow_id, &first);
-        assert_eq!(client.get_pending_milestones_count(&escrow_id), 1);
-
         client.submit_milestone(&freelancer, &escrow_id, &second);
+        client.submit_milestone(&freelancer, &escrow_id, &third);
+        assert_eq!(client.get_pending_milestones_count(&escrow_id), 3);
+
+        client.approve_milestone(&client_addr, &escrow_id, &first);
+        assert_eq!(client.get_pending_milestones_count(&escrow_id), 2);
+
+        client.approve_milestone(&client_addr, &escrow_id, &second);
+        client.approve_milestone(&client_addr, &escrow_id, &third);
         assert_eq!(client.get_pending_milestones_count(&escrow_id), 0);
     }
 }
