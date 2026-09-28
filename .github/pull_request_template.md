@@ -38,3 +38,13 @@ Call out any context reviewers should know:
 - [ ] Documentation was updated when needed
 - [ ] No breaking changes, or they are clearly described
 - [ ] Screenshots or recordings are included for UI changes
+
+## Security Checklist (for contract/auth changes)
+
+_Optional — fill this in if your PR touches smart contracts, authentication, or authorization. Skip if not applicable._
+
+- [ ] No hardcoded secrets or private keys
+- [ ] Auth checks performed before any state mutation
+- [ ] Integer arithmetic reviewed for overflow/underflow
+- [ ] Input validation added for all new parameters
+- [ ] New endpoints have rate limiting applied

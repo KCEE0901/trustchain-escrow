@@ -304,7 +304,12 @@ paths:
                 signedXdr:
                   type: string
                   description: Base64-encoded signed Stellar transaction envelope
-                  example: AAAA...==
+                  example: AAAAAgAAAACoDaC/6JhP...vN8kR3XSdWi9cJd4iA9UzBw==
+            examples:
+              createEscrow:
+                summary: Signed create_escrow transaction (testnet)
+                value:
+                  signedXdr: AAAAAgAAAACoDaC/6JhP...vN8kR3XSdWi9cJd4iA9UzBw==
       responses:
         '202':
           description: Transaction accepted for broadcast
@@ -315,7 +320,7 @@ paths:
                 properties:
                   txHash:
                     type: string
-                    example: a1b2c3d4...
+                    example: a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -643,6 +648,87 @@ paths:
                 $ref: '#/components/schemas/Dispute'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/disputes/{id}/evidence:
+    post:
+      tags: [Disputes]
+      summary: File dispute evidence (files and/or a text description)
+      description: |
+        Accepts up to 5 files (multipart) and/or a text description as evidence
+        for an open dispute. Files are pinned to IPFS and hashed; the resulting
+        CID, SHA-256 file hash, and a Merkle root over the batch are stored
+        alongside the evidence record.
+      operationId: postEvidence
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Escrow / dispute ID
+          schema:
+            type: string
+            example: '482910'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                files:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+                  description: Up to 5 evidence files (image, PDF, or text)
+                role:
+                  type: string
+                  enum: [client, freelancer, arbiter, admin]
+                description:
+                  type: string
+                  description: Required when no files are attached
+            examples:
+              evidenceWithFiles:
+                summary: Evidence submission with a file and description
+                value:
+                  role: client
+                  description: Screenshot showing the delivered milestone did not include the requested API integration
+      responses:
+        '201':
+          description: Evidence recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DisputeEvidence'
+              examples:
+                created:
+                  summary: Evidence stored with IPFS CID and hashes
+                  value:
+                    data:
+                      - id: '9f2c1a'
+                        disputeId: '77'
+                        submittedBy: GDQNY3PBOJOKYZSRMK2S7LHHGWZIUISD4QORETLMXEWXBI7KFZZMKTL
+                        role: client
+                        evidenceType: image
+                        filename: milestone-3-review.png
+                        ipfsCid: bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi
+                        fileHash: 6c62272e07bb014262b821756295c58d7f3e944d0c78e6e0c1e4f6e4b1e7a2c
+                        merkleRoot: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b85
+                        submittedAt: '2024-06-05T15:30:00Z'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -2018,16 +2104,16 @@ components:
       properties:
         id:
           type: string
-          example: escrow_abc123
+          example: '482910'
         client:
           type: string
-          example: GDKHX...QZ4
+          example: GDQNY3PBOJOKYZSRMK2S7LHHGWZIUISD4QORETLMXEWXBI7KFZZMKTL
         freelancer:
           type: string
-          example: GDKHX...QZ4
+          example: GBXGQJWVLWOYHFLVTKWV4XCUQQCXA24PJ3W2CGVJJ2ODBHZQ4VJVMTZ
         totalAmount:
           type: string
-          example: '1000'
+          example: '2500'
         status:
           type: string
           enum: [Active, Completed, Disputed, Cancelled]
@@ -2037,6 +2123,14 @@ components:
         updatedAt:
           type: string
           format: date-time
+      example:
+        id: '482910'
+        client: GDQNY3PBOJOKYZSRMK2S7LHHGWZIUISD4QORETLMXEWXBI7KFZZMKTL
+        freelancer: GBXGQJWVLWOYHFLVTKWV4XCUQQCXA24PJ3W2CGVJJ2ODBHZQ4VJVMTZ
+        totalAmount: '2500'
+        status: Active
+        createdAt: '2024-06-01T12:00:00Z'
+        updatedAt: '2024-06-02T09:30:00Z'
 
     EscrowDetail:
       allOf:
@@ -2047,6 +2141,22 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/Milestone'
+      example:
+        id: '482910'
+        client: GDQNY3PBOJOKYZSRMK2S7LHHGWZIUISD4QORETLMXEWXBI7KFZZMKTL
+        freelancer: GBXGQJWVLWOYHFLVTKWV4XCUQQCXA24PJ3W2CGVJJ2ODBHZQ4VJVMTZ
+        totalAmount: '2500'
+        status: Active
+        createdAt: '2024-06-01T12:00:00Z'
+        updatedAt: '2024-06-02T09:30:00Z'
+        milestones:
+          - id: '1'
+            escrowId: '482910'
+            description: Deliver wireframes
+            amount: '1000'
+            status: Released
+            dueDate: '2024-06-10'
+            createdAt: '2024-06-01T12:00:00Z'
 
     PaginatedEscrows:
       allOf:
@@ -2200,6 +2310,61 @@ components:
           type: string
           format: date-time
           nullable: true
+      example:
+        id: '77'
+        escrowId: '482910'
+        raisedBy: GDQNY3PBOJOKYZSRMK2S7LHHGWZIUISD4QORETLMXEWXBI7KFZZMKTL
+        reason: Deliverable did not match the agreed brief hash
+        status: Open
+        resolution: null
+        createdAt: '2024-06-05T15:22:00Z'
+        resolvedAt: null
+
+    DisputeEvidence:
+      type: object
+      properties:
+        id:
+          type: string
+          example: '9f2c1a'
+        disputeId:
+          type: string
+          example: '77'
+        submittedBy:
+          type: string
+          example: GDQNY3PBOJOKYZSRMK2S7LHHGWZIUISD4QORETLMXEWXBI7KFZZMKTL
+        role:
+          type: string
+          enum: [client, freelancer, arbiter, admin]
+          example: client
+        evidenceType:
+          type: string
+          enum: [text, url, hash, file, image]
+          example: file
+        description:
+          type: string
+          example: Screenshot showing the delivered milestone did not include the requested API integration
+        filename:
+          type: string
+          nullable: true
+          example: milestone-3-review.png
+        ipfsCid:
+          type: string
+          nullable: true
+          description: IPFS CID the file was pinned under
+          example: bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi
+        fileHash:
+          type: string
+          nullable: true
+          description: SHA-256 hash of the file content (hex)
+          example: 6c62272e07bb014262b821756295c58d7f3e944d0c78e6e0c1e4f6e4b1e7a2c
+        merkleRoot:
+          type: string
+          nullable: true
+          description: Merkle root of all evidence files submitted in this batch
+          example: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b85
+        submittedAt:
+          type: string
+          format: date-time
 
     PaginatedDisputes:
       allOf:
@@ -2485,18 +2650,33 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: Missing or invalid authentication token
     NotFound:
       description: Resource not found
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: Escrow not found
     BadRequest:
       description: Validation error
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: Validation failed
+            message: 'amount must be a positive numeric string'
+    Forbidden:
+      description: Authenticated but not permitted to perform this action
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: Insufficient permissions for this action
 
   /api/expiry/status:
     get:

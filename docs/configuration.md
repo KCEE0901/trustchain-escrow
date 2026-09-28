@@ -33,7 +33,7 @@ Related reading:
   - [Webhooks](#webhooks)
   - [WebSockets](#websockets)
   - [Rate limiting](#rate-limiting)
-  - [Response caching](#response-caching)
+  - [Caching](#caching)
   - [Search (Elasticsearch)](#search-elasticsearch)
   - [Email](#email)
   - [IPFS and file uploads](#ipfs-and-file-uploads)
@@ -384,19 +384,71 @@ Full behaviour is documented in [docs/webhooks.md](webhooks.md).
 Webhook subscription creation carries its own hardcoded limit — 10 per 10-minute
 window, not configurable by environment.
 
-### Response caching
+### Caching
 
-All values are TTLs in **seconds**.
+Responses are cached in Redis (`backend/services/cacheService.js`), falling back to
+an in-process `Map` when `REDIS_URL` is unset or unreachable. HTTP-level caching is
+applied per-route by `backend/api/middleware/cache.js`.
 
-| Variable                | Default | Applies to                          |
-| ----------------------- | ------- | ----------------------------------- |
-| `CACHE_TTL_DEFAULT`     | `60`    | Any cached route without a specific TTL. |
-| `CACHE_TTL_LIST`        | `15`    | List endpoints.                     |
-| `CACHE_TTL_DETAIL`      | `30`    | Single-resource endpoints.          |
-| `CACHE_TTL_EVENTS`      | `15`    | Event timelines.                    |
-| `CACHE_TTL_LEADERBOARD` | `300`   | Reputation leaderboard.             |
-| `CACHE_TTL_REPUTATION`  | `60`    | Reputation lookups.                 |
-| `CACHE_TTL_STATIC`      | `600`   | Rarely-changing static payloads.    |
+#### Cache key naming convention
+
+Keys are built by `buildCacheKey()` as:
+
+```
+t:<tenant-slug>:http:<method>:<path>:<sha256-query-16chars>
+```
+
+- `<tenant-slug>` is the requesting tenant's slug, or `_global` for tenantless
+  routes (health checks, public metrics). This guarantees two tenants requesting
+  the same path never collide.
+- `<method>` and `<path>` are the HTTP method and route path (e.g. `GET`,
+  `/api/escrows/123`).
+- The query-string part is omitted for requests with no query params; otherwise
+  the sorted `key=value` pairs are SHA-256 hashed and the first 16 hex
+  characters are appended, keeping long filter/pagination queries from
+  bloating Redis key storage.
+
+Example: `GET /api/escrows/456` for tenant `acme` → `t:acme:http:GET:/api/escrows/456`.
+
+Invalidation uses a separate tag layer, not the key pattern above: cached
+entries are associated with logical tags (e.g. `escrows`, `escrow:456`) via
+`setWithTags()`, and tags are tenant-scoped as `t:<tenantId>:<tag>` so
+invalidating one tenant's data never touches another's. A tag is stored as a
+Redis Set (`tag:<name>` → member keys); invalidating a tag deletes every key
+it references.
+
+#### TTL standards
+
+All values are TTLs in **seconds**, configurable via environment variables
+(`backend/api/middleware/cache.js`).
+
+| Variable                | Default | Applies to                               |
+| ----------------------- | ------- | ------------------------------------------ |
+| `CACHE_TTL_DEFAULT`     | `60`    | Any cached route without a specific TTL.  |
+| `CACHE_TTL_LIST`        | `15`    | List endpoints (e.g. `GET /api/escrows`). |
+| `CACHE_TTL_DETAIL`      | `30`    | Single-resource endpoints (e.g. escrow, dispute, or milestone detail). |
+| `CACHE_TTL_EVENTS`      | `15`    | Event timelines and stats.                |
+| `CACHE_TTL_LEADERBOARD` | `300`   | Reputation leaderboard.                   |
+| `CACHE_TTL_REPUTATION`  | `60`    | Individual reputation lookups.            |
+| `CACHE_TTL_STATIC`      | `600`   | Rarely-changing static payloads (e.g. event type catalog). |
+
+#### Invalidation strategy by resource
+
+Mutating routes call `invalidateOn({ tags })`, which invalidates every key
+tagged with the given names — after the response by default, so a failed
+write doesn't evict good cache entries.
+
+| Resource    | Cache tags                                              | Invalidated on                                                        |
+| ----------- | -------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Escrows     | `escrows`, `escrow:<id>`, `escrow:list:<page>`            | `POST /api/escrows/broadcast` invalidates `escrows`; escrow detail is invalidated whenever its tag is touched by a dependent write. |
+| Milestones  | `escrow:<id>`, `milestones`, `milestone:<id>:<milestoneId>` | Milestone submission/approval invalidates the owning escrow's tag, cascading to its milestone list and detail views. |
+| Disputes    | `disputes`, `dispute:<escrowId>`, `disputes:history`       | Evidence upload, auto-resolve, arbiter resolve, and appeals all invalidate the dispute's tag; resolution additionally invalidates `escrows` and `escrow:<id>` since escrow status changes. |
+| Reputation  | `reputation`, `reputation:<address>`, `reputation:leaderboard` | Recalculation (`POST /api/reputation/admin/recalculate`) invalidates affected address tags; the leaderboard tag expires naturally via its longer TTL rather than being force-invalidated on every score change. |
+| Events      | `events`, `events:stats`, `events:types`                  | Not explicitly invalidated — short TTLs (`CACHE_TTL_EVENTS`) keep them close to real-time instead. |
+
+A tenant can also be flushed in bulk (`cacheService.flushTenant(slug)`),
+scanning and deleting every `t:<slug>:*` key — used on tenant suspension or
+deletion so no stale tenant data lingers in the cache.
 
 ### Search (Elasticsearch)
 

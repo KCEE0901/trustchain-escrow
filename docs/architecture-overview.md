@@ -7,21 +7,22 @@ This document provides a comprehensive, high-level architecture overview of **Tr
 ## Table of Contents
 
 1. [High-Level Architecture Diagram](#high-level-architecture-diagram)
-2. [Core Subsystems & Component Responsibilities](#core-subsystems--component-responsibilities)
+2. [Data Model](#data-model)
+3. [Core Subsystems & Component Responsibilities](#core-subsystems--component-responsibilities)
    - [User Client Applications (Frontend & Mobile)](#1-user-client-applications-frontend--mobile)
    - [REST API Gateway & Controllers](#2-rest-api-gateway--controllers)
    - [Stellar Soroban Smart Contracts](#3-stellar-soroban-smart-contracts)
    - [Escrow Event Indexer & Background Workers](#4-escrow-event-indexer--background-workers)
    - [Data Storage & Cache Infrastructure](#5-data-storage--cache-infrastructure)
    - [Decentralized Storage (IPFS)](#6-decentralized-storage-ipfs)
-3. [End-to-End Data Flow Sequences](#end-to-end-data-flow-sequences)
+4. [End-to-End Data Flow Sequences](#end-to-end-data-flow-sequences)
    - [1. Escrow Creation & Funding Flow](#1-escrow-creation--funding-flow)
    - [2. Milestone Submission & Fund Release Flow](#2-milestone-submission--fund-release-flow)
    - [3. Dispute Resolution & Evidence Filing Flow](#3-dispute-resolution--evidence-filing-flow)
    - [4. Real-time Event Indexing & Webhook Dispatch](#4-real-time-event-indexing--webhook-dispatch)
-4. [Security Architecture & Isolation Boundaries](#security-architecture--isolation-boundaries)
-5. [Scalability & Reliability Design](#scalability--reliability-design)
-6. [Cross-References](#cross-references)
+5. [Security Architecture & Isolation Boundaries](#security-architecture--isolation-boundaries)
+6. [Scalability & Reliability Design](#scalability--reliability-design)
+7. [Cross-References](#cross-references)
 
 ---
 
@@ -72,6 +73,105 @@ flowchart TB
     RPC --> GOV
     RPC --> INS
 ```
+
+---
+
+## Data Model
+
+Core entities in the PostgreSQL schema (`backend/database/schema.prisma`), scoped to
+the tables that carry the escrow lifecycle. Every table below also carries a
+`tenant_id` foreign key into `tenants` for multi-tenant isolation; that
+relationship is drawn once from `Tenant` rather than repeated on each entity.
+Only the fields relevant to understanding the model are shown — see the Prisma
+schema for the full column list, indexes, and additional tables (auth, KYC,
+payments, audit logs, chat).
+
+```mermaid
+erDiagram
+    Tenant ||--o{ User : "has"
+    Tenant ||--o{ Escrow : "has"
+    Tenant ||--o{ Milestone : "has"
+    Tenant ||--o{ Dispute : "has"
+    Tenant ||--o{ ReputationEvent : "has"
+
+    User ||--o{ Escrow : "creates (by wallet address)"
+    Escrow ||--o{ Milestone : "has"
+    Escrow ||--o| Dispute : "may have"
+    Escrow ||--o{ ReputationEvent : "generates"
+
+    Tenant {
+        string id PK
+        string slug UK
+        string name
+        string status
+    }
+
+    User {
+        int id PK
+        string tenant_id FK
+        string email UK
+        string wallet_address UK
+        string role
+    }
+
+    Escrow {
+        bigint id PK
+        string tenant_id FK
+        string client_address
+        string freelancer_address
+        string arbiter_address
+        string total_amount
+        string remaining_balance
+        enum status
+        datetime deadline
+    }
+
+    Milestone {
+        int id PK
+        string tenant_id FK
+        bigint escrow_id FK
+        int milestone_index
+        string title
+        string amount
+        enum status
+    }
+
+    Dispute {
+        int id PK
+        string tenant_id FK
+        bigint escrow_id FK "unique"
+        string raised_by_address
+        datetime raised_at
+        datetime resolved_at
+        string resolution_type
+    }
+
+    ReputationEvent {
+        string id PK
+        string tenant_id FK
+        string address
+        enum event_type
+        bigint escrow_id FK
+        int score_delta
+    }
+```
+
+Notes on relationships and keys:
+
+- **Tenant → everything**: every row carries `tenant_id`, enforced at the query
+  layer for cross-tenant isolation (see [Multi-Tenant Context Scoping](#security-architecture--isolation-boundaries)).
+- **Escrow → Milestone**: one-to-many via `Milestone.escrow_id`; a milestone is
+  further keyed by `(escrow_id, milestone_index)` to match its on-chain index.
+- **Escrow → Dispute**: one-to-one — `Dispute.escrow_id` is unique, since a
+  given escrow can only have one active dispute record.
+- **User ↔ Escrow**: not a direct foreign key. Escrows reference Stellar wallet
+  addresses (`client_address`, `freelancer_address`) rather than `User.id`,
+  since a wallet can transact without a registered account; joins go through
+  `User.wallet_address`.
+- **ReputationEvent → Escrow**: many-to-one and optional — cancellation events
+  are not tied to a specific escrow. Events feed the append-only audit trail
+  behind each address's `ReputationRecord` (aggregate score, not pictured
+  above — see the Prisma schema).
 
 ---
 
