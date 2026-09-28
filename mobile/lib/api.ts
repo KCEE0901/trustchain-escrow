@@ -16,6 +16,36 @@ export const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
+export function parseApiResponse<T>(body: unknown): T {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    return body as T;
+  }
+
+  const envelope = body as { data?: unknown; meta?: unknown };
+  return 'data' in envelope && 'meta' in envelope ? envelope.data as T : body as T;
+}
+
+export function preserveApiErrorCode(error: unknown): void {
+  if (!axios.isAxiosError(error)) return;
+
+  const responseBody: unknown = error.response?.data;
+  if (responseBody === null || typeof responseBody !== 'object' || !('error' in responseBody)) {
+    return;
+  }
+
+  const body = responseBody as { error?: unknown; code?: unknown; message?: unknown };
+  const details = body.error !== null && typeof body.error === 'object'
+    ? body.error as { code?: unknown; message?: unknown }
+    : body;
+  const code = details.code ?? body.code;
+  if (typeof code === 'string') {
+    (error as typeof error & { apiCode?: string }).apiCode = code;
+  }
+
+  const message = details.message ?? (typeof body.error === 'string' ? body.error : body.message);
+  if (typeof message === 'string') error.message = message;
+}
+
 // Attach JWT as Bearer token on every request
 api.interceptors.request.use(async (config) => {
   const jwt = await (async () => {
@@ -35,8 +65,12 @@ api.interceptors.request.use(async (config) => {
 
 // Handle 401: attempt silent re-auth
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    response.data = parseApiResponse(response.data);
+    return response;
+  },
   async (error) => {
+    preserveApiErrorCode(error);
     const originalRequest = error.config;
 
     if (error.response?.status === 401 && !originalRequest._retry) {
