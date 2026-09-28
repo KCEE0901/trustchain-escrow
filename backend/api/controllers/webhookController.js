@@ -88,9 +88,27 @@ const getDeliveries = async (req, res) => {
   }
 };
 
+const getSlaMetrics = async (req, res) => {
+  try {
+    const { page, limit } = parsePagination({ limit: 30, ...req.query });
+
+    const result = await webhookService.getSlaMetrics({
+      subscriptionId: req.params.id,
+      createdBy: req.user?.address || null,
+      page,
+      limit,
+    });
+
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
 export default {
   subscribe,
   listSubscriptions,
   deleteSubscription,
   getDeliveries,
+  getSlaMetrics,
 };
