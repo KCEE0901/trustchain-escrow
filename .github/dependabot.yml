@@ -1,55 +1,45 @@
 version: 2
 updates:
   - package-ecosystem: "npm"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 10
-
-  - package-ecosystem: "npm"
     directory: "/backend"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "npm"
     directory: "/frontend"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "npm"
     directory: "/mobile"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "cargo"
-    directory: "/contracts/escrow_contract"
+    directory: "/contracts"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 10
-
-  - package-ecosystem: "cargo"
-    directory: "/contracts/governance"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 10
-
-  - package-ecosystem: "cargo"
-    directory: "/contracts/insurance_contract"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 10
-
-  - package-ecosystem: "cargo"
-    directory: "/contracts/escrow_extensions"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 10
-
-  - package-ecosystem: "cargo"
-    directory: "/contracts/shared"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
