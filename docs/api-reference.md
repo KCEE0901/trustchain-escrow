@@ -8,13 +8,18 @@ Welcome to the official REST API reference for **Trustchain Escrow**. This docum
 
 1. [Overview & Architecture](#overview--architecture)
 2. [Authentication & Authorization](#authentication--authorization)
-3. [Global Standards & Conventions](#global-standards--conventions)
+3. [External API Authentication Guide](#external-api-authentication-guide)
+   - [Login → JWT → Refresh Token Flow](#login--jwt--refresh-token-flow)
+   - [Multi-Factor Authentication (MFA)](#multi-factor-authentication-mfa)
+   - [Webhook Signature Verification](#webhook-signature-verification)
+   - [Authentication Headers Reference](#authentication-headers-reference)
+4. [Global Standards & Conventions](#global-standards--conventions)
    - [Base URLs](#base-urls)
    - [Request & Response Headers](#request--response-headers)
    - [Pagination Envelope](#pagination-envelope)
    - [Standard Error Envelope](#standard-error-envelope)
    - [Rate Limiting](#rate-limiting)
-4. [API Endpoints Reference](#api-endpoints-reference)
+5. [API Endpoints Reference](#api-endpoints-reference)
    - [Authentication (`/api/auth`)](#authentication-apiauth)
    - [Escrows (`/api/escrows`)](#escrows-apiescrows)
    - [Disputes (`/api/disputes`)](#disputes-apidisputes)
@@ -29,9 +34,9 @@ Welcome to the official REST API reference for **Trustchain Escrow**. This docum
    - [Audit Logs (`/api/audit`)](#audit-logs-apiaudit)
    - [Admin Control (`/api/admin`)](#admin-control-apiadmin)
    - [System Health (`/health`)](#system-health-health)
-5. [Webhooks & Realtime Subscriptions](#webhooks--realtime-subscriptions)
-6. [Code Integration Examples](#code-integration-examples)
-7. [Cross-References & Resources](#cross-references--resources)
+6. [Webhooks & Realtime Subscriptions](#webhooks--realtime-subscriptions)
+7. [Code Integration Examples](#code-integration-examples)
+8. [Cross-References & Resources](#cross-references--resources)
 
 ---
 
@@ -83,6 +88,167 @@ Incoming webhooks sent by external integrations or emitted to subscribers are si
 ```http
 x-signature-sha256: t=1700000000,v1=9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
 ```
+
+---
+
+## External API Authentication Guide
+
+This section is the canonical reference for external integrators wiring up authentication against the Trustchain Escrow API: the login/refresh lifecycle, step-up MFA, and inbound webhook signature verification.
+
+### Login → JWT → Refresh Token Flow
+
+1. **Login** with email + password to obtain a short-lived access token (15 minutes) and a longer-lived refresh token (7 days).
+2. **Call authenticated endpoints** using the access token as a `Bearer` token in the `Authorization` header.
+3. **Refresh** the access token using the refresh token once it expires (or proactively before it does), without forcing the user to log in again.
+
+**Step 1 — Login (`POST /api/auth/login`)**
+```bash
+curl -X POST https://api.trustchain.example.com/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"integrator@example.com","password":"SecurePassword123!"}'
+```
+```json
+{
+  "accessToken": "eyJhbGciOi...",
+  "refreshToken": "d8f7e6...",
+  "expiresIn": 900,
+  "user": { "id": "usr_12345", "email": "integrator@example.com" }
+}
+```
+
+**Step 2 — Authenticated request**
+```bash
+curl -X GET "https://api.trustchain.example.com/api/escrows?status=ACTIVE" \
+  -H "Authorization: Bearer <accessToken>"
+```
+
+**Step 3 — Refresh (`POST /api/auth/refresh`)**
+```bash
+curl -X POST https://api.trustchain.example.com/api/auth/refresh \
+  -H "Content-Type: application/json" \
+  -d '{"refreshToken":"d8f7e6..."}'
+```
+```json
+{
+  "accessToken": "eyJhbGciOi...",
+  "expiresIn": 900
+}
+```
+
+**JavaScript / TypeScript example** — login, then automatically refresh on `401`:
+```typescript
+import axios, { AxiosError } from 'axios';
+
+const api = axios.create({ baseURL: 'https://api.trustchain.example.com/api' });
+
+let accessToken = '';
+let refreshToken = '';
+
+async function login(email: string, password: string) {
+  const { data } = await api.post('/auth/login', { email, password });
+  accessToken = data.accessToken;
+  refreshToken = data.refreshToken;
+}
+
+api.interceptors.request.use((config) => {
+  if (accessToken) config.headers.Authorization = `Bearer ${accessToken}`;
+  return config;
+});
+
+api.interceptors.response.use(
+  (response) => response,
+  async (error: AxiosError) => {
+    if (error.response?.status === 401 && refreshToken) {
+      const { data } = await api.post('/auth/refresh', { refreshToken });
+      accessToken = data.accessToken;
+      if (error.config) {
+        error.config.headers.Authorization = `Bearer ${accessToken}`;
+        return api.request(error.config);
+      }
+    }
+    throw error;
+  },
+);
+```
+
+> Access tokens are intentionally short-lived. Do not cache them beyond `expiresIn` seconds, and never persist the refresh token in client-side JavaScript storage accessible to third-party scripts (use an HTTP-only cookie or platform secure storage).
+
+### Multi-Factor Authentication (MFA)
+
+MFA is enforced as a step-up check on top of a valid JWT — it does not replace the login flow above. It is required for:
+
+- Admin-scoped endpoints under `/api/admin/*`.
+- Releasing or disputing a milestone above the tenant's high-value threshold.
+- Changing account security settings (email, password, linked wallet address).
+
+**TOTP flow**:
+
+1. The user enrolls a TOTP authenticator (e.g. Google Authenticator, 1Password) during account setup; the server returns a `otpauth://` provisioning URI and stores the shared secret.
+2. When a protected action requires step-up auth, the API responds `403 Forbidden` with `code: "MFA_REQUIRED"`.
+3. The client prompts the user for their current 6-digit TOTP code and submits it to `POST /api/auth/mfa/verify` along with the standard `Authorization: Bearer <accessToken>` header.
+4. On success, the response contains a short-lived MFA step-up token that must be sent as the `x-mfa-token` header on the original protected request.
+
+```bash
+curl -X POST https://api.trustchain.example.com/api/auth/mfa/verify \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "Content-Type: application/json" \
+  -d '{"code":"123456"}'
+```
+```json
+{
+  "mfaToken": "eyJhbGciOi...",
+  "expiresIn": 300
+}
+```
+
+```bash
+curl -X POST https://api.trustchain.example.com/api/escrows/1/release \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "x-mfa-token: <mfaToken>" \
+  -H "Content-Type: application/json" \
+  -d '{"milestoneId":1,"transactionHash":"a1b2c3d4..."}'
+```
+
+### Webhook Signature Verification
+
+Every webhook delivery includes an `x-signature-sha256` header of the form `t=<unix_timestamp>,v1=<hex_hmac>`. Verify it before trusting the payload:
+
+1. Concatenate the timestamp and the raw request body: `${t}.${rawBody}`.
+2. Compute an HMAC-SHA256 digest of that string using your webhook signing secret.
+3. Compare it to `v1` using a constant-time comparison, and reject requests where `t` is older than 5 minutes (replay protection).
+
+```javascript
+const crypto = require('crypto');
+
+function verifyWebhookSignature(rawBody, signatureHeader, signingSecret) {
+  const parts = Object.fromEntries(
+    signatureHeader.split(',').map((kv) => kv.split('=')),
+  );
+  const { t, v1 } = parts;
+
+  if (!t || !v1) return false;
+  if (Math.abs(Date.now() / 1000 - Number(t)) > 300) return false; // reject stale signatures
+
+  const expected = crypto
+    .createHmac('sha256', signingSecret)
+    .update(`${t}.${rawBody}`)
+    .digest('hex');
+
+  return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(v1));
+}
+```
+
+> `rawBody` must be the exact, unparsed request body bytes. Verifying against a re-serialized JSON object will produce a different digest and cause valid signatures to fail.
+
+### Authentication Headers Reference
+
+| Header | Used For | Required | Example |
+| :--- | :--- | :--- | :--- |
+| `Authorization` | Bearer JWT access token for user-scoped endpoints | Yes, for authenticated endpoints | `Authorization: Bearer eyJhbGciOi...` |
+| `X-Tenant-ID` | Selects tenant organization context in multi-tenant deployments | Optional (defaults to tenant resolved from the token) | `X-Tenant-ID: tenant_default` |
+| `X-MFA-Token` | Step-up MFA token returned by `POST /api/auth/mfa/verify` | Required on MFA-gated endpoints | `X-MFA-Token: eyJhbGciOi...` |
+| `x-admin-api-key` | Admin/operator API key for system-scoped endpoints | Required on `/api/admin/*` and similar operator endpoints | `x-admin-api-key: <your_admin_api_key>` |
+| `x-signature-sha256` | HMAC-SHA256 signature on inbound webhook deliveries | Required for webhook consumers to verify authenticity | `x-signature-sha256: t=1700000000,v1=9f86...` |
 
 ---
 

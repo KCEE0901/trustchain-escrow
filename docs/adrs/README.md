@@ -20,6 +20,7 @@ Architecture Decision Records are lightweight documents that capture important a
 | [003-nodejs-express-backend](./ADRs/003-nodejs-express-backend.md)       | Node.js Express Backend                    | accepted | 2024 |
 | [004-nextjs-freighter-frontend](./ADRs/004-nextjs-freighter-frontend.md) | Next.js + Freighter Wallet Frontend        | accepted | 2024 |
 | [005-ipfs-metadata](./ADRs/005-ipfs-metadata.md)                         | IPFS for Off-chain Metadata                | accepted | 2024 |
+| [006-mobile-offline-strategy](./ADRs/006-mobile-offline-strategy.md)     | Mobile Offline-First Data Strategy (SQLite)| accepted | 2026 |
 
 ## Process
 

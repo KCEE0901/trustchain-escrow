@@ -17,7 +17,9 @@ This guide details the procedures for deploying Trustchain Escrow to production 
 7. [Reverse Proxy & SSL/TLS](#reverse-proxy--ssltls)
 8. [Monitoring & Health Checks](#monitoring--health-checks)
 9. [Backup & Disaster Recovery](#backup--disaster-recovery)
-10. [Cross-References](#cross-references)
+10. [Troubleshooting](#troubleshooting)
+    - [Checking Service Health](#checking-service-health)
+11. [Cross-References](#cross-references)
 
 ---
 
@@ -212,6 +214,72 @@ server {
 - **PostgreSQL Backup**: Daily automated `pg_dump` snapshots stored in secure S3 buckets.
 - **Redis Persistence**: AOF (Append Only File) enabled for BullMQ queue resilience.
 - **Disaster Recovery**: Refer to [docs/disaster-recovery.md](disaster-recovery.md) for full failover procedures.
+
+---
+
+## Troubleshooting
+
+Common failure modes seen during production deployment, with their symptom, probable cause, and resolution.
+
+### 1. Database connection failures
+
+- **Symptom**: Backend fails to start with `PrismaClientInitializationError` or logs repeated `ECONNREFUSED` / `Connection terminated unexpectedly` against PostgreSQL.
+- **Probable cause**: `DATABASE_URL` points at the wrong host/port, the database container hasn't finished starting, `sslmode=require` is set but the DB doesn't have TLS enabled, or the connection pool (`connection_limit`) is exhausted under load.
+- **Resolution**:
+  1. Confirm PostgreSQL is reachable: `docker compose exec backend nc -zv db 5432`.
+  2. Verify `DATABASE_URL` and `DIRECT_URL` credentials/host match the running database container.
+  3. Check `connection_limit` and `pool_timeout` aren't set too low for concurrent request volume.
+  4. Re-run migrations once connectivity is confirmed: `npm run db:migrate -w backend`.
+  - See [`DATABASE_URL`](configuration.md) in the configuration reference.
+
+### 2. Redis connection refused
+
+- **Symptom**: Logs show `ECONNREFUSED 127.0.0.1:6379` or `MaxRetriesPerRequestError` from BullMQ/ioredis; rate limiting and caching silently fall back to in-memory mode.
+- **Probable cause**: `REDIS_URL` is unset or points at a host unreachable from inside the container network (e.g. `localhost` instead of the `redis` service name), or the Redis container requires a password that isn't included in the URL.
+- **Resolution**:
+  1. Confirm the Redis service is up: `docker compose ps redis`.
+  2. Ensure `REDIS_URL` uses the Compose service name (`redis://redis:6379`) rather than `localhost` when running inside Docker.
+  3. If Redis requires auth, include the password in the URL: `redis://:STRONG_REDIS_PASSWORD@redis:6379/0`.
+  - See [`REDIS_URL`](configuration.md) in the configuration reference.
+
+### 3. Soroban RPC unavailable
+
+- **Symptom**: Escrow creation/release requests fail with `SOROBAN_RPC_UNAVAILABLE` or timeouts; the RPC SLA monitor fires alerts to `SLACK_RPC_WEBHOOK`.
+- **Probable cause**: `SOROBAN_RPC_URL` points at a rate-limited public endpoint, the configured node is down, or `SOROBAN_NETWORK_PASSPHRASE` doesn't match the network the RPC endpoint actually serves (e.g. testnet passphrase against a mainnet RPC).
+- **Resolution**:
+  1. Verify the RPC endpoint is reachable and healthy: `curl -X POST $SOROBAN_RPC_URL -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}'`.
+  2. Confirm `SOROBAN_NETWORK_PASSPHRASE` and `ESCROW_CONTRACT_ID` correspond to the same network as `SOROBAN_RPC_URL`.
+  3. Consider configuring `RPC_MONITOR_ENDPOINTS` with a fallback RPC provider for automatic failover monitoring.
+  - See [`SOROBAN_RPC_URL`, `RPC_MONITOR_ENDPOINTS`](configuration.md) in the configuration reference.
+
+### 4. JWT secret misconfiguration
+
+- **Symptom**: Backend refuses to start with a validation error from `config/secrets.js`, or all authenticated requests return `401 Unauthorized` immediately after deploy even with a fresh login.
+- **Probable cause**: `JWT_SECRET`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `MFA_JWT_SECRET`, or `ADMIN_JWT_SECRET` are missing, shorter than 32 characters, or identical to one another — all are required to be distinct per `scripts/check-env.js`. It can also happen if secrets differ between backend instances behind a load balancer, invalidating tokens issued by a different instance.
+  - **Resolution**:
+  1. Generate distinct secrets for each variable: `openssl rand -hex 32`.
+  2. Ensure the exact same secret values are set on every backend replica.
+  3. Run `node scripts/check-env.js` (or the CI equivalent) before deploying to catch missing/duplicate secrets early.
+  - See [JWT secrets](configuration.md) in the configuration reference.
+
+### 5. Docker Compose service start order
+
+- **Symptom**: The `backend` container crash-loops on first `docker compose up`, but works after a manual restart.
+- **Probable cause**: `backend` starts before `db`/`redis`/`elasticsearch` finish their own startup and readiness probes, so the first connection attempts fail before the dependent services are actually accepting connections.
+- **Resolution**:
+  1. Ensure `docker-compose.yml` declares `depends_on` with `condition: service_healthy` (not just `depends_on` by name) for `db`, `redis`, and `elasticsearch`.
+  2. Confirm each dependency defines a `healthcheck` block so Compose can determine readiness rather than just container-started state.
+  3. As a stopgap, restart only the affected service: `docker compose restart backend`.
+
+### Checking service health
+
+Once services are up, confirm they're actually healthy rather than just running:
+
+```bash
+curl -s https://api.trustchain.example.com/api/v1/health | jq
+```
+
+A healthy response reports `"status": "UP"` with each dependency (`database`, `redis`, `stellarRpc`) individually `CONNECTED` / `HEALTHY`. If any dependency reports a failure, work through the matching section above before escalating. See [Monitoring & Health Checks](#monitoring--health-checks) for the full response shape and `/metrics` details.
 
 ---
 
