@@ -5532,6 +5532,27 @@ impl EscrowContract {
         Ok(milestone.approvals)
     }
 
+    /// Returns the number of milestones still in the `MS_PENDING` state.
+    /// This is a lightweight O(n) view over the escrow's milestone metadata and
+    /// does not mutate storage or change escrow status.
+    pub fn get_pending_milestones_count(env: Env, escrow_id: u64) -> u32 {
+        let Ok(meta) = ContractStorage::load_escrow_meta(&env, escrow_id) else {
+            return 0;
+        };
+
+        let mut count = 0_u32;
+        for milestone_id in 0..meta.milestone_count {
+            let Ok(milestone) = ContractStorage::load_milestone(&env, escrow_id, milestone_id)
+            else {
+                continue;
+            };
+            if milestone.status == MS_PENDING {
+                count = count.saturating_add(1);
+            }
+        }
+        count
+    }
+
     pub fn get_cancellation_request(
         env: Env,
         escrow_id: u64,
