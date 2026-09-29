@@ -371,3 +371,160 @@ describe('Event routing', () => {
     );
   });
 });
+
+// ── broadcastAccessChange ─────────────────────────────────────────────────────
+
+const { broadcastAccessChange } = await import('../api/sockets/chatSocket.js');
+
+describe('broadcastAccessChange', () => {
+  const DISPUTE_ID = 42;
+  const CLIENT = 'GCLIENT000000000000000000000000000000000000000000000000';
+  const FREELANCER = 'GFREELANCER0000000000000000000000000000000000000000000';
+
+  function makeConnectedSocket(address) {
+    const sock = {
+      id: `sock-${address.slice(0, 6)}`,
+      data: { address },
+      emit: jest.fn(),
+      disconnect: jest.fn(),
+    };
+    return sock;
+  }
+
+  function makeNamespaceMock(sockets = []) {
+    const inMock = {
+      fetchSockets: jest.fn().mockResolvedValue(sockets),
+    };
+    return {
+      in: jest.fn().mockReturnValue(inMock),
+      to: jest.fn().mockReturnValue({ emit: jest.fn() }),
+    };
+  }
+
+  function makeIoMock(sockets = []) {
+    const nspMock = makeNamespaceMock(sockets);
+    return {
+      _nsps: new Map([[`/dispute/${DISPUTE_ID}`, true]]),
+      of: jest.fn().mockReturnValue(nspMock),
+    };
+  }
+
+  it('does nothing when the namespace has not been opened', async () => {
+    const io = { _nsps: new Map(), of: jest.fn() };
+    await broadcastAccessChange(io, DISPUTE_ID, { removed: [CLIENT] });
+    expect(io.of).not.toHaveBeenCalled();
+  });
+
+  it('emits access:revoked to a removed socket and schedules disconnect', async () => {
+    jest.useFakeTimers();
+    const sock = makeConnectedSocket(CLIENT);
+    const io = makeIoMock([sock]);
+
+    await broadcastAccessChange(io, DISPUTE_ID, { removed: [CLIENT] });
+
+    expect(sock.emit).toHaveBeenCalledWith(
+      'access:revoked',
+      expect.objectContaining({
+        address: CLIENT,
+        disputeId: DISPUTE_ID,
+        reason: expect.any(String),
+        timestamp: expect.any(String),
+      }),
+    );
+
+    // disconnect should not have fired yet (200ms delay)
+    expect(sock.disconnect).not.toHaveBeenCalled();
+    jest.advanceTimersByTime(300);
+    expect(sock.disconnect).toHaveBeenCalledWith(true);
+
+    jest.useRealTimers();
+  });
+
+  it('does NOT revoke a socket whose address is not in the removed list', async () => {
+    const sock = makeConnectedSocket(FREELANCER);
+    const io = makeIoMock([sock]);
+
+    await broadcastAccessChange(io, DISPUTE_ID, { removed: [CLIENT] });
+
+    expect(sock.emit).not.toHaveBeenCalled();
+    expect(sock.disconnect).not.toHaveBeenCalled();
+  });
+
+  it('emits access:changed to sockets in the changed list', async () => {
+    const sock = makeConnectedSocket(CLIENT);
+    const io = makeIoMock([sock]);
+
+    await broadcastAccessChange(io, DISPUTE_ID, {
+      changed: [CLIENT],
+      roles: { [CLIENT]: 'arbitrator' },
+    });
+
+    expect(sock.emit).toHaveBeenCalledWith(
+      'access:changed',
+      expect.objectContaining({
+        address: CLIENT,
+        disputeId: DISPUTE_ID,
+        newRole: 'arbitrator',
+        timestamp: expect.any(String),
+      }),
+    );
+    expect(sock.disconnect).not.toHaveBeenCalled();
+  });
+
+  it('broadcasts access:changed to the room when addresses are added', async () => {
+    const io = makeIoMock([]);
+    const nsp = io.of();
+    const roomEmit = jest.fn();
+    nsp.to.mockReturnValue({ emit: roomEmit });
+
+    await broadcastAccessChange(io, DISPUTE_ID, { added: [FREELANCER] });
+
+    expect(nsp.to).toHaveBeenCalledWith(`dispute:${DISPUTE_ID}`);
+    expect(roomEmit).toHaveBeenCalledWith(
+      'access:changed',
+      expect.objectContaining({
+        added: [FREELANCER],
+        disputeId: DISPUTE_ID,
+        timestamp: expect.any(String),
+      }),
+    );
+  });
+
+  it('handles simultaneous revoke, change, and add in one call', async () => {
+    const ARBITER = 'GARBITER000000000000000000000000000000000000000000000000';
+    jest.useFakeTimers();
+
+    const clientSock = makeConnectedSocket(CLIENT);
+    const freelancerSock = makeConnectedSocket(FREELANCER);
+    const io = makeIoMock([clientSock, freelancerSock]);
+    const nsp = io.of();
+    const roomEmit = jest.fn();
+    nsp.to.mockReturnValue({ emit: roomEmit });
+
+    await broadcastAccessChange(io, DISPUTE_ID, {
+      removed: [CLIENT],
+      changed: [FREELANCER],
+      added: [ARBITER],
+      roles: { [FREELANCER]: 'client' },
+    });
+
+    // CLIENT should be revoked
+    expect(clientSock.emit).toHaveBeenCalledWith('access:revoked', expect.any(Object));
+    jest.advanceTimersByTime(300);
+    expect(clientSock.disconnect).toHaveBeenCalled();
+
+    // FREELANCER should get changed
+    expect(freelancerSock.emit).toHaveBeenCalledWith(
+      'access:changed',
+      expect.objectContaining({ newRole: 'client' }),
+    );
+
+    // ARBITER addition should broadcast to room
+    expect(roomEmit).toHaveBeenCalledWith(
+      'access:changed',
+      expect.objectContaining({ added: [ARBITER] }),
+    );
+
+    jest.useRealTimers();
+  });
+});

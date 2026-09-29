@@ -121,6 +121,8 @@ export default function DisputeChat({ escrowId, address, role, token }) {
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
+  const [accessRevoked, setAccessRevoked] = useState(false);
+  const [accessBanner, setAccessBanner] = useState(null); // { message, type: 'info'|'warning' }
 
   const wsRef = useRef(null);
   const bottomRef = useRef(null);
@@ -190,6 +192,30 @@ export default function DisputeChat({ escrowId, address, role, token }) {
             setMessages((prev) =>
               prev.map((m) => (m.id === msg.payload.messageId ? { ...m, read: true } : m)),
             );
+            break;
+          // ── Access change events (Socket.IO-style events forwarded as JSON) ──
+          case 'access:revoked':
+            setAccessRevoked(true);
+            setConnected(false);
+            setAccessBanner({
+              message: msg.payload?.reason ?? 'Your access to this dispute chat has been revoked.',
+              type: 'warning',
+            });
+            if (announcerRef.current) {
+              announcerRef.current.textContent = 'Your chat access has been revoked.';
+            }
+            break;
+          case 'access:changed':
+            setAccessBanner({
+              message:
+                msg.payload?.newRole
+                  ? `Your role has been updated to: ${msg.payload.newRole}`
+                  : 'The participant list for this dispute has changed.',
+              type: 'info',
+            });
+            if (announcerRef.current) {
+              announcerRef.current.textContent = 'Chat access changed for this dispute.';
+            }
             break;
         }
       } catch {
@@ -302,6 +328,30 @@ export default function DisputeChat({ escrowId, address, role, token }) {
         </div>
       </div>
 
+      {/* Access change banner */}
+      {accessBanner && (
+        <div
+          role="status"
+          aria-live="polite"
+          className={`px-4 py-2 text-xs font-medium flex items-center justify-between gap-2
+            ${accessBanner.type === 'warning'
+              ? 'bg-red-900/60 border-b border-red-700 text-red-200'
+              : 'bg-indigo-900/50 border-b border-indigo-700 text-indigo-200'
+            }`}
+        >
+          <span>{accessBanner.message}</span>
+          {accessBanner.type !== 'warning' && (
+            <button
+              onClick={() => setAccessBanner(null)}
+              className="text-indigo-400 hover:text-indigo-200 shrink-0"
+              aria-label="Dismiss notification"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Load more */}
       {hasMore && (
         <button
@@ -343,43 +393,55 @@ export default function DisputeChat({ escrowId, address, role, token }) {
       {/* Screen reader announcer */}
       <div ref={announcerRef} className="sr-only" aria-live="assertive" aria-atomic="true" />
 
-      {/* Input */}
-      <div className="px-3 py-3 border-t border-gray-800 flex items-end gap-2">
-        <label
-          className="cursor-pointer text-gray-500 hover:text-gray-300 transition-colors p-1.5"
-          title="Attach file"
+      {/* Revoked overlay */}
+      {accessRevoked && (
+        <div
+          role="alert"
+          className="px-4 py-3 bg-red-950 border-t border-red-800 text-center text-xs text-red-300"
         >
-          <Paperclip size={16} />
-          <input
-            type="file"
-            className="sr-only"
-            onChange={handleAttach}
-            accept="image/*,.pdf,.doc,.docx"
+          Your access to this chat has been revoked. You can no longer send messages.
+        </div>
+      )}
+
+      {/* Input — hidden when access is revoked */}
+      {!accessRevoked && (
+        <div className="px-3 py-3 border-t border-gray-800 flex items-end gap-2">
+          <label
+            className="cursor-pointer text-gray-500 hover:text-gray-300 transition-colors p-1.5"
+            title="Attach file"
+          >
+            <Paperclip size={16} />
+            <input
+              type="file"
+              className="sr-only"
+              onChange={handleAttach}
+              accept="image/*,.pdf,.doc,.docx"
+            />
+          </label>
+
+          <textarea
+            value={input}
+            onChange={handleInputChange}
+            onKeyDown={handleKeyDown}
+            placeholder="Type a message… (Enter to send)"
+            rows={1}
+            className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-sm
+                       text-white placeholder-gray-500 resize-none focus:outline-none
+                       focus:border-indigo-500 transition-colors max-h-32 overflow-y-auto"
+            aria-label="Message input"
           />
-        </label>
 
-        <textarea
-          value={input}
-          onChange={handleInputChange}
-          onKeyDown={handleKeyDown}
-          placeholder="Type a message… (Enter to send)"
-          rows={1}
-          className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-sm
-                     text-white placeholder-gray-500 resize-none focus:outline-none
-                     focus:border-indigo-500 transition-colors max-h-32 overflow-y-auto"
-          aria-label="Message input"
-        />
-
-        <button
-          onClick={send}
-          disabled={!input.trim() || !connected}
-          className="p-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40
-                     disabled:cursor-not-allowed rounded-xl text-white transition-colors"
-          aria-label="Send message"
-        >
-          <Send size={15} />
-        </button>
-      </div>
+          <button
+            onClick={send}
+            disabled={!input.trim() || !connected}
+            className="p-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40
+                       disabled:cursor-not-allowed rounded-xl text-white transition-colors"
+            aria-label="Send message"
+          >
+            <Send size={15} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
