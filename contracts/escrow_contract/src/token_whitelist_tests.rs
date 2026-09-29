@@ -100,6 +100,19 @@ mod token_whitelist_tests {
     }
 
     #[test]
+    fn test_get_token_status_reports_whitelist_state() {
+        let (env, admin, _, client) = setup();
+        let token = register_token(&env, &admin, &admin, 1000);
+
+        assert_eq!(client.get_token_status(&token), (false, false, false));
+
+        client.set_token_whitelist_enabled(&admin, &true);
+        client.add_approved_token(&admin, &token);
+
+        assert_eq!(client.get_token_status(&token), (false, true, true));
+    }
+
+    #[test]
     fn test_whitelist_enforcement() {
         let (env, admin, _, client) = setup();
         let client_addr = Address::generate(&env);

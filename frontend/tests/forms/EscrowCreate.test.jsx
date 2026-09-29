@@ -17,6 +17,7 @@ import { axe, toHaveNoViolations } from 'jest-axe';
 import CreateEscrowPage from '../../app/escrow/create/page';
 import { ToastProvider } from '../../contexts/ToastContext';
 import { useSearchParams } from 'next/navigation';
+import { classifyPaymentTokenStatus } from '../../lib/stellar';
 
 // Extend expect with jest-axe matcher
 expect.extend(toHaveNoViolations);
@@ -112,6 +113,51 @@ describe('Step navigation', () => {
 // ── 2. Step 1 — Counterparty & Funds ─────────────────────────────────────────
 
 describe('Step 1 — Counterparty & Funds', () => {
+  describe('Payment token status', () => {
+    it('allows XLM when whitelist enforcement is disabled', () => {
+      expect(classifyPaymentTokenStatus({
+        isPaused: false,
+        whitelistEnabled: false,
+        approved: false,
+      })).toBe('supported');
+    });
+
+    it('identifies a whitelisted asset', () => {
+      expect(classifyPaymentTokenStatus({
+        isPaused: false,
+        whitelistEnabled: true,
+        approved: true,
+      })).toBe('whitelisted');
+    });
+
+    it('rejects an asset missing from an enforced whitelist', () => {
+      expect(classifyPaymentTokenStatus({
+        isPaused: false,
+        whitelistEnabled: true,
+        approved: false,
+      })).toBe('unsupported');
+    });
+
+    it('reports a paused contract before considering token approval', () => {
+      expect(classifyPaymentTokenStatus({
+        isPaused: true,
+        whitelistEnabled: true,
+        approved: true,
+      })).toBe('paused');
+    });
+
+    it('blocks submission for the unsupported Custom option', async () => {
+      renderPage();
+      const selects = screen.getAllByRole('combobox');
+      const tokenSelect = selects.find((select) => within(select).queryByText('USDC'));
+      fireEvent.change(tokenSelect, { target: { value: 'custom' } });
+      advanceSteps(3);
+
+      await screen.findByText(/unsupported payment token/i);
+      expect(screen.getByRole('button', { name: /Sign & Create Escrow/i })).toBeDisabled();
+    });
+  });
+
   describe('Freelancer address field', () => {
     it('renders the address input with correct placeholder', () => {
       renderPage();

@@ -1523,7 +1523,6 @@ impl EscrowContract {
             Ok(())
         })
     }
-
     // ── Bridge / Cross-Chain ──────────────────────────────────────────────────
 
     /// Set the Wormhole bridge contract address. Admin only.
@@ -5351,6 +5350,16 @@ impl EscrowContract {
     /// See the function name for the public contract operation.
     pub fn is_paused(env: Env) -> bool {
         ContractStorage::is_paused(&env)
+    }
+
+    /// Returns the contract pause state and whitelist status for a token.
+    /// Contract entry point: `get_token_status`.
+    pub fn get_token_status(env: Env, token: Address) -> (bool, bool, bool) {
+        (
+            ContractStorage::is_paused(&env),
+            ContractStorage::is_token_whitelist_enabled(&env),
+            ContractStorage::is_token_approved(&env, &token),
+        )
     }
 
     /// Returns the current admin address.
