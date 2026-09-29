@@ -31,6 +31,7 @@ import TransactionHistoryList, {
 } from '../../../components/escrow/TransactionHistoryList';
 import DisputeModal from '../../../components/escrow/DisputeModal';
 import CancelEscrowModal from '../../../components/escrow/CancelEscrowModal';
+import ExpiryExtensionRequest from '../../../components/escrow/ExpiryExtensionRequest';
 import Badge from '../../../components/ui/Badge';
 import Button from '../../../components/ui/Button';
 import ReputationBadge from '../../../components/ui/ReputationBadge';
@@ -263,6 +264,15 @@ export default function EscrowDetailPage({ params }) {
         <InfoCell label="Created" value={escrow.createdAt} />
         <InfoCell label="Deadline" value={escrow.deadline || 'None'} />
       </div>
+
+      {escrow.status === 'Active' && (
+        <ExpiryExtensionRequest
+          escrowId={id}
+          onRequest={() =>
+            showToast('Extension request captured. Contract submission will be available soon.')
+          }
+        />
+      )}
 
       {/* Transaction Hash */}
       {escrow.transactionHash && (
