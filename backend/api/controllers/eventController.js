@@ -11,6 +11,7 @@ import prisma from '../../lib/prisma.js';
 import cache from '../../lib/cache.js';
 import { logControllerError } from '../../config/logger.js';
 import { buildPaginatedResponse, parsePagination } from '../../lib/pagination.js';
+import { observeWebhookDelivery } from '../../lib/slaMetrics.js';
 
 const EVENT_TTL = 15; // seconds — events are append-only so short TTL is fine
 
@@ -198,6 +199,48 @@ const getEventStats = async (req, res) => {
   }
 };
 
+/**
+ * POST /api/events/:id/delivery
+ * Records the outcome of a webhook delivery attempt for an indexed event so
+ * end-to-end SLA latency (ingestion → delivery success) can be monitored.
+ *
+ * @body {string}  status      — "success" | "failure"
+ * @body {number}  [attemptedAt] — epoch ms of the delivery attempt (defaults to now)
+ */
+const recordDelivery = async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid event id' });
+
+    const { status, attemptedAt } = req.body ?? {};
+    if (status !== 'success' && status !== 'failure') {
+      return res.status(400).json({ error: 'status must be "success" or "failure"' });
+    }
+
+    const event = await prisma.contractEvent.findUnique({
+      where: { id },
+      select: { id: true, ledgerAt: true },
+    });
+    if (!event) return res.status(404).json({ error: 'Event not found' });
+
+    const deliveredAt = attemptedAt != null ? new Date(attemptedAt) : new Date();
+    if (Number.isNaN(deliveredAt.getTime())) {
+      return res.status(400).json({ error: 'Invalid attemptedAt' });
+    }
+
+    const observed = observeWebhookDelivery({
+      ingestedAt: event.ledgerAt,
+      deliveredAt,
+      status,
+    });
+
+    res.json({ eventId: event.id, status, ...observed });
+  } catch (err) {
+    logControllerError('events.recordDelivery', err, req);
+    res.status(500).json({ error: err.message });
+  }
+};
+
 // ─── Serialiser ───────────────────────────────────────────────────────────────
 
 /** Converts BigInt fields to strings for JSON serialisation. */
@@ -207,4 +250,4 @@ const serializeEvent = (event) => ({
   escrowId: event.escrowId?.toString() ?? null,
 });
 
-export default { listEvents, getEvent, listEscrowEvents, listEventTypes, getEventStats };
+export default { listEvents, getEvent, listEscrowEvents, listEventTypes, getEventStats, recordDelivery };
