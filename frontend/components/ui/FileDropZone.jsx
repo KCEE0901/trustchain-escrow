@@ -36,11 +36,43 @@ const DEFAULT_ACCEPTED = {
 
 const DEFAULT_MAX_SIZE = 10 * 1024 * 1024; // 10 MB
 const DEFAULT_MAX_FILES = 10;
+const MAX_MEDIA_DIMENSION = 4096;
+const MAX_MEDIA_DURATION_SECONDS = 300;
 
 function formatBytes(bytes) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function readMediaMetadata(file) {
+  const isVideo = file.type.startsWith('video/');
+  const media = document.createElement(isVideo ? 'video' : 'img');
+  const objectUrl = URL.createObjectURL(file);
+
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      media.removeEventListener(isVideo ? 'loadedmetadata' : 'load', onLoad);
+      media.removeEventListener('error', onError);
+      URL.revokeObjectURL(objectUrl);
+    };
+    const onLoad = () => {
+      const metadata = isVideo
+        ? { width: media.videoWidth, height: media.videoHeight, duration: media.duration }
+        : { width: media.naturalWidth, height: media.naturalHeight };
+      cleanup();
+      resolve(metadata);
+    };
+    const onError = () => {
+      cleanup();
+      reject(new Error('Could not read media dimensions or duration.'));
+    };
+
+    media.addEventListener(isVideo ? 'loadedmetadata' : 'load', onLoad, { once: true });
+    media.addEventListener('error', onError, { once: true });
+    if (isVideo) media.preload = 'metadata';
+    media.src = objectUrl;
+  });
 }
 
 function getFileIcon(type) {
@@ -150,18 +182,54 @@ export default function FileDropZone({
   }, []);
 
   const processFiles = useCallback(
-    (rawFiles) => {
+    async (rawFiles) => {
       const newEntries = [];
       const currentCount = files.filter((f) => !f.cancelled).length;
 
       for (const raw of rawFiles) {
         if (currentCount + newEntries.length >= maxFiles) break;
 
-        let error = null;
+        const errors = [];
         if (!acceptedTypes[raw.type]) {
-          error = `Unsupported type. Allowed: ${Object.values(acceptedTypes).join(', ')}`;
-        } else if (raw.size > maxSizeBytes) {
-          error = `Too large (max ${formatBytes(maxSizeBytes)})`;
+          errors.push(`Unsupported type. Allowed: ${Object.values(acceptedTypes).join(', ')}`);
+        }
+        if (raw.size > maxSizeBytes) {
+          errors.push(`Too large (max ${formatBytes(maxSizeBytes)})`);
+        }
+
+        if (
+          errors.length === 0 &&
+          (raw.type.startsWith('image/') || raw.type.startsWith('video/'))
+        ) {
+          try {
+            const metadata = await readMediaMetadata(raw);
+            if (
+              !Number.isFinite(metadata.width) ||
+              !Number.isFinite(metadata.height) ||
+              metadata.width <= 0 ||
+              metadata.height <= 0
+            ) {
+              errors.push('Could not read media dimensions.');
+            } else {
+              if (metadata.width > MAX_MEDIA_DIMENSION) {
+                errors.push(`Media width exceeds the maximum allowed limit of ${MAX_MEDIA_DIMENSION}px.`);
+              }
+              if (metadata.height > MAX_MEDIA_DIMENSION) {
+                errors.push(`Media height exceeds the maximum allowed limit of ${MAX_MEDIA_DIMENSION}px.`);
+              }
+            }
+            if (raw.type.startsWith('video/')) {
+              if (!Number.isFinite(metadata.duration) || metadata.duration < 0) {
+                errors.push('Could not read video duration.');
+              } else if (metadata.duration > MAX_MEDIA_DURATION_SECONDS) {
+                errors.push(
+                  `Video duration exceeds the maximum allowed limit of ${MAX_MEDIA_DURATION_SECONDS} seconds.`,
+                );
+              }
+            }
+          } catch (error) {
+            errors.push(error.message);
+          }
         }
 
         newEntries.push({
@@ -171,7 +239,7 @@ export default function FileDropZone({
           type: raw.type,
           raw,
           progress: 0,
-          error,
+          error: errors.length > 0 ? errors.join(' ') : null,
           cancelled: false,
         });
       }
@@ -181,7 +249,7 @@ export default function FileDropZone({
       setFiles((prev) => [...prev, ...newEntries]);
 
       const valid = newEntries.filter((f) => !f.error);
-      onFilesAccepted?.(valid.map((f) => f.raw));
+      if (valid.length > 0) onFilesAccepted?.(valid.map((f) => f.raw));
 
       // Start upload simulation / real upload per file
       valid.forEach((entry) => startUpload(entry));
