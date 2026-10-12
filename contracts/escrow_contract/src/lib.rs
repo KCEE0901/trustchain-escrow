@@ -5550,6 +5550,31 @@ impl EscrowContract {
         Ok(milestone.approvals)
     }
 
+    /// Returns the number of milestones still awaiting completion.
+    /// This includes milestones that are either pending or already submitted for review.
+    /// Completed, cancelled, and other terminal states are excluded.
+    pub fn get_pending_milestones_count(env: Env, escrow_id: u64) -> u32 {
+        let Ok(meta) = ContractStorage::load_escrow_meta(&env, escrow_id) else {
+            return 0;
+        };
+
+        if matches!(meta.status, EscrowStatus::Completed | EscrowStatus::Cancelled) {
+            return 0;
+        }
+
+        let mut count = 0_u32;
+        for milestone_id in 0..meta.milestone_count {
+            let Ok(milestone) = ContractStorage::load_milestone(&env, escrow_id, milestone_id)
+            else {
+                continue;
+            };
+            if milestone.status == MS_PENDING || milestone.status == MS_SUBMITTED {
+                count = count.saturating_add(1);
+            }
+        }
+        count
+    }
+
     pub fn get_cancellation_request(
         env: Env,
         escrow_id: u64,
