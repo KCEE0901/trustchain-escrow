@@ -5426,12 +5426,14 @@ impl EscrowContract {
 
     // ── View Functions ────────────────────────────────────────────────────────
 
+    #[must_use]
     pub fn get_escrow(env: Env, escrow_id: u64) -> Result<EscrowState, EscrowError> {
         ContractStorage::load_escrow(&env, escrow_id)
     }
 
     /// O(1) lightweight view — returns only the escrow header without loading milestones.
     /// Suitable for monitoring dashboards that only need status, balances, and party info.
+    #[must_use]
     pub fn get_escrow_meta(env: Env, escrow_id: u64) -> Result<EscrowMeta, EscrowError> {
         let mut meta = ContractStorage::load_escrow_meta(&env, escrow_id)?;
         ContractStorage::settle_rent_for_access(&env, &mut meta)?;
@@ -5506,10 +5508,12 @@ impl EscrowContract {
         })
     }
 
+    #[must_use]
     pub fn escrow_count(env: Env) -> u64 {
         ContractStorage::escrow_count(&env)
     }
 
+    #[must_use]
     pub fn get_milestone(
         env: Env,
         escrow_id: u64,
@@ -5519,9 +5523,23 @@ impl EscrowContract {
         ContractStorage::load_milestone(&env, escrow_id, milestone_id)
     }
 
+    #[must_use]
+    pub fn get_milestone_by_index(
+        env: Env,
+        escrow_id: u64,
+        index: u32,
+    ) -> Result<Milestone, EscrowError> {
+        let meta = ContractStorage::load_escrow_meta_with_rent(&env, escrow_id)?;
+        if index >= meta.milestone_count {
+            return Err(EscrowError::E13);
+        }
+        ContractStorage::load_milestone(&env, escrow_id, index)
+    }
+
     /// Returns the approvals list for a given milestone.
     /// Useful for frontends displaying multisig approval progress (e.g. "2 of 3 signers approved").
     /// Returns `EscrowError::E13` if the milestone does not exist.
+    #[must_use]
     pub fn get_milestone_approvals(
         env: Env,
         escrow_id: u64,
@@ -7023,7 +7041,9 @@ mod tests {
         );
 
         let milestone = client.get_milestone(&escrow_id, &milestone_id);
+        let indexed_milestone = client.get_milestone_by_index(&escrow_id, &0u32);
         assert_eq!(milestone.id, milestone_id);
+        assert_eq!(indexed_milestone.id, milestone_id);
         assert_eq!(milestone.amount, 300_i128);
 
         env.as_contract(&contract_id, || {
