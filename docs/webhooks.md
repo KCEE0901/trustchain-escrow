@@ -343,6 +343,25 @@ All amounts are `i128` stroops (1 unit = 10 000 000 stroops).
 | `data[0]`   | `milestone_id` | u32     |
 | `data[1]`   | `freelancer`   | Address |
 
+```json
+{
+  "eventType": "mil_sub",
+  "deliveryId": "clx7f3q7r0003qzrm8h5n2m1f",
+  "timestamp": "2026-07-25T10:47:03.418Z",
+  "data": {
+    "eventType": "mil_sub",
+    "ledger": "1284650",
+    "ledgerAt": "2026-07-25T10:47:00.000Z",
+    "contractId": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    "escrowId": "42",
+    "topics": ["mil_sub", "42"],
+    "data": [0, "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H"],
+    "txHash": "d440e50454f31af3176813e02ea68ef786e4d3cea27d26934b484e73cf575dca",
+    "eventIndex": 0
+  }
+}
+```
+
 ### `mil_apr` — milestone approved
 
 | Position    | Field          | Type |
@@ -352,7 +371,28 @@ All amounts are `i128` stroops (1 unit = 10 000 000 stroops).
 | `data[1]`   | `amount`       | i128 |
 
 `mil_apr` reports the approval only. The corresponding money movement arrives as a
-separate `funds_rel` event — settle balances on `funds_rel`, not on `mil_apr`.
+separate `funds_rel` event — settle balances on `funds_rel`, not on `mil_apr`. The
+two are emitted from the same contract call, so they usually share a `ledger` and
+`txHash`, differing only in `eventIndex`:
+
+```json
+{
+  "eventType": "mil_apr",
+  "deliveryId": "clx7f4t0v0003qzrm3k8p6r2n",
+  "timestamp": "2026-07-25T11:02:17.489Z",
+  "data": {
+    "eventType": "mil_apr",
+    "ledger": "1284902",
+    "ledgerAt": "2026-07-25T11:02:14.000Z",
+    "contractId": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    "escrowId": "42",
+    "topics": ["mil_apr", "42"],
+    "data": [0, "4000000000"],
+    "txHash": "9f8e7d6c5b4a39281706f5e4d3c2b1a09876543210fedcba9876543210fedcba",
+    "eventIndex": 0
+  }
+}
+```
 
 ### `mil_rej` — milestone rejected
 
@@ -362,6 +402,25 @@ separate `funds_rel` event — settle balances on `funds_rel`, not on `mil_apr`.
 | `data[0]`   | `milestone_id` | u32     |
 | `data[1]`   | `client`       | Address |
 
+```json
+{
+  "eventType": "mil_rej",
+  "deliveryId": "clx7f6w3z0005qzrm5v9t4q7s",
+  "timestamp": "2026-07-25T11:20:03.291Z",
+  "data": {
+    "eventType": "mil_rej",
+    "ledger": "1285010",
+    "ledgerAt": "2026-07-25T11:20:00.000Z",
+    "contractId": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    "escrowId": "43",
+    "topics": ["mil_rej", "43"],
+    "data": [1, "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"],
+    "txHash": "a4c123b1612dd272d1371c17149d439536b3216fdaeeb975729fae923d5a4fd1",
+    "eventIndex": 0
+  }
+}
+```
+
 ### `mil_dis` — milestone disputed
 
 | Position    | Field          | Type    |
@@ -369,6 +428,25 @@ separate `funds_rel` event — settle balances on `funds_rel`, not on `mil_apr`.
 | `topics[1]` | `escrow_id`    | u64     |
 | `data[0]`   | `milestone_id` | u32     |
 | `data[1]`   | `raised_by`    | Address |
+
+```json
+{
+  "eventType": "mil_dis",
+  "deliveryId": "clx7f7y6b0006qzrm1c3w8x4t",
+  "timestamp": "2026-07-25T11:24:47.605Z",
+  "data": {
+    "eventType": "mil_dis",
+    "ledger": "1285032",
+    "ledgerAt": "2026-07-25T11:24:44.000Z",
+    "contractId": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    "escrowId": "43",
+    "topics": ["mil_dis", "43"],
+    "data": [1, "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H"],
+    "txHash": "2aabfe228f219e9cb0eb53f16947ccf25ec84d8dbc74254770f58904dba41ecc",
+    "eventIndex": 0
+  }
+}
+```
 
 ### `funds_rel` — funds released
 
@@ -406,6 +484,25 @@ separate `funds_rel` event — settle balances on `funds_rel`, not on `mil_apr`.
 
 `data` here is a bare scalar, not a tuple — the contract publishes a single value.
 
+```json
+{
+  "eventType": "esc_can",
+  "deliveryId": "clx7f9c1f0008qzrm7m2k5y6v",
+  "timestamp": "2026-07-26T14:03:22.190Z",
+  "data": {
+    "eventType": "esc_can",
+    "ledger": "1285700",
+    "ledgerAt": "2026-07-26T14:03:19.000Z",
+    "contractId": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    "escrowId": "44",
+    "topics": ["esc_can", "44"],
+    "data": "5000000000",
+    "txHash": "08f86bebb2737f6a6f0fb23c6f5da2cec255404e4fb440034d6608697a8d41be",
+    "eventIndex": 0
+  }
+}
+```
+
 ### `dis_rai` — dispute raised
 
 | Position    | Field       | Type    |
@@ -413,7 +510,27 @@ separate `funds_rel` event — settle balances on `funds_rel`, not on `mil_apr`.
 | `topics[1]` | `escrow_id` | u64     |
 | `data`      | `raised_by` | Address |
 
-Also a bare scalar.
+Also a bare scalar. This example continues the `mil_dis` dispute above — both fire
+from the same transaction when a milestone-level dispute escalates to the escrow:
+
+```json
+{
+  "eventType": "dis_rai",
+  "deliveryId": "clx7f8a8d0007qzrm4d6y9z5w",
+  "timestamp": "2026-07-25T11:24:47.611Z",
+  "data": {
+    "eventType": "dis_rai",
+    "ledger": "1285032",
+    "ledgerAt": "2026-07-25T11:24:44.000Z",
+    "contractId": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    "escrowId": "43",
+    "topics": ["dis_rai", "43"],
+    "data": "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H",
+    "txHash": "2aabfe228f219e9cb0eb53f16947ccf25ec84d8dbc74254770f58904dba41ecc",
+    "eventIndex": 1
+  }
+}
+```
 
 ### `dis_res` — dispute resolved
 
@@ -425,6 +542,25 @@ Also a bare scalar.
 
 The two amounts are the arbiter's split of the remaining balance and always sum to
 it. The escrow moves to `Completed` on this event, not to `Cancelled`.
+
+```json
+{
+  "eventType": "dis_res",
+  "deliveryId": "clx7fac4h0009qzrm9p1v3b8x",
+  "timestamp": "2026-07-26T09:15:00.842Z",
+  "data": {
+    "eventType": "dis_res",
+    "ledger": "1285600",
+    "ledgerAt": "2026-07-26T09:14:57.000Z",
+    "contractId": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    "escrowId": "43",
+    "topics": ["dis_res", "43"],
+    "data": ["1000000000", "2000000000"],
+    "txHash": "cc3fc1626e53a13043b026c48bbf33feff9243a8f506b40928b5b7a767c76fb0",
+    "eventIndex": 0
+  }
+}
+```
 
 ### `rep_upd` — reputation updated
 
