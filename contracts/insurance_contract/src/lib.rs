@@ -711,6 +711,11 @@ impl InsuranceContract {
         })
     }
 
+    pub fn get_insurance_pool_balance(env: Env, token_addr: Address) -> Result<i128, InsuranceError> {
+        Storage::require_initialized(&env)?;
+        Ok(token::Client::new(&env, &token_addr).balance(&env.current_contract_address()))
+    }
+
     /// Returns a single claim by ID.
     pub fn get_claim(env: Env, claim_id: u32) -> Result<Claim, InsuranceError> {
         Storage::require_initialized(&env)?;
@@ -1162,6 +1167,7 @@ mod tests {
         let info = s.client.get_fund_info();
         assert_eq!(info.total_contributed, 500);
         assert_eq!(info.current_balance, 500);
+        assert_eq!(s.client.get_insurance_pool_balance(&s.token_id), 500);
         assert_eq!(s.client.get_contribution(&contributor), 500);
     }
 

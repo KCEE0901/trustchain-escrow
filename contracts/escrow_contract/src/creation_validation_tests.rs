@@ -338,6 +338,24 @@ mod creation_validation_tests {
         let (env, admin, client_addr, freelancer, contract) = setup();
         let escrow_id = create(&env, &contract, &admin, &client_addr, &freelancer, &None);
         assert_eq!(contract.get_escrow(&escrow_id).brief_hash, hash32(&env));
+        assert!(contract.escrow_exists(&escrow_id));
+        assert!(!contract.escrow_exists(&(escrow_id + 10_000)));
+    }
+
+    #[test]
+    fn test_add_milestone_rejects_zero_amount() {
+        let (env, admin, client_addr, freelancer, contract) = setup();
+        let escrow_id = create(&env, &contract, &admin, &client_addr, &freelancer, &None);
+
+        let result = contract.try_add_milestone(
+            &client_addr,
+            &escrow_id,
+            &String::from_str(&env, "Zero amount"),
+            &hash32(&env),
+            &0_i128,
+        );
+
+        assert_eq!(result, Err(Ok(EscrowError::E17)));
     }
 
     /// A single non-zero byte is enough — the check rejects only the all-zero value.
