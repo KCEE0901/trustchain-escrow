@@ -80,6 +80,10 @@ router.post('/users/:address/ban', requireMfa, adminController.banUser);
  * @query  page, limit, resolved (true|false)
  */
 router.get('/disputes', adminController.listDisputes);
+router.get('/disputes/pending', (req, res, next) => {
+  req.query.resolved = 'false';
+  return adminController.listDisputes(req, res, next);
+});
 
 /**
  * @route  POST /api/admin/disputes/:id/resolve
