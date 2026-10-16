@@ -365,3 +365,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, the Soroban toolchain, h
 
 <!-- handsoff-issue-335 -->
 - #335: Document ledger constraints for insurance reserve solvency
+
+<!-- handsoff-issue-336 -->
+- #336: Add fuzz coverage for insurance reserve solvency
