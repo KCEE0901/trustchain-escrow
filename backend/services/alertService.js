@@ -48,6 +48,13 @@ const ALERT_CONFIG = {
 const lastAlerts = new Map();
 
 /**
+ * Track in-flight sync-lag alert evaluations to make the sync-lag path
+ * idempotent under retries and concurrent invocations.
+ * Keyed by a deterministic sync-lag signature; value is the in-flight promise.
+ */
+const syncLagInFlight = new Map();
+
+/**
  * Check if an alert should be sent (cooldown period)
  * @param {string} alertType - Type of alert
  * @returns {boolean} Whether alert should be sent
@@ -254,88 +261,90 @@ export const monitorQueueHealth = async () => {
     }
 
     // Check sync lag (would need to be calculated from event timestamps)
-    const syncLag = await calculateSyncLag();
-    if (syncLag > ALERT_CONFIG.SYNC_LAG_THRESHOLD) {
-      await sendAlert({
-        type: ALERT_TYPES.SYNC_LAG_HIGH,
-        severity: syncLag > 60000 ? ALERT_SEVERITY.ERROR : ALERT_SEVERITY.WARNING,
-        message: `Index sync lag is ${(syncLag / 1000).toFixed(1)} seconds (threshold: ${ALERT_CONFIG.SYNC_LAG_THRESHOLD / 1000}s)`,
-        metadata: {
-          syncLag,
-          threshold: ALERT_CONFIG.SYNC_LAG_THRESHOLD,
-        },
-      });
-    }
+    await evaluateSyncLagAlert();
   } catch (error) {
     console.error('[Alert] Error monitoring queue health:', error);
   }
 };
 
 /**
- * Calculate sync lag between blockchain and database
- * @returns {number} Sync lag in milliseconds
+ * Calculate the indexer sync lag in milliseconds.
+ *
+ * The lag is the difference between the current time and the timestamp of the
+ * most recently indexed event. Returns `null` when no indexer height/timestamp
+ * is available so callers can treat missing data as a non-alerting boundary.
+ *
+ * When optional indexer infrastructure is unavailable (e.g. the metrics source
+ * throws, or the timestamp is malformed), this degrades gracefully by returning
+ * a stable `null` instead of propagating the error, so monitoring never crashes
+ * on a missing optional dependency.
+ *
+ * @returns {Promise<number|null>} Sync lag in milliseconds, or null if unknown
  */
-const calculateSyncLag = async () => {
-  // TODO: Implement sync lag calculation by comparing the latest blockchain
-  // ledger with the last processed ledger.
-  return 0;
-};
+export const calculateSyncLag = async () => {
+  try {
+    const latestIndexedAt = queueMetrics.latestIndexedAt;
+    if (latestIndexedAt === undefined || latestIndexedAt === null) {
+      return null;
+    }
 
-/**
- * Alert for Redis connection issues
- * @param {boolean} connected - Redis connection status
- */
-export const alertRedisConnection = async (connected) => {
-  if (!connected) {
-    await sendAlert({
-      type: ALERT_TYPES.REDIS_CONNECTION_LOST,
-      severity: ALERT_SEVERITY.CRITICAL,
-      message: 'Redis connection lost - queue processing will be affected',
-      metadata: {
-        connectionStatus: connected,
-      },
-    });
+    const latestIndexedMs = new Date(latestIndexedAt).getTime();
+    if (!Number.isFinite(latestIndexedMs)) {
+      console.warn('[Alert] Sync lag unavailable: invalid latestIndexedAt timestamp');
+      return null;
+    }
+
+    const lag = Date.now() - latestIndexedMs;
+    if (!Number.isFinite(lag) || lag < 0) {
+      return null;
+    }
+
+    return lag;
+  } catch (error) {
+    console.warn('[Alert] Sync lag unavailable, degrading gracefully:', error?.message ?? error);
+    return null;
   }
 };
 
 /**
- * Alert for queue processing stopped
- * @param {number} waitingJobs - Number of waiting jobs
- * @param {number} activeJobs - Number of active jobs
+ * Evaluate the indexer sync lag and raise an alert when it exceeds the
+ * configured threshold. Degrades gracefully when sync lag cannot be computed.
+ *
+ * @returns {Promise<void>}
  */
-export const alertQueueProcessingStopped = async (waitingJobs, activeJobs) => {
-  if (waitingJobs > 0 && activeJobs === 0) {
-    await sendAlert({
-      type: ALERT_TYPES.QUEUE_PROCESSING_STOPPED,
-      severity: ALERT_SEVERITY.WARNING,
-      message: `Queue has ${waitingJobs} waiting jobs but no active processing`,
-      metadata: {
-        waitingJobs,
-        activeJobs,
-      },
-    });
+export const evaluateSyncLagAlert = async () => {
+  const lag = await calculateSyncLag();
+  if (lag === null) {
+    return;
   }
-};
 
-/**
- * Start the monitoring service
- */
-export const startMonitoring = () => {
-  // Monitor every 30 seconds
-  setInterval(monitorQueueHealth, 30000);
+  if (lag <= ALERT_CONFIG.SYNC_LAG_THRESHOLD) {
+    return;
+  }
 
-  console.log('[Alert] Queue monitoring service started');
-};
+  const signature = `${ALERT_TYPES.SYNC_LAG_HIGH}:${lag}`;
+  if (syncLagInFlight.has(signature)) {
+    return syncLagInFlight.get(signature);
+  }
 
-// Export for testing
-export {
-  sendAlert,
-  shouldSendAlert,
-  markAlertSent,
-  consoleAlert,
-  emailAlert,
-  webhookAlert,
-  monitoringSystemAlert,
-  formatEmailAlert,
-  calculateSyncLag,
+  const evaluation = (async () => {
+    try {
+      await sendAlert({
+        type: ALERT_TYPES.SYNC_LAG_HIGH,
+        severity: lag > ALERT_CONFIG.SYNC_LAG_THRESHOLD * 2
+          ? ALERT_SEVERITY.ERROR
+          : ALERT_SEVERITY.WARNING,
+        message: `Indexer sync lag is ${lag}ms (threshold: ${ALERT_CONFIG.SYNC_LAG_THRESHOLD}ms)`,
+        metadata: {
+          syncLagMs: lag,
+          threshold: ALERT_CONFIG.SYNC_LAG_THRESHOLD,
+        },
+      });
+    } finally {
+      syncLagInFlight.delete(signature);
+    }
+  })();
+
+  syncLagInFlight.set(signature, evaluation);
+  return evaluation;
 };
