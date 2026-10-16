@@ -72,9 +72,25 @@ mockClient.__resetStore = () => {
   store.clear();
 };
 
-mockClient.get = jest.fn(async (key) => readKey(key));
+// Simulate optional indexer infrastructure being unavailable. When enabled,
+// every Redis command used by the sync-lag alert path rejects with a
+// deterministic, secret-free error so tests can assert graceful degradation.
+let unavailable = false;
 
-mockClient.set = jest.fn(async (key, value, options) => {
+mockClient.__setUnavailable = (value) => {
+  unavailable = Boolean(value);
+};
+
+const unavailableError = () => new Error('redis unavailable');
+
+const guard = (fn) => async (...args) => {
+  if (unavailable) throw unavailableError();
+  return fn(...args);
+};
+
+mockClient.get = jest.fn(guard(async (key) => readKey(key)));
+
+mockClient.set = jest.fn(guard(async (key, value, options) => {
   const { nx, ex } = parseSetOptions(options);
   if (nx && readKey(key) !== null) {
     return null;
@@ -84,19 +100,19 @@ mockClient.set = jest.fn(async (key, value, options) => {
     expiresAt: ex !== null ? now() + ex * 1000 : null,
   });
   return 'OK';
-});
+}));
 
-mockClient.setNX = jest.fn(async (key, value) => {
+mockClient.setNX = jest.fn(guard(async (key, value) => {
   if (readKey(key) !== null) {
     return null;
   }
   store.set(key, { value, expiresAt: null });
   return 'OK';
-});
+}));
 
-mockClient.del = jest.fn(async (key) => {
+mockClient.del = jest.fn(guard(async (key) => {
   const existed = store.delete(key);
   return existed ? 1 : 0;
-});
+}));
 
 export const createClient = jest.fn(() => mockClient);

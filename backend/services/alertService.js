@@ -274,69 +274,69 @@ export const monitorQueueHealth = async () => {
  * most recently indexed event. Returns `null` when no indexer height/timestamp
  * is available so callers can treat missing data as a non-alerting boundary.
  *
+ * When optional indexer infrastructure is unavailable (e.g. the metrics source
+ * throws, or the timestamp is malformed), this degrades gracefully by returning
+ * a stable `null` instead of propagating the error, so monitoring never crashes
+ * on a missing optional dependency.
+ *
  * @returns {Promise<number|null>} Sync lag in milliseconds, or null if unknown
  */
 export const calculateSyncLag = async () => {
-  const latestIndexedAt = queueMetrics.latestIndexedAt;
-  if (latestIndexedAt === undefined || latestIndexedAt === null) {
+  try {
+    const latestIndexedAt = queueMetrics.latestIndexedAt;
+    if (latestIndexedAt === undefined || latestIndexedAt === null) {
+      return null;
+    }
+
+    const latestIndexedMs = new Date(latestIndexedAt).getTime();
+    if (!Number.isFinite(latestIndexedMs)) {
+      console.warn('[Alert] Sync lag unavailable: invalid latestIndexedAt timestamp');
+      return null;
+    }
+
+    const lag = Date.now() - latestIndexedMs;
+    if (!Number.isFinite(lag) || lag < 0) {
+      return null;
+    }
+
+    return lag;
+  } catch (error) {
+    console.warn('[Alert] Sync lag unavailable, degrading gracefully:', error?.message ?? error);
     return null;
   }
-
-  const latestIndexedMs = new Date(latestIndexedAt).getTime();
-  if (!Number.isFinite(latestIndexedMs)) {
-    return null;
-  }
-
-  return Date.now() - latestIndexedMs;
 };
 
 /**
- * Evaluate the indexer sync-lag alert idempotently.
- *
- * Retries and concurrent invocations that observe the same sync-lag value
- * share a single in-flight evaluation, so the alert effect is applied at most
- * once per distinct lag signature. Invalid or missing lag data is ignored
- * without throwing, keeping the surrounding monitor loop resilient.
+ * Evaluate the indexer sync lag and raise an alert when it exceeds the
+ * configured threshold. Degrades gracefully when sync lag cannot be computed.
  *
  * @returns {Promise<void>}
  */
 export const evaluateSyncLagAlert = async () => {
-  let syncLag;
-  try {
-    syncLag = await calculateSyncLag();
-  } catch (error) {
-    console.error('[Alert] Error calculating sync lag:', error);
+  const lag = await calculateSyncLag();
+  if (lag === null) {
     return;
   }
 
-  // Boundary: missing or non-finite lag data must not trigger an alert.
-  if (syncLag === null || !Number.isFinite(syncLag)) {
+  if (lag <= ALERT_CONFIG.SYNC_LAG_THRESHOLD) {
     return;
   }
 
-  // Boundary: lag at or below the threshold is healthy and must not alert.
-  if (syncLag <= ALERT_CONFIG.SYNC_LAG_THRESHOLD) {
-    return;
-  }
-
-  // Deterministic signature so overlapping workers observing the same lag
-  // collapse onto a single in-flight evaluation.
-  const signature = `${ALERT_TYPES.SYNC_LAG_HIGH}:${syncLag}`;
-  const existing = syncLagInFlight.get(signature);
-  if (existing) {
-    return existing;
+  const signature = `${ALERT_TYPES.SYNC_LAG_HIGH}:${lag}`;
+  if (syncLagInFlight.has(signature)) {
+    return syncLagInFlight.get(signature);
   }
 
   const evaluation = (async () => {
     try {
       await sendAlert({
         type: ALERT_TYPES.SYNC_LAG_HIGH,
-        severity: syncLag > ALERT_CONFIG.SYNC_LAG_THRESHOLD * 2
+        severity: lag > ALERT_CONFIG.SYNC_LAG_THRESHOLD * 2
           ? ALERT_SEVERITY.ERROR
           : ALERT_SEVERITY.WARNING,
-        message: `Indexer sync lag is ${syncLag}ms (threshold: ${ALERT_CONFIG.SYNC_LAG_THRESHOLD}ms)`,
+        message: `Indexer sync lag is ${lag}ms (threshold: ${ALERT_CONFIG.SYNC_LAG_THRESHOLD}ms)`,
         metadata: {
-          syncLag,
+          syncLagMs: lag,
           threshold: ALERT_CONFIG.SYNC_LAG_THRESHOLD,
         },
       });
