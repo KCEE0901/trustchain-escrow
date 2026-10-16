@@ -353,3 +353,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, the Soroban toolchain, h
 
 <!-- handsoff-issue-338 -->
 - #338: Add authorization boundary coverage for recurring payment schedule execution
+
+<!-- handsoff-issue-340 -->
+- #340: Add explicit error mapping for recurring payment schedule execution
