@@ -56,12 +56,14 @@ mod admin_transfer_tests;
 mod amount_limits_tests;
 mod arbiter_allowlist;
 mod arbiter_allowlist_tests;
+mod arbiter_lifecycle_auth_tests;
 mod arbiter_reputation_tests;
 mod arbiter_validation_tests;
 mod auto_expiry;
 mod batch_add_milestones_cap_tests;
 mod batch_approve_release_e2e_tests;
 mod bridge;
+mod bridge_registry_tests;
 mod bridge_tests;
 mod contract_version_tests;
 mod creation_validation_tests;
@@ -78,6 +80,7 @@ mod governance_escalation_tests;
 mod lock_time_enforcement_tests;
 mod max_escrow_amount_tests;
 mod meta_snapshot_tests;
+mod milestone_index_event_tests;
 mod module_registration_tests;
 mod multisig_lifecycle_tests;
 mod multisig_threshold_tests;
@@ -1378,7 +1381,7 @@ impl EscrowContract {
             &Milestone {
                 id: milestone_id,
                 title,
-                description_hash,
+                description_hash: description_hash.clone(),
                 amount,
                 status: MS_PENDING,
                 submitted_at: None,
@@ -1392,6 +1395,7 @@ impl EscrowContract {
         ContractStorage::save_escrow_meta(&env, &meta);
 
         events::emit_milestone_added(&env, escrow_id, milestone_id, amount);
+        events::emit_milestone_indexed(&env, escrow_id, milestone_id, amount, &description_hash);
         Ok(milestone_id)
     }
 
@@ -1497,6 +1501,14 @@ impl EscrowContract {
 
     /// Register a wrapped (bridged) token so it can be used in escrows.
     /// Admin only. `info.is_approved` controls whether the token is usable.
+    ///
+    /// Malformed metadata is rejected before anything is stored: empty
+    /// `origin_chain` / `origin_address` or the escrow contract itself as the
+    /// token (`E80`), and origin fields longer than
+    /// `bridge::MAX_WRAPPED_TOKEN_FIELD_LEN` (`E81`).
+    ///
+    /// Emits `brg_reg` (origin chain, unchanged) and `wtk_reg` with the full
+    /// record and the approval state it replaced.
     pub fn register_wrapped_token(
         env: Env,
         caller: Address,
@@ -1504,8 +1516,24 @@ impl EscrowContract {
     ) -> Result<(), EscrowError> {
         ContractStorage::require_admin(&env, &caller)?;
         caller.require_auth();
+        bridge::validate_wrapped_token_info(&env, &info)?;
+        let previous_is_approved =
+            bridge::get_wrapped_token_info(&env, &info.stellar_address).map(|p| p.is_approved);
         bridge::register_wrapped_token(&env, &info);
         bridge::emit_wrapped_token_registered(&env, &info.stellar_address, &info.origin_chain);
+        bridge::emit_wrapped_token_registry_updated(
+            &env,
+            &bridge::WrappedTokenRegisteredEvent {
+                stellar_address: info.stellar_address.clone(),
+                origin_chain: info.origin_chain.clone(),
+                origin_address: info.origin_address.clone(),
+                bridge: info.bridge.clone(),
+                is_approved: info.is_approved,
+                previous_is_approved,
+                registered_by: caller,
+                registered_at: env.ledger().timestamp(),
+            },
+        );
         Ok(())
     }
 
@@ -2487,7 +2515,7 @@ impl EscrowContract {
             &Milestone {
                 id: milestone_id,
                 title,
-                description_hash,
+                description_hash: description_hash.clone(),
                 amount,
                 status: MS_PENDING,
                 submitted_at: None,
@@ -2501,6 +2529,7 @@ impl EscrowContract {
         ContractStorage::save_escrow_meta(&env, &meta);
 
         events::emit_milestone_added(&env, escrow_id, milestone_id, amount);
+        events::emit_milestone_indexed(&env, escrow_id, milestone_id, amount, &description_hash);
         Ok(milestone_id)
     }
 
@@ -2564,7 +2593,7 @@ impl EscrowContract {
             &Milestone {
                 id: milestone_id,
                 title,
-                description_hash,
+                description_hash: description_hash.clone(),
                 amount,
                 status: MS_PENDING,
                 submitted_at: None,
@@ -2578,6 +2607,7 @@ impl EscrowContract {
         ContractStorage::save_escrow_meta(env, &meta);
 
         events::emit_milestone_added(env, escrow_id, milestone_id, amount);
+        events::emit_milestone_indexed(env, escrow_id, milestone_id, amount, &description_hash);
         Ok(milestone_id)
     }
 
@@ -2692,14 +2722,16 @@ impl EscrowContract {
         // Write milestones — single persistent write per milestone.
         for i in 0..n {
             let milestone_id = first_id + i;
+            let description_hash = description_hashes.get(i).ok_or(EscrowError::E17)?;
+            let amount = amounts.get(i).ok_or(EscrowError::E17)?;
             ContractStorage::save_milestone(
                 &env,
                 escrow_id,
                 &Milestone {
                     id: milestone_id,
                     title: titles.get(i).ok_or(EscrowError::E17)?,
-                    description_hash: description_hashes.get(i).ok_or(EscrowError::E17)?,
-                    amount: amounts.get(i).ok_or(EscrowError::E17)?,
+                    description_hash: description_hash.clone(),
+                    amount,
                     status: MS_PENDING,
                     submitted_at: None,
                     resolved_at: None,
@@ -2709,11 +2741,13 @@ impl EscrowContract {
                     depends_on: None,
                 },
             );
-            events::emit_milestone_added(
+            events::emit_milestone_added(&env, escrow_id, milestone_id, amount);
+            events::emit_milestone_indexed(
                 &env,
                 escrow_id,
                 milestone_id,
-                amounts.get(i).ok_or(EscrowError::E17)?,
+                amount,
+                &description_hash,
             );
         }
 
@@ -5670,7 +5704,9 @@ impl EscrowContract {
     /// Replaces the arbiter on an active escrow.
     ///
     /// Requires authorization from both the client and the freelancer.
-    /// The new arbiter must not be the client or freelancer themselves.
+    /// The new arbiter must not be the client or freelancer themselves, must
+    /// be on the arbiter allowlist (`E90`) and must meet the minimum arbiter
+    /// reputation if it has a history (`E3`). `None` removes the arbiter.
     pub fn update_arbiter(
         env: Env,
         escrow_id: u64,
@@ -5692,6 +5728,9 @@ impl EscrowContract {
             if a == &meta.client || a == &meta.freelancer {
                 return Err(EscrowError::E3);
             }
+            // Same selection rules as `create_escrow`, so the allowlist and
+            // reputation floor cannot be bypassed by swapping arbiters later.
+            Self::validate_arbiter_selection(&env, a)?;
         }
 
         meta.arbiter = new_arbiter.clone();
@@ -6098,6 +6137,26 @@ impl EscrowContract {
     }
 
     // ── Internal helpers ──────────────────────────────────────────────────────
+
+    /// Arbiter selection rules shared by `update_arbiter`; mirrors the checks
+    /// `create_escrow_internal` applies (reputation floor, then allowlist).
+    fn validate_arbiter_selection(env: &Env, arbiter: &Address) -> Result<(), EscrowError> {
+        let min_reputation: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::MinArbiterReputation)
+            .unwrap_or(MIN_ARBITER_REPUTATION_SCORE);
+        let reputation = ContractStorage::load_reputation(env, arbiter);
+        if (reputation.completed_escrows > 0 || reputation.total_score > 0)
+            && reputation.total_score < min_reputation
+        {
+            return Err(EscrowError::E3);
+        }
+        if !crate::arbiter_allowlist::is_arbiter_allowed(env, arbiter.clone()) {
+            return Err(EscrowError::E90);
+        }
+        Ok(())
+    }
 
     fn _update_reputation_internal(
         env: &Env,

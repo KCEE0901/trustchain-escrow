@@ -34,6 +34,27 @@ pub fn emit_milestone_added(env: &Env, escrow_id: u64, milestone_id: u32, amount
         .publish((ev::MILESTONE_ADDED, escrow_id), (milestone_id, amount));
 }
 
+/// Lookup coordinates for a newly created milestone (see
+/// [`crate::types::MilestoneIndexedEvent`]). Emitted alongside `mil_add`.
+pub fn emit_milestone_indexed(
+    env: &Env,
+    escrow_id: u64,
+    milestone_id: u32,
+    amount: i128,
+    description_hash: &soroban_sdk::BytesN<32>,
+) {
+    env.events().publish(
+        (ev::MILESTONE_INDEXED, escrow_id),
+        crate::types::MilestoneIndexedEvent {
+            escrow_id,
+            milestone_id,
+            milestone_count: milestone_id.saturating_add(1),
+            amount,
+            description_hash: description_hash.clone(),
+        },
+    );
+}
+
 pub fn emit_milestone_submitted(
     env: &Env,
     escrow_id: u64,

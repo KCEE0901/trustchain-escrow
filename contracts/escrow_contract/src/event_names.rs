@@ -21,6 +21,7 @@ pub const ESCROW_SPLIT: Symbol = symbol_short!("esc_spl");
 // ── Milestones ────────────────────────────────────────────────────────────────
 
 pub const MILESTONE_ADDED: Symbol = symbol_short!("mil_add");
+pub const MILESTONE_INDEXED: Symbol = symbol_short!("mil_idx");
 pub const MILESTONE_SUBMITTED: Symbol = symbol_short!("mil_sub");
 pub const MILESTONE_APPROVED: Symbol = symbol_short!("mil_apr");
 pub const MILESTONE_REJECTED: Symbol = symbol_short!("mil_rej");

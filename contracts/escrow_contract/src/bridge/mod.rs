@@ -72,6 +72,28 @@ pub fn get_bridge_confirmation(env: &Env, token: &Address) -> Option<BridgeConfi
 
 // ── Validation ────────────────────────────────────────────────────────────────
 
+/// Maximum length (bytes) of `origin_chain` and `origin_address`.
+pub const MAX_WRAPPED_TOKEN_FIELD_LEN: u32 = 128;
+
+/// Reject malformed registry entries before they are stored: empty or
+/// over-long origin fields (`E80` / `E81`) and the escrow contract registering
+/// itself as a wrapped token (`E80`).
+pub fn validate_wrapped_token_info(env: &Env, info: &WrappedTokenInfo) -> Result<(), EscrowError> {
+    if info.stellar_address == env.current_contract_address() {
+        return Err(EscrowError::E80);
+    }
+    for field in [&info.origin_chain, &info.origin_address] {
+        let len = field.len();
+        if len == 0 {
+            return Err(EscrowError::E80);
+        }
+        if len > MAX_WRAPPED_TOKEN_FIELD_LEN {
+            return Err(EscrowError::E81);
+        }
+    }
+    Ok(())
+}
+
 /// Validate that `token` is usable in an escrow: either a native Stellar asset
 /// (not registered as wrapped) or an approved wrapped token.
 pub fn validate_escrow_token(env: &Env, token: &Address) -> Result<(), EscrowError> {
@@ -101,6 +123,14 @@ pub fn emit_wrapped_token_registered(env: &Env, token: &Address, origin_chain: &
     env.events().publish(
         (symbol_short!("brg_reg"), token.clone()),
         origin_chain.clone(),
+    );
+}
+
+/// Emits the full registry record (see [`WrappedTokenRegisteredEvent`]).
+pub fn emit_wrapped_token_registry_updated(env: &Env, payload: &WrappedTokenRegisteredEvent) {
+    env.events().publish(
+        (symbol_short!("wtk_reg"), payload.stellar_address.clone()),
+        payload.clone(),
     );
 }
 

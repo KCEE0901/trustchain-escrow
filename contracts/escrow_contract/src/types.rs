@@ -285,6 +285,30 @@ pub struct Milestone {
     pub depends_on: Option<u32>,
 }
 
+/// Payload of the `mil_idx` event, emitted next to `mil_add` whenever a
+/// milestone is created.
+///
+/// Topics are `("mil_idx", escrow_id)`. Milestone ids are dense and double as
+/// the storage index, so an indexer can address the entry directly with
+/// `get_milestone(escrow_id, milestone_id)` /
+/// `get_milestone_by_index(escrow_id, milestone_id)` instead of scanning, and
+/// `milestone_count` (the escrow's count *after* this milestone) lets it detect
+/// gaps or missed events deterministically.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MilestoneIndexedEvent {
+    /// Escrow the milestone belongs to.
+    pub escrow_id: u64,
+    /// Milestone id, equal to its index (`0..milestone_count`).
+    pub milestone_id: u32,
+    /// Number of milestones on the escrow after this one was added.
+    pub milestone_count: u32,
+    /// Amount allocated to the milestone.
+    pub amount: i128,
+    /// Content hash of the milestone description.
+    pub description_hash: BytesN<32>,
+}
+
 /// Configuration for a recurring/subscription escrow.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -364,7 +388,19 @@ pub struct EscrowState {
 
     /// Optional: address of a trusted arbiter for dispute resolution.
     /// If None, disputes require both parties to agree on resolution.
-    /// TODO (contributor): implement arbiter selection and staking
+    ///
+    /// Selection lifecycle and its authorization boundary:
+    /// - **select** — at `create_escrow` or via `update_arbiter`; the arbiter
+    ///   must be on the admin-managed allowlist (`E90`) and meet the minimum
+    ///   arbiter reputation when it has a history (`E3`), and may not be the
+    ///   client or freelancer (`E3`). `update_arbiter` additionally needs both
+    ///   the client's and the freelancer's authorization and an `Active`
+    ///   escrow (`E9`).
+    /// - **act** — `resolve_dispute` accepts the *currently* assigned arbiter
+    ///   only while it is still allowlisted (`E90`); a replaced arbiter is no
+    ///   longer recognised and falls through to the admin check (`E4`).
+    /// - **revoke** — removing an address from the allowlist (admin only)
+    ///   immediately stops it from resolving disputes or being selected again.
     pub arbiter: Option<Address>,
 
     /// Addresses authorised to approve milestone releases (multi-sig).
