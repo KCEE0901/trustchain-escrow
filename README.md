@@ -350,3 +350,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, the Soroban toolchain, h
 
 <!-- handsoff-issue-337 -->
 - #337: Add invariant tests for recurring payment schedule execution
+
+<!-- handsoff-issue-338 -->
+- #338: Add authorization boundary coverage for recurring payment schedule execution
