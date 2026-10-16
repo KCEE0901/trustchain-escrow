@@ -359,3 +359,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, the Soroban toolchain, h
 
 <!-- handsoff-issue-344 -->
 - #344: Add authorization boundary coverage for slashing evidence verification
+
+<!-- handsoff-issue-333 -->
+- #333: Add fuzz coverage for bridge settlement confirmation
