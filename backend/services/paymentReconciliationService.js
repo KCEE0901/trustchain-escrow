@@ -15,6 +15,7 @@ import prisma from '../lib/prisma.js';
 import { createModuleLogger } from '../config/logger.js';
 import auditService, { AuditCategory, AuditAction } from './auditService.js';
 import { TxStatus } from './stellarMonitorService.js';
+import { isValidStellarTransactionHash } from '../../shared/stellarTransactionHash.js';
 
 const log = createModuleLogger('paymentReconciliation');
 
@@ -51,11 +52,14 @@ function auditActionFor(status) {
  * @returns {Promise<{ checked: number, updated: number, changes: Array<object> }>}
  */
 export async function reconcilePayments({ batchSize = 100 } = {}) {
-  const payments = await prisma.payment.findMany({
+  const fetchedPayments = await prisma.payment.findMany({
     where: { txHash: { not: null }, status: { in: RECONCILABLE_STATUSES } },
     take: batchSize,
     orderBy: { updatedAt: 'asc' },
   });
+  const payments = fetchedPayments.filter((payment) =>
+    isValidStellarTransactionHash(payment.txHash),
+  );
   if (payments.length === 0) return { checked: 0, updated: 0, changes: [] };
 
   const monitors = await prisma.transactionMonitor.findMany({

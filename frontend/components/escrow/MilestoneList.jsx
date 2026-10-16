@@ -19,7 +19,14 @@
 
 import MilestoneItem from './MilestoneItem';
 
-export default function MilestoneList({ milestones = [], role, onApprove, onReject, onSubmit }) {
+export default function MilestoneList({
+  milestones = [],
+  role,
+  actionsDisabled = false,
+  onApprove,
+  onReject,
+  onSubmit,
+}) {
   if (milestones.length === 0) {
     return (
       <div className="card text-center py-10 text-gray-500">
@@ -74,6 +81,7 @@ export default function MilestoneList({ milestones = [], role, onApprove, onReje
               milestone={milestone}
               index={index}
               role={role}
+              actionsDisabled={actionsDisabled}
               onApprove={onApprove}
               onReject={onReject}
               onSubmit={onSubmit}

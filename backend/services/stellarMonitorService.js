@@ -16,6 +16,7 @@
 import prisma from '../lib/prisma.js';
 import { createModuleLogger } from '../config/logger.js';
 import { getLatestLedger } from './stellarService.js';
+import { isValidStellarTransactionHash } from '../../shared/stellarTransactionHash.js';
 
 const log = createModuleLogger('stellarMonitor');
 
@@ -94,10 +95,23 @@ export function resolveTxState(txResult, elapsedMs, stuckThresholdMs = STUCK_THR
  * @param {string} [opts.escrowId] — associated escrow ID
  * @returns {Promise<object>} created monitor record
  */
-export async function recordTransaction({ txHash, fromAddress, toAddress, amount, memo, escrowId }) {
-  const existing = await prisma.transactionMonitor.findUnique({
-    where: { txHash },
-  }).catch(() => null);
+export async function recordTransaction({
+  txHash,
+  fromAddress,
+  toAddress,
+  amount,
+  memo,
+  escrowId,
+}) {
+  if (!isValidStellarTransactionHash(txHash)) {
+    throw new TypeError('Invalid Stellar transaction hash');
+  }
+
+  const existing = await prisma.transactionMonitor
+    .findUnique({
+      where: { txHash },
+    })
+    .catch(() => null);
 
   if (existing) {
     log.warn({ message: 'tx_already_tracked', txHash });
@@ -221,7 +235,12 @@ export async function pollPendingTransactions({ batchSize = BATCH_SIZE } = {}) {
         });
         results.failed++;
         if (nextStatus === TxStatus.REVIEW_REQUIRED) results.reviewRequired++;
-        log.warn({ message: 'tx_failed', txHash: tx.txHash, resultCode: txResult.resultCode, status: nextStatus });
+        log.warn({
+          message: 'tx_failed',
+          txHash: tx.txHash,
+          resultCode: txResult.resultCode,
+          status: nextStatus,
+        });
       } else if (nextStatus === TxStatus.TIMEOUT) {
         await prisma.transactionMonitor.update({
           where: { txHash: tx.txHash },
@@ -262,15 +281,16 @@ export async function pollPendingTransactions({ batchSize = BATCH_SIZE } = {}) {
  * Get monitoring status summary.
  */
 export async function getMonitorStatus() {
-  const [total, pending, confirmed, failed, timeout, failedPermanent, reviewRequired] = await Promise.all([
-    prisma.transactionMonitor.count(),
-    prisma.transactionMonitor.count({ where: { status: TxStatus.PENDING } }),
-    prisma.transactionMonitor.count({ where: { status: TxStatus.CONFIRMED } }),
-    prisma.transactionMonitor.count({ where: { status: TxStatus.FAILED } }),
-    prisma.transactionMonitor.count({ where: { status: TxStatus.TIMEOUT } }),
-    prisma.transactionMonitor.count({ where: { status: TxStatus.FAILED_PERMANENT } }),
-    prisma.transactionMonitor.count({ where: { status: TxStatus.REVIEW_REQUIRED } }),
-  ]);
+  const [total, pending, confirmed, failed, timeout, failedPermanent, reviewRequired] =
+    await Promise.all([
+      prisma.transactionMonitor.count(),
+      prisma.transactionMonitor.count({ where: { status: TxStatus.PENDING } }),
+      prisma.transactionMonitor.count({ where: { status: TxStatus.CONFIRMED } }),
+      prisma.transactionMonitor.count({ where: { status: TxStatus.FAILED } }),
+      prisma.transactionMonitor.count({ where: { status: TxStatus.TIMEOUT } }),
+      prisma.transactionMonitor.count({ where: { status: TxStatus.FAILED_PERMANENT } }),
+      prisma.transactionMonitor.count({ where: { status: TxStatus.REVIEW_REQUIRED } }),
+    ]);
 
   return {
     active: isRunning,

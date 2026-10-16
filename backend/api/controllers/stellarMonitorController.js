@@ -6,6 +6,7 @@
  */
 
 import { logControllerError } from '../../config/logger.js';
+import { isValidStellarTransactionHash } from '../../../shared/stellarTransactionHash.js';
 import {
   recordTransaction,
   getMonitorStatus,
@@ -123,9 +124,14 @@ const trackTransaction = async (req, res) => {
   try {
     const { txHash, fromAddress, toAddress, amount, memo, escrowId } = req.body;
 
-    if (!txHash || typeof txHash !== 'string') {
+    if (!isValidStellarTransactionHash(txHash)) {
       return res.status(400).json({
-        error: { code: 'VALIDATION_ERROR', message: 'txHash is required' },
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: txHash
+            ? 'txHash must be a 64-character hexadecimal Stellar hash'
+            : 'txHash is required',
+        },
       });
     }
     if (!fromAddress || typeof fromAddress !== 'string') {
@@ -134,7 +140,14 @@ const trackTransaction = async (req, res) => {
       });
     }
 
-    const record = await recordTransaction({ txHash, fromAddress, toAddress, amount, memo, escrowId });
+    const record = await recordTransaction({
+      txHash,
+      fromAddress,
+      toAddress,
+      amount,
+      memo,
+      escrowId,
+    });
     res.status(201).json({ data: record });
   } catch (err) {
     logControllerError('stellarMonitor.trackTransaction', err, req);

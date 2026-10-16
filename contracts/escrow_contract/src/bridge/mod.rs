@@ -54,9 +54,18 @@ pub fn is_approved_wrapped_token(env: &Env, token: &Address) -> bool {
 }
 
 /// Record or update bridge confirmation state for a bridged token.
+///
+/// Ledger assumptions:
+/// - One fixed-shape persistent entry is written per token; later updates overwrite it.
+/// - The entry TTL is renewed to 50,000 ledgers with a 5,000-ledger threshold.
+/// - Transaction size remains protocol-bounded; the call adds one fixed-size record
+///   and one small event. Fees are resource-based, not a contract constant.
+/// - `updated_at` is Stellar ledger time in seconds, not source-chain block time;
+///   updates in the same ledger may share a timestamp.
 pub fn record_bridge_confirmation(env: &Env, confirmation: &BridgeConfirmation) {
     let key = BridgeDataKey::BridgeConfirmation(confirmation.token.clone());
     env.storage().persistent().set(&key, confirmation);
+    // TTL is measured in ledger entries, not seconds.
     env.storage().persistent().extend_ttl(&key, 5_000, 50_000);
 }
 
