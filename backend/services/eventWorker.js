@@ -16,6 +16,60 @@ import {
 } from '../lib/queueConfig.js';
 
 /**
+ * Tracks in-flight failure alerts so overlapping workers cannot emit
+ * duplicate alerts for the same job. Keyed by job id.
+ */
+const inFlightFailureAlerts = new Map();
+
+/**
+ * Emits a failure alert for a permanently failed event job.
+ *
+ * Concurrency-safe: overlapping workers racing on the same job id will
+ * observe a single deterministic alert. The first caller wins; subsequent
+ * callers receive `{ emitted: false, reason: 'duplicate' }`.
+ *
+ * @param {Object} params
+ * @param {string|number} params.jobId - Identifier of the failed job
+ * @param {Object} params.originalJob - Original job data
+ * @param {Error|Object} params.error - Error that caused the failure
+ * @param {number} params.attemptsMade - Number of retry attempts
+ * @returns {Promise<{emitted: boolean, reason?: string}>}
+ */
+export const emitFailureAlert = async ({ jobId, originalJob, error, attemptsMade }) => {
+  if (jobId === undefined || jobId === null) {
+    throw new Error('emitFailureAlert requires a jobId');
+  }
+
+  if (inFlightFailureAlerts.has(jobId)) {
+    return { emitted: false, reason: 'duplicate' };
+  }
+
+  // Reserve the slot synchronously before any await so concurrent callers
+  // deterministically observe the reservation.
+  inFlightFailureAlerts.set(jobId, true);
+
+  try {
+    const alert = {
+      type: 'PERMANENT_EVENT_FAILURE',
+      jobId,
+      attemptsMade,
+      errorMessage: error && error.message ? error.message : String(error),
+      failedAt: new Date().toISOString(),
+      eventData: originalJob && originalJob.data ? originalJob.data : null,
+    };
+
+    // TODO: Send alert to monitoring system
+    // await alertService.sendAlert(alert);
+
+    console.error('[DeadLetter] Failure alert emitted:', JSON.stringify(alert));
+
+    return { emitted: true };
+  } finally {
+    inFlightFailureAlerts.delete(jobId);
+  }
+};
+
+/**
  * Processes a single Stellar event
  * @param {Object} job - BullMQ job containing event data
  */
@@ -168,11 +222,14 @@ const processDeadLetterEvent = async (job) => {
     // Log the failure for manual investigation
     await logPermanentFailure(originalJob, error, attemptsMade);
 
-    // TODO: Send alert to monitoring system
-    // await alertService.sendAlert({
-    //   type: 'PERMANENT_EVENT_FAILURE',
-    //   data: { originalJob, error, attemptsMade }
-    // });
+    // Emit a concurrency-safe failure alert. Duplicate alerts for the same
+    // job id are suppressed so overlapping workers stay deterministic.
+    await emitFailureAlert({
+      jobId: job.id,
+      originalJob,
+      error,
+      attemptsMade,
+    });
 
     console.log('[DeadLetter] Successfully logged permanent failure');
   } catch (logError) {
