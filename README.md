@@ -345,3 +345,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, the Soroban toolchain, h
 ## License
 
 [MIT](LICENSE)
+
+## Handsoff notes
+
+<!-- handsoff-issue-337 -->
+- #337: Add invariant tests for recurring payment schedule execution
