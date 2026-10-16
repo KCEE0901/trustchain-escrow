@@ -268,6 +268,29 @@ export const monitorQueueHealth = async () => {
 };
 
 /**
+ * Calculate the indexer sync lag in milliseconds.
+ *
+ * The lag is the difference between the current time and the timestamp of the
+ * most recently indexed event. Returns `null` when no indexer height/timestamp
+ * is available so callers can treat missing data as a non-alerting boundary.
+ *
+ * @returns {Promise<number|null>} Sync lag in milliseconds, or null if unknown
+ */
+export const calculateSyncLag = async () => {
+  const latestIndexedAt = queueMetrics.latestIndexedAt;
+  if (latestIndexedAt === undefined || latestIndexedAt === null) {
+    return null;
+  }
+
+  const latestIndexedMs = new Date(latestIndexedAt).getTime();
+  if (!Number.isFinite(latestIndexedMs)) {
+    return null;
+  }
+
+  return Date.now() - latestIndexedMs;
+};
+
+/**
  * Evaluate the indexer sync-lag alert idempotently.
  *
  * Retries and concurrent invocations that observe the same sync-lag value
@@ -287,29 +310,31 @@ export const evaluateSyncLagAlert = async () => {
   }
 
   // Boundary: missing or non-finite lag data must not trigger an alert.
-  if (typeof syncLag !== 'number' || !Number.isFinite(syncLag)) {
-    console.log('[Alert] Skipped sync lag alert due to invalid lag data');
+  if (syncLag === null || !Number.isFinite(syncLag)) {
     return;
   }
 
+  // Boundary: lag at or below the threshold is healthy and must not alert.
   if (syncLag <= ALERT_CONFIG.SYNC_LAG_THRESHOLD) {
     return;
   }
 
-  // Idempotency: dedupe concurrent/retried evaluations of the same lag value.
+  // Deterministic signature so overlapping workers observing the same lag
+  // collapse onto a single in-flight evaluation.
   const signature = `${ALERT_TYPES.SYNC_LAG_HIGH}:${syncLag}`;
-  const inFlight = syncLagInFlight.get(signature);
-  if (inFlight) {
-    console.log(`[Alert] Skipped duplicate sync lag alert for lag ${syncLag}`);
-    return inFlight;
+  const existing = syncLagInFlight.get(signature);
+  if (existing) {
+    return existing;
   }
 
   const evaluation = (async () => {
     try {
       await sendAlert({
         type: ALERT_TYPES.SYNC_LAG_HIGH,
-        severity: syncLag > 60000 ? ALERT_SEVERITY.ERROR : ALERT_SEVERITY.WARNING,
-        message: `Index sync lag is ${(syncLag / 1000).toFixed(1)} seconds (threshold: ${ALERT_CONFIG.SYNC_LAG_THRESHOLD / 1000}s)`,
+        severity: syncLag > ALERT_CONFIG.SYNC_LAG_THRESHOLD * 2
+          ? ALERT_SEVERITY.ERROR
+          : ALERT_SEVERITY.WARNING,
+        message: `Indexer sync lag is ${syncLag}ms (threshold: ${ALERT_CONFIG.SYNC_LAG_THRESHOLD}ms)`,
         metadata: {
           syncLag,
           threshold: ALERT_CONFIG.SYNC_LAG_THRESHOLD,
@@ -323,22 +348,3 @@ export const evaluateSyncLagAlert = async () => {
   syncLagInFlight.set(signature, evaluation);
   return evaluation;
 };
-
-/**
- * Calculate sync lag between blockchain and database
- * @returns {number} Sync lag in milliseconds
- */
-const calculateSyncLag = async () => {
-  // TODO: Implement sync lag calculation by comparing the latest blockchain
-  // ledger with the last processed ledger.
-  return 0;
-};
-
-/**
- * Alert for Redis connection issues
- * @param {boolean} connected - Redis connection status
- */
-export const alertRedisConnection = async (connected) => {
- 
-
-/* … truncated 1252 chars — edit only what you need near the top … */
