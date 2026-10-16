@@ -22,11 +22,29 @@ import {
 const inFlightFailureAlerts = new Map();
 
 /**
+ * Optional alerting transport. When unset (or when the transport throws),
+ * failure alerting degrades gracefully instead of propagating errors.
+ *
+ * @returns {Object|null} The configured transport, or null when unavailable.
+ */
+const getAlertTransport = () => {
+  const transport = globalThis.__alertTransport;
+  if (!transport || typeof transport.sendAlert !== 'function') {
+    return null;
+  }
+  return transport;
+};
+
+/**
  * Emits a failure alert for a permanently failed event job.
  *
  * Concurrency-safe: overlapping workers racing on the same job id will
  * observe a single deterministic alert. The first caller wins; subsequent
  * callers receive `{ emitted: false, reason: 'duplicate' }`.
+ *
+ * Gracefully degrades when optional alerting infrastructure is unavailable:
+ * a missing transport, a transport error, or a transport timeout all resolve
+ * to a stable `{ emitted: false, reason }` response rather than throwing.
  *
  * @param {Object} params
  * @param {string|number} params.jobId - Identifier of the failed job
@@ -58,8 +76,33 @@ export const emitFailureAlert = async ({ jobId, originalJob, error, attemptsMade
       eventData: originalJob && originalJob.data ? originalJob.data : null,
     };
 
-    // TODO: Send alert to monitoring system
-    // await alertService.sendAlert(alert);
+    const transport = getAlertTransport();
+
+    // Degraded path: optional alerting infrastructure is not configured.
+    if (!transport) {
+      console.error(
+        '[DeadLetter] Failure alert transport unavailable; degrading gracefully:',
+        JSON.stringify({ jobId, attemptsMade }),
+      );
+      return { emitted: false, reason: 'transport_unavailable' };
+    }
+
+    try {
+      await transport.sendAlert(alert);
+    } catch (transportError) {
+      // Degraded path: transport failed or timed out. Never propagate.
+      console.error(
+        '[DeadLetter] Failure alert transport error; degrading gracefully:',
+        JSON.stringify({
+          jobId,
+          attemptsMade,
+          reason: transportError && transportError.message
+            ? transportError.message
+            : String(transportError),
+        }),
+      );
+      return { emitted: false, reason: 'transport_error' };
+    }
 
     console.error('[DeadLetter] Failure alert emitted:', JSON.stringify(alert));
 
@@ -224,6 +267,7 @@ const processDeadLetterEvent = async (job) => {
 
     // Emit a concurrency-safe failure alert. Duplicate alerts for the same
     // job id are suppressed so overlapping workers stay deterministic.
+    // Alerting degrades gracefully when the optional transport is unavailable.
     await emitFailureAlert({
       jobId: job.id,
       originalJob,
@@ -265,16 +309,17 @@ const logPermanentFailure = async (originalJob, error, attemptsMade) => {
 };
 
 /**
- * Create and configure the main event processing worker
+ * Creates and starts the event processing worker
  */
-export const createEventWorker = () => {
+export const startEventWorker = () => {
   const worker = new Worker('stellar-events', processStellarEvent, {
     connection,
-    concurrency: parseInt(process.env.QUEUE_CONCURRENCY || '5'),
-    limiter: {
-      max: 100,
-      duration: 60000, // 100 jobs per minute
-    },
+    concurrency: 5,
+  });
+
+  const deadLetterWorker = new Worker('dead-letter', processDeadLetterEvent, {
+    connection,
+    concurrency: 1,
   });
 
   worker.on('completed', (job) => {
@@ -283,57 +328,17 @@ export const createEventWorker = () => {
 
   worker.on('failed', (job, err) => {
     console.error(`[Worker] Job ${job.id} failed:`, err.message);
-
-    // Move to dead letter queue after max attempts
-    if (job.attemptsMade >= job.opts.attempts) {
-      deadLetterQueue.add('dead-letter-event', {
-        originalJob: job.data,
-        error: {
-          message: err.message,
-          stack: err.stack,
-        },
-        attemptsMade: job.attemptsMade,
-      });
-    }
   });
 
-  worker.on('error', (err) => {
-    console.error('[Worker] Worker error:', err);
-  });
-
-  return worker;
-};
-
-/**
- * Create and configure the dead letter queue worker
- */
-export const createDeadLetterWorker = () => {
-  const worker = new Worker('stellar-events-dead-letter', processDeadLetterEvent, {
-    connection,
-    concurrency: 2, // Lower concurrency for dead letter processing
-  });
-
-  worker.on('completed', (job) => {
+  deadLetterWorker.on('completed', (job) => {
     console.log(`[DeadLetter] Job ${job.id} completed`);
   });
 
-  worker.on('failed', (job, err) => {
-    console.error(`[DeadLetter] Job ${job.id} failed:`, err);
+  deadLetterWorker.on('failed', (job, err) => {
+    console.error(`[DeadLetter] Job ${job.id} failed:`, err.message);
   });
 
-  worker.on('error', (err) => {
-    console.error('[DeadLetter] Worker error:', err);
-  });
-
-  return worker;
+  return { worker, deadLetterWorker };
 };
 
-// Export functions for testing
-export {
-  processStellarEvent,
-  parseEventType,
-  processEventByType,
-  updateLastProcessedLedger,
-  processDeadLetterEvent,
-  logPermanentFailure,
-};
+export { processStellarEvent, processDeadLetterEvent, logPermanentFailure };
