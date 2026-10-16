@@ -356,3 +356,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, the Soroban toolchain, h
 
 <!-- handsoff-issue-343 -->
 - #343: Add event completeness checks for recurring payment schedule execution
+
+<!-- handsoff-issue-344 -->
+- #344: Add authorization boundary coverage for slashing evidence verification
