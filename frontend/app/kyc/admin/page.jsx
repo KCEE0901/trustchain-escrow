@@ -20,19 +20,44 @@ export default function KycAdminPage() {
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState('');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
+
     setLoading(true);
+    setError(null);
+
     const params = new URLSearchParams({ page, limit: 20 });
     if (statusFilter) params.set('status', statusFilter);
 
-    fetch(`${API_BASE}/api/kyc/admin?${params}`)
-      .then((r) => r.json())
+    fetch(`${API_BASE}/api/kyc/admin?${params}`, { signal: controller.signal })
+      .then((r) => {
+        if (!r.ok) {
+          throw new Error(`Request failed with status ${r.status}`);
+        }
+        return r.json();
+      })
       .then((d) => {
+        if (!active) return;
         setRecords(d.data ?? []);
         setTotal(d.total ?? 0);
       })
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (!active || err.name === 'AbortError') return;
+        setRecords([]);
+        setTotal(0);
+        setError('Unable to load KYC records.');
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
   }, [page, statusFilter]);
 
   return (
@@ -66,6 +91,8 @@ export default function KycAdminPage() {
         <div className="flex justify-center py-12">
           <Spinner />
         </div>
+      ) : error ? (
+        <p className="text-red-400 text-center py-12">{error}</p>
       ) : records.length === 0 ? (
         <p className="text-gray-500 text-center py-12">No records found.</p>
       ) : (
