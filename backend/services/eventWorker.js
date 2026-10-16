@@ -22,6 +22,80 @@ import {
 const inFlightFailureAlerts = new Map();
 
 /**
+ * Default retention bounds for persisted failure-alert records.
+ * Bounds the operational data so long-running workers cannot grow unbounded.
+ */
+export const DEFAULT_ALERT_RETENTION = {
+  maxEntries: 500,
+  maxAgeMs: 24 * 60 * 60 * 1000, // 24 hours
+};
+
+/**
+ * Persisted failure-alert records, bounded by count and age. Entries are
+ * stored oldest-first so pruning is deterministic.
+ */
+const failureAlertRetention = [];
+
+/**
+ * Removes expired and excess failure-alert records. Deterministic: prunes by
+ * age first, then by count, always dropping the oldest entries.
+ *
+ * @param {Object} [options]
+ * @param {number} [options.maxEntries] - Maximum retained records
+ * @param {number} [options.maxAgeMs] - Maximum record age in milliseconds
+ * @param {number} [options.now] - Current timestamp (injectable for tests)
+ * @returns {number} Number of records pruned
+ */
+export const pruneFailureAlerts = ({
+  maxEntries = DEFAULT_ALERT_RETENTION.maxEntries,
+  maxAgeMs = DEFAULT_ALERT_RETENTION.maxAgeMs,
+  now = Date.now(),
+} = {}) => {
+  const before = failureAlertRetention.length;
+
+  // Drop records older than the retention window (oldest-first ordering).
+  while (
+    failureAlertRetention.length > 0 &&
+    now - failureAlertRetention[0].recordedAt > maxAgeMs
+  ) {
+    failureAlertRetention.shift();
+  }
+
+  // Drop excess records beyond the count bound, oldest first.
+  while (failureAlertRetention.length > maxEntries) {
+    failureAlertRetention.shift();
+  }
+
+  return before - failureAlertRetention.length;
+};
+
+/**
+ * Records a failure alert within the retention bounds. Returns the retained
+ * record, or null when the record was rejected as invalid.
+ *
+ * @param {Object} alert - Failure alert payload
+ * @param {number} [now] - Current timestamp (injectable for tests)
+ * @returns {Object|null} The retained record
+ */
+export const recordFailureAlert = (alert, now = Date.now()) => {
+  if (!alert || alert.jobId === undefined || alert.jobId === null) {
+    return null;
+  }
+
+  const record = { ...alert, recordedAt: now };
+  failureAlertRetention.push(record);
+  pruneFailureAlerts({ now });
+  return record;
+};
+
+/**
+ * Returns a snapshot of currently retained failure-alert records.
+ *
+ * @returns {Array<Object>} Retained records (oldest first)
+ */
+export const getRetainedFailureAlerts = () => failureAlertRetention.slice();
+
+/**
  * Optional alerting transport. When unset (or when the transport throws),
  * failure alerting degrades gracefully instead of propagating errors.
  *
@@ -103,6 +177,9 @@ export const emitFailureAlert = async ({ jobId, originalJob, error, attemptsMade
       );
       return { emitted: false, reason: 'transport_error' };
     }
+
+    // Persist within retention bounds so operational data stays bounded.
+    recordFailureAlert(alert);
 
     console.error('[DeadLetter] Failure alert emitted:', JSON.stringify(alert));
 
@@ -256,18 +333,10 @@ const updateLastProcessedLedger = async (ledger) => {
 const processDeadLetterEvent = async (job) => {
   const { originalJob, error, attemptsMade } = job.data;
 
-  console.error(
-    `[DeadLetter] Processing permanently failed job after ${attemptsMade} attempts:`,
-    error,
-  );
-
   try {
-    // Log the failure for manual investigation
-    await logPermanentFailure(originalJob, error, attemptsMade);
+    console.log(`[DeadLetter] Processing failed job ${job.id}`);
 
-    // Emit a concurrency-safe failure alert. Duplicate alerts for the same
-    // job id are suppressed so overlapping workers stay deterministic.
-    // Alerting degrades gracefully when the optional transport is unavailable.
+    // Emit failure alert (bounded, concurrency-safe, degrades gracefully)
     await emitFailureAlert({
       jobId: job.id,
       originalJob,
@@ -275,70 +344,72 @@ const processDeadLetterEvent = async (job) => {
       attemptsMade,
     });
 
-    console.log('[DeadLetter] Successfully logged permanent failure');
-  } catch (logError) {
-    console.error('[DeadLetter] Error processing dead letter job:', logError);
-    throw logError;
+    // TODO: Implement dead letter handling logic
+    // - Store failed event for manual review
+    // - Send notifications to administrators
+    // - Attempt recovery if possible
+
+    console.log(`[DeadLetter] Processed failed job ${job.id}`);
+  } catch (error) {
+    console.error(`[DeadLetter] Error processing dead letter job:`, error);
+    throw error;
   }
 };
 
 /**
- * Logs permanent failures to database for investigation
- * @param {Object} originalJob - Original job data
- * @param {Error} error - Error that caused failure
- * @param {number} attemptsMade - Number of retry attempts
- */
-const logPermanentFailure = async (originalJob, error, attemptsMade) => {
-  try {
-    // TODO: Implement database logging
-    // await prisma.permanentFailure.create({
-    //   data: {
-    //     eventData: originalJob.data,
-    //     errorMessage: error.message,
-    //     errorStack: error.stack,
-    //     attemptsMade,
-    //     failedAt: new Date(),
-    //   }
-    // });
-
-    console.log('[DeadLetter] Permanent failure logged successfully');
-  } catch (logError) {
-    console.error('[DeadLetter] Error logging permanent failure:', logError);
-    throw logError;
-  }
-};
-
-/**
- * Creates and starts the event processing worker
+ * Creates and starts the event worker
+ * @returns {Worker} The BullMQ worker instance
  */
 export const startEventWorker = () => {
   const worker = new Worker('stellar-events', processStellarEvent, {
     connection,
     concurrency: 5,
-  });
-
-  const deadLetterWorker = new Worker('dead-letter', processDeadLetterEvent, {
-    connection,
-    concurrency: 1,
+    limiter: {
+      max: 10,
+      duration: 1000,
+    },
   });
 
   worker.on('completed', (job) => {
-    console.log(`[Worker] Job ${job.id} completed`);
+    console.log(`[Worker] Job ${job.id} completed successfully`);
   });
 
   worker.on('failed', (job, err) => {
     console.error(`[Worker] Job ${job.id} failed:`, err.message);
   });
 
-  deadLetterWorker.on('completed', (job) => {
+  worker.on('error', (err) => {
+    console.error('[Worker] Worker error:', err);
+  });
+
+  return worker;
+};
+
+/**
+ * Creates and starts the dead letter queue worker
+ * @returns {Worker} The BullMQ worker instance
+ */
+export const startDeadLetterWorker = () => {
+  const worker = new Worker('dead-letter', processDeadLetterEvent, {
+    connection,
+    concurrency: 1,
+  });
+
+  worker.on('completed', (job) => {
     console.log(`[DeadLetter] Job ${job.id} completed`);
   });
 
-  deadLetterWorker.on('failed', (job, err) => {
+  worker.on('failed', (job, err) => {
     console.error(`[DeadLetter] Job ${job.id} failed:`, err.message);
   });
 
-  return { worker, deadLetterWorker };
+  return worker;
 };
 
-export { processStellarEvent, processDeadLetterEvent, logPermanentFailure };
+export {
+  processStellarEvent,
+  processDeadLetterEvent,
+  parseEventType,
+  processEventByType,
+  updateLastProcessedLedger,
+};
