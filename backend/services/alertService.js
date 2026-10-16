@@ -29,6 +29,7 @@ export const ALERT_TYPES = {
   DEAD_LETTER_QUEUE_FULL: 'dead_letter_queue_full',
   MEMORY_USAGE_HIGH: 'memory_usage_high',
   SYNC_LAG_HIGH: 'sync_lag_high',
+  PERMANENT_EVENT_FAILURE: 'permanent_event_failure',
 };
 
 /**
@@ -70,14 +71,18 @@ const markAlertSent = (alertType) => {
 
 /**
  * Send alert to all configured channels
- * @param {Object} alertData - Alert data
+ * @param {Object} alertData - Alert data. An optional `dedupeKey` scopes the
+ *   cooldown to that key instead of the alert type, so distinct incidents of
+ *   the same type are not suppressed by each other.
+ * @returns {Promise<'sent'|'skipped'|'failed'>}
  */
 const sendAlert = async (alertData) => {
-  const { type, severity, message, metadata } = alertData;
+  const { type, severity, message, metadata, dedupeKey } = alertData;
+  const cooldownKey = dedupeKey ?? type;
 
-  if (!shouldSendAlert(type)) {
+  if (!shouldSendAlert(cooldownKey)) {
     console.log(`[Alert] Skipped ${type} alert due to cooldown`);
-    return;
+    return 'skipped';
   }
 
   const timestamp = new Date().toISOString();
@@ -109,10 +114,12 @@ const sendAlert = async (alertData) => {
       await monitoringSystemAlert(alert);
     }
 
-    markAlertSent(type);
+    markAlertSent(cooldownKey);
     console.log(`[Alert] ${type} alert sent successfully`);
+    return 'sent';
   } catch (error) {
     console.error('[Alert] Error sending alert:', error);
+    return 'failed';
   }
 };
 
