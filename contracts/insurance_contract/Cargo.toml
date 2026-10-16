@@ -13,3 +13,7 @@ soroban-sdk = { version = "21.0.0", features = [] }
 
 [dev-dependencies]
 soroban-sdk = { version = "21.0.0", features = ["testutils"] }
+
+[[bench]]
+name = "storage_growth"
+harness = false
