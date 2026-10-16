@@ -345,3 +345,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, the Soroban toolchain, h
 ## License
 
 [MIT](LICENSE)
+
+## Handsoff notes
+
+<!-- handsoff-issue-341 -->
+- #341: Document ledger constraints for recurring payment schedule execution
