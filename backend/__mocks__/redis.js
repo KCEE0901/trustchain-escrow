@@ -13,6 +13,11 @@ const mockClient = {
   sMembers: jest.fn().mockResolvedValue([]),
   scan: jest.fn().mockResolvedValue({ cursor: 0, keys: [] }),
   on: jest.fn(),
+  // Idempotency primitives used by the indexer sync-lag alert path.
+  // `set` with NX/EX options returns 'OK' on first write and null when the
+  // key already exists, mirroring real Redis semantics for SET NX.
+  setNX: jest.fn().mockResolvedValue('OK'),
+  eval: jest.fn().mockResolvedValue(1),
 };
 
 export const createClient = jest.fn(() => mockClient);

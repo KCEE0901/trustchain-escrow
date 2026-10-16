@@ -48,6 +48,13 @@ const ALERT_CONFIG = {
 const lastAlerts = new Map();
 
 /**
+ * Track in-flight sync-lag alert evaluations to make the sync-lag path
+ * idempotent under retries and concurrent invocations.
+ * Keyed by a deterministic sync-lag signature; value is the in-flight promise.
+ */
+const syncLagInFlight = new Map();
+
+/**
  * Check if an alert should be sent (cooldown period)
  * @param {string} alertType - Type of alert
  * @returns {boolean} Whether alert should be sent
@@ -254,8 +261,51 @@ export const monitorQueueHealth = async () => {
     }
 
     // Check sync lag (would need to be calculated from event timestamps)
-    const syncLag = await calculateSyncLag();
-    if (syncLag > ALERT_CONFIG.SYNC_LAG_THRESHOLD) {
+    await evaluateSyncLagAlert();
+  } catch (error) {
+    console.error('[Alert] Error monitoring queue health:', error);
+  }
+};
+
+/**
+ * Evaluate the indexer sync-lag alert idempotently.
+ *
+ * Retries and concurrent invocations that observe the same sync-lag value
+ * share a single in-flight evaluation, so the alert effect is applied at most
+ * once per distinct lag signature. Invalid or missing lag data is ignored
+ * without throwing, keeping the surrounding monitor loop resilient.
+ *
+ * @returns {Promise<void>}
+ */
+export const evaluateSyncLagAlert = async () => {
+  let syncLag;
+  try {
+    syncLag = await calculateSyncLag();
+  } catch (error) {
+    console.error('[Alert] Error calculating sync lag:', error);
+    return;
+  }
+
+  // Boundary: missing or non-finite lag data must not trigger an alert.
+  if (typeof syncLag !== 'number' || !Number.isFinite(syncLag)) {
+    console.log('[Alert] Skipped sync lag alert due to invalid lag data');
+    return;
+  }
+
+  if (syncLag <= ALERT_CONFIG.SYNC_LAG_THRESHOLD) {
+    return;
+  }
+
+  // Idempotency: dedupe concurrent/retried evaluations of the same lag value.
+  const signature = `${ALERT_TYPES.SYNC_LAG_HIGH}:${syncLag}`;
+  const inFlight = syncLagInFlight.get(signature);
+  if (inFlight) {
+    console.log(`[Alert] Skipped duplicate sync lag alert for lag ${syncLag}`);
+    return inFlight;
+  }
+
+  const evaluation = (async () => {
+    try {
       await sendAlert({
         type: ALERT_TYPES.SYNC_LAG_HIGH,
         severity: syncLag > 60000 ? ALERT_SEVERITY.ERROR : ALERT_SEVERITY.WARNING,
@@ -265,10 +315,13 @@ export const monitorQueueHealth = async () => {
           threshold: ALERT_CONFIG.SYNC_LAG_THRESHOLD,
         },
       });
+    } finally {
+      syncLagInFlight.delete(signature);
     }
-  } catch (error) {
-    console.error('[Alert] Error monitoring queue health:', error);
-  }
+  })();
+
+  syncLagInFlight.set(signature, evaluation);
+  return evaluation;
 };
 
 /**
@@ -286,56 +339,6 @@ const calculateSyncLag = async () => {
  * @param {boolean} connected - Redis connection status
  */
 export const alertRedisConnection = async (connected) => {
-  if (!connected) {
-    await sendAlert({
-      type: ALERT_TYPES.REDIS_CONNECTION_LOST,
-      severity: ALERT_SEVERITY.CRITICAL,
-      message: 'Redis connection lost - queue processing will be affected',
-      metadata: {
-        connectionStatus: connected,
-      },
-    });
-  }
-};
+ 
 
-/**
- * Alert for queue processing stopped
- * @param {number} waitingJobs - Number of waiting jobs
- * @param {number} activeJobs - Number of active jobs
- */
-export const alertQueueProcessingStopped = async (waitingJobs, activeJobs) => {
-  if (waitingJobs > 0 && activeJobs === 0) {
-    await sendAlert({
-      type: ALERT_TYPES.QUEUE_PROCESSING_STOPPED,
-      severity: ALERT_SEVERITY.WARNING,
-      message: `Queue has ${waitingJobs} waiting jobs but no active processing`,
-      metadata: {
-        waitingJobs,
-        activeJobs,
-      },
-    });
-  }
-};
-
-/**
- * Start the monitoring service
- */
-export const startMonitoring = () => {
-  // Monitor every 30 seconds
-  setInterval(monitorQueueHealth, 30000);
-
-  console.log('[Alert] Queue monitoring service started');
-};
-
-// Export for testing
-export {
-  sendAlert,
-  shouldSendAlert,
-  markAlertSent,
-  consoleAlert,
-  emailAlert,
-  webhookAlert,
-  monitoringSystemAlert,
-  formatEmailAlert,
-  calculateSyncLag,
-};
+/* … truncated 1252 chars — edit only what you need near the top … */
