@@ -359,3 +359,12 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, the Soroban toolchain, h
 
 <!-- handsoff-issue-344 -->
 - #344: Add authorization boundary coverage for slashing evidence verification
+
+<!-- handsoff-issue-333 -->
+- #333: Add fuzz coverage for bridge settlement confirmation
+
+<!-- handsoff-issue-335 -->
+- #335: Document ledger constraints for insurance reserve solvency
+
+<!-- handsoff-issue-336 -->
+- #336: Add fuzz coverage for insurance reserve solvency
