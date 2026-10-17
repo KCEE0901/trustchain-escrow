@@ -22,6 +22,7 @@
 
 import { useState, useEffect } from 'react';
 import { useEscrow } from '../../../hooks/useEscrow';
+import { useCountdown } from '../../../hooks/useCountdown';
 import { useRelativeTime } from '../../../hooks/useRelativeTime';
 import { useWallet } from '../../../hooks/useWallet';
 import { useToast } from '../../../contexts/ToastContext';
@@ -44,6 +45,7 @@ import {
   buildRaiseDisputeTx,
   broadcastTransaction,
 } from '../../../lib/stellar';
+import { isValidStellarTransactionHash } from '../../../../shared/stellarTransactionHash.js';
 
 // Fallback data used while the API integration (Issue #34) is pending.
 const PLACEHOLDER_ESCROW = {
@@ -56,7 +58,7 @@ const PLACEHOLDER_ESCROW = {
   totalAmount: '2,000 USDC',
   remainingBalance: '1,500 USDC',
   createdAt: '2025-03-01',
-  deadline: '2025-04-01',
+  deadline: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
   transactionHash: 'a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6a7b8c9d0e1f2',
   milestones: [
     {
@@ -98,6 +100,8 @@ export default function EscrowDetailPage({ params }) {
 
   // Use fetched data when available, fall back to placeholder during development.
   const escrow = fetchedEscrow ?? PLACEHOLDER_ESCROW;
+  const countdown = useCountdown(escrow.deadline);
+  const isExpired = escrow.status === 'Expired' || countdown.isExpired;
 
   // Update the last-refreshed timestamp whenever data arrives from SWR
   // (initial load, scheduled poll, or manual refresh).
@@ -222,24 +226,49 @@ export default function EscrowDetailPage({ params }) {
             <Badge status={escrow.status} />
           </div>
           <p className="text-gray-400 text-sm">Escrow #{id}</p>
+          <p data-testid="escrow-countdown" className="text-sm text-gray-400 mt-1">
+            {isExpired
+              ? 'Expired'
+              : escrow.deadline
+                ? `Time remaining: ${countdown.days}d ${countdown.hours}h ${countdown.minutes}m ${countdown.seconds}s`
+                : 'No deadline set'}
+          </p>
           <StellarExpertLink
             txHash={escrow.txHash}
             network={process.env.NEXT_PUBLIC_STELLAR_NETWORK}
           />
         </div>
         <div className="flex gap-2 flex-shrink-0">
-          {escrow.status === 'Active' && (
+          {(escrow.status === 'Active' || escrow.status === 'Expired') && (
             <>
-              <Button variant="danger" size="sm" onClick={() => setDisputeOpen(true)}>
+              <Button
+                variant="danger"
+                size="sm"
+                disabled={isExpired}
+                title={isExpired ? 'This escrow has expired' : undefined}
+                onClick={() => setDisputeOpen(true)}
+              >
                 ⚠ Raise Dispute
               </Button>
-              <Button variant="secondary" size="sm" onClick={() => setCancelOpen(true)}>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={isExpired}
+                title={isExpired ? 'This escrow has expired' : undefined}
+                onClick={() => setCancelOpen(true)}
+              >
                 Cancel Escrow
               </Button>
             </>
           )}
         </div>
       </div>
+
+      {isExpired && (
+        <p role="status" data-testid="expired-escrow-message" className="text-sm text-amber-300">
+          This escrow has expired. Disputes, cancellation, and milestone actions are disabled.
+        </p>
+      )}
 
       {/* Refresh bar — last updated timestamp + manual refresh button */}
       <div className="flex items-center justify-between text-sm text-gray-500">
@@ -268,6 +297,7 @@ export default function EscrowDetailPage({ params }) {
       {escrow.status === 'Active' && (
         <ExpiryExtensionRequest
           escrowId={id}
+          eligible={!isExpired}
           onRequest={() =>
             showToast('Extension request captured. Contract submission will be available soon.')
           }
@@ -307,6 +337,7 @@ export default function EscrowDetailPage({ params }) {
         <MilestoneList
           milestones={escrow.milestones}
           role={connectedRole}
+          actionsDisabled={isExpired}
           onApprove={handleApproveMilestone}
           onReject={handleRejectMilestone}
           onSubmit={handleSubmitMilestone}
@@ -322,9 +353,9 @@ export default function EscrowDetailPage({ params }) {
       </div>
 
       {/* Dispute Modal */}
-      <DisputeModal 
-        isOpen={isDisputeOpen} 
-        onClose={() => setDisputeOpen(false)} 
+      <DisputeModal
+        isOpen={isDisputeOpen}
+        onClose={() => setDisputeOpen(false)}
         escrowId={id}
         onSuccess={async () => await mutate()}
       />
@@ -377,7 +408,7 @@ function PartyCard({ role, address, score, isYou }) {
 }
 
 function StellarExpertLink({ txHash, network }) {
-  if (!txHash) return null;
+  if (!isValidStellarTransactionHash(txHash)) return null;
 
   const isMainnet = network === 'mainnet';
   const baseUrl = isMainnet

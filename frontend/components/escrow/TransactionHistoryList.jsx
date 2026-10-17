@@ -11,6 +11,7 @@
  */
 
 import { CopyButton } from '../ui/CopyButton';
+import { isValidStellarTransactionHash } from '../../../shared/stellarTransactionHash.js';
 
 const EVENT_META = {
   created: { label: 'Escrow Created', icon: '✦', tone: 'text-indigo-400 bg-indigo-500/10' },
@@ -83,13 +84,9 @@ function HistoryRow({ event, network }) {
           )}
         </div>
 
-        {event.description && (
-          <p className="text-xs text-gray-400 mt-0.5">{event.description}</p>
-        )}
+        {event.description && <p className="text-xs text-gray-400 mt-0.5">{event.description}</p>}
 
-        {event.amount && (
-          <p className="text-xs text-gray-300 mt-0.5 font-mono">{event.amount}</p>
-        )}
+        {event.amount && <p className="text-xs text-gray-300 mt-0.5 font-mono">{event.amount}</p>}
 
         {event.txHash && (
           <div className="flex items-center gap-2 mt-1.5">
@@ -97,16 +94,18 @@ function HistoryRow({ event, network }) {
               {truncateHash(event.txHash)}
             </span>
             <CopyButton value={event.txHash} label={`${meta.label} transaction hash`} />
-            <a
-              href={explorerUrl(event.txHash, network)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-xs text-indigo-400 hover:text-indigo-300 focus:outline-none
-                         focus-visible:ring-2 focus-visible:ring-indigo-500 rounded"
-              aria-label={`View ${meta.label} transaction on Stellar Expert (opens in a new tab)`}
-            >
-              View ↗
-            </a>
+            {isValidStellarTransactionHash(event.txHash) && (
+              <a
+                href={explorerUrl(event.txHash, network)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-indigo-400 hover:text-indigo-300 focus:outline-none
+                           focus-visible:ring-2 focus-visible:ring-indigo-500 rounded"
+                aria-label={`View ${meta.label} transaction on Stellar Expert (opens in a new tab)`}
+              >
+                View ↗
+              </a>
+            )}
           </div>
         )}
       </div>

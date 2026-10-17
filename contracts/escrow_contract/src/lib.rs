@@ -95,6 +95,8 @@ mod partial_cancel_tests;
 mod pause_tests;
 mod platform_fee;
 mod fuzz_tests;
+#[cfg(test)]
+mod gas_profiling;
 mod property_invariant_tests;
 mod reentrancy_guard_tests;
 mod self_escrow_tests;
@@ -1568,6 +1570,9 @@ impl EscrowContract {
 
     /// Record or update bridge confirmation state for a bridged token.
     /// Anyone may call this; finality is determined by `MIN_BRIDGE_CONFIRMATIONS`.
+    /// `updated_at` uses the current Stellar ledger timestamp (seconds); it is
+    /// not a source-chain timestamp. The write and TTL assumptions are documented
+    /// beside `bridge::record_bridge_confirmation`.
     /// Contract entry point: `update_bridge_confirmation`.
     ///
     /// See the function name for the public contract operation.

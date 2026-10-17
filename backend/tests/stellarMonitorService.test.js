@@ -60,7 +60,7 @@ afterEach(() => {
 
 describe('stellarMonitorService', () => {
   const baseTx = {
-    txHash: 'abc123hash',
+    txHash: 'a'.repeat(64),
     fromAddress: 'GFROM...',
     toAddress: 'GTO...',
     amount: '1000',
@@ -85,7 +85,7 @@ describe('stellarMonitorService', () => {
       expect(prismaMock.transactionMonitor.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
-            txHash: 'abc123hash',
+            txHash: 'a'.repeat(64),
             fromAddress: 'GFROM...',
             status: TxStatus.PENDING,
           }),
@@ -103,16 +103,25 @@ describe('stellarMonitorService', () => {
       expect(prismaMock.transactionMonitor.create).not.toHaveBeenCalled();
     });
 
+    it('rejects malformed hashes before querying or writing records', async () => {
+      await expect(recordTransaction({ ...baseTx, txHash: 'abc123hash' })).rejects.toThrow(
+        'Invalid Stellar transaction hash',
+      );
+
+      expect(prismaMock.transactionMonitor.findUnique).not.toHaveBeenCalled();
+      expect(prismaMock.transactionMonitor.create).not.toHaveBeenCalled();
+    });
+
     it('handles optional fields gracefully', async () => {
       prismaMock.transactionMonitor.findUnique.mockResolvedValue(null);
       prismaMock.transactionMonitor.create.mockResolvedValue({
         id: 2,
-        txHash: 'minimal',
+        txHash: 'b'.repeat(64),
         fromAddress: 'GFROM...',
         status: TxStatus.PENDING,
       });
 
-      const result = await recordTransaction({ txHash: 'minimal', fromAddress: 'GFROM...' });
+      const result = await recordTransaction({ txHash: 'b'.repeat(64), fromAddress: 'GFROM...' });
 
       expect(result).toBeDefined();
       expect(prismaMock.transactionMonitor.create).toHaveBeenCalledWith(
@@ -208,11 +217,11 @@ describe('stellarMonitorService', () => {
   describe('getMonitorStatus', () => {
     it('returns status summary with counts', async () => {
       prismaMock.transactionMonitor.count
-        .mockResolvedValueOnce(100)  // total
-        .mockResolvedValueOnce(10)   // pending
-        .mockResolvedValueOnce(80)   // confirmed
-        .mockResolvedValueOnce(5)    // failed
-        .mockResolvedValueOnce(5);   // timeout
+        .mockResolvedValueOnce(100) // total
+        .mockResolvedValueOnce(10) // pending
+        .mockResolvedValueOnce(80) // confirmed
+        .mockResolvedValueOnce(5) // failed
+        .mockResolvedValueOnce(5); // timeout
 
       const status = await getMonitorStatus();
 
@@ -271,20 +280,24 @@ describe('stellarMonitorService', () => {
       const threshold = 60_000;
       expect(resolveTxState({ status: TxStatus.CONFIRMED }, 0, threshold)).toBe(TxStatus.CONFIRMED);
       expect(resolveTxState({ status: TxStatus.PENDING }, 1_000, threshold)).toBe(TxStatus.PENDING);
-      expect(resolveTxState({ status: TxStatus.PENDING }, 120_000, threshold)).toBe(TxStatus.TIMEOUT);
-      expect(resolveTxState({ status: TxStatus.FAILED, resultCode: 'tx_bad_auth' }, 0, threshold)).toBe(
-        TxStatus.FAILED_PERMANENT,
+      expect(resolveTxState({ status: TxStatus.PENDING }, 120_000, threshold)).toBe(
+        TxStatus.TIMEOUT,
       );
-      expect(resolveTxState({ status: TxStatus.FAILED, resultCode: 'TX_NO_ACCOUNT' }, 0, threshold)).toBe(
-        TxStatus.FAILED_PERMANENT,
-      );
-      expect(resolveTxState({ status: TxStatus.FAILED, resultCode: 'tx_too_late' }, 0, threshold)).toBe(
-        TxStatus.FAILED,
-      );
+      expect(
+        resolveTxState({ status: TxStatus.FAILED, resultCode: 'tx_bad_auth' }, 0, threshold),
+      ).toBe(TxStatus.FAILED_PERMANENT);
+      expect(
+        resolveTxState({ status: TxStatus.FAILED, resultCode: 'TX_NO_ACCOUNT' }, 0, threshold),
+      ).toBe(TxStatus.FAILED_PERMANENT);
+      expect(
+        resolveTxState({ status: TxStatus.FAILED, resultCode: 'tx_too_late' }, 0, threshold),
+      ).toBe(TxStatus.FAILED);
       expect(resolveTxState({ status: TxStatus.FAILED, resultCode: 'UNKNOWN' }, 0, threshold)).toBe(
         TxStatus.REVIEW_REQUIRED,
       );
-      expect(resolveTxState({ status: TxStatus.FAILED }, 0, threshold)).toBe(TxStatus.REVIEW_REQUIRED);
+      expect(resolveTxState({ status: TxStatus.FAILED }, 0, threshold)).toBe(
+        TxStatus.REVIEW_REQUIRED,
+      );
     });
 
     it('is stable for identical inputs', () => {
@@ -293,7 +306,9 @@ describe('stellarMonitorService', () => {
     });
 
     it('lists review-needed transactions (timeouts and review-required)', async () => {
-      prismaMock.transactionMonitor.findMany.mockResolvedValue([{ txHash: 'stuck', status: TxStatus.TIMEOUT }]);
+      prismaMock.transactionMonitor.findMany.mockResolvedValue([
+        { txHash: 'stuck', status: TxStatus.TIMEOUT },
+      ]);
       prismaMock.transactionMonitor.count.mockResolvedValue(1);
 
       const result = await getReviewNeededTransactions({ page: 1, limit: 10 });

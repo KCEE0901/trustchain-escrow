@@ -9,8 +9,13 @@
 mod gas_profiling {
     extern crate std;
     use std::println;
+    use crate::bridge::{BridgeDataKey, BridgeProtocol, MIN_BRIDGE_CONFIRMATIONS};
     use crate::{EscrowContract, EscrowContractClient, MultisigConfig};
-    use soroban_sdk::{testutils::Address as _, token, Address, BytesN, Env, Vec as SorobanVec};
+    use soroban_sdk::{
+        testutils::{storage::Persistent as _, Address as _},
+        token, Address, BytesN, Env, String, Vec as SorobanVec,
+    };
+    use soroban_sdk::xdr::ToXdr;
 
     fn setup() -> (Env, soroban_sdk::Address, soroban_sdk::Address, EscrowContractClient<'static>) {
         let env = Env::default();
@@ -74,6 +79,60 @@ mod gas_profiling {
         env.budget().reset_default();
         client.initialize(&admin);
         print("initialize", env.budget().cpu_instruction_cost(), env.budget().memory_bytes_cost());
+    }
+
+    #[test]
+    fn profile_update_bridge_confirmation_storage_growth() {
+        const MAX_WRITE_BYTES: u32 = 512;
+
+        let (env, _, contract_id, client) = setup();
+        let token = Address::generate(&env);
+
+        env.budget().reset_default();
+        client.update_bridge_confirmation(
+            &token,
+            &BridgeProtocol::Wormhole,
+            &(MIN_BRIDGE_CONFIRMATIONS - 1),
+        );
+
+        let first_confirmation = client.get_bridge_confirmation(&token).unwrap();
+        let key = BridgeDataKey::BridgeConfirmation(token.clone());
+            let first_write_bytes =
+                key.clone().to_xdr(&env).len() + first_confirmation.to_xdr(&env).len();
+            let first_entry_count = env.as_contract(&contract_id, || {
+                env.storage().persistent().all().len()
+            });
+        assert_eq!(first_entry_count, 1);
+        assert!(first_write_bytes <= MAX_WRITE_BYTES);
+
+        println!(
+                "GAS_PROFILE | escrow_contract | update_bridge_confirmation_new | cpu={} | mem={} | key_value_xdr_bytes={}",
+            env.budget().cpu_instruction_cost(),
+            env.budget().memory_bytes_cost(),
+            first_write_bytes,
+        );
+
+        env.budget().reset_default();
+        client.update_bridge_confirmation(
+            &token,
+            &BridgeProtocol::Wormhole,
+            &MIN_BRIDGE_CONFIRMATIONS,
+        );
+
+        let updated_confirmation = client.get_bridge_confirmation(&token).unwrap();
+        let overwrite_bytes = key.to_xdr(&env).len() + updated_confirmation.to_xdr(&env).len();
+        let overwrite_entry_count =
+            env.as_contract(&contract_id, || env.storage().persistent().all().len());
+        assert_eq!(overwrite_entry_count, 1);
+        assert_eq!(overwrite_bytes, first_write_bytes);
+        assert!(overwrite_bytes <= MAX_WRITE_BYTES);
+
+        println!(
+                "GAS_PROFILE | escrow_contract | update_bridge_confirmation_overwrite | cpu={} | mem={} | key_value_xdr_bytes={}",
+            env.budget().cpu_instruction_cost(),
+            env.budget().memory_bytes_cost(),
+            overwrite_bytes,
+        );
     }
 
     #[test]
