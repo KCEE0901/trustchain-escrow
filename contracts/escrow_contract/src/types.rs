@@ -362,9 +362,19 @@ pub struct EscrowState {
     /// TODO (contributor): consider using a map keyed by milestone_id for O(1) lookup
     pub milestones: soroban_sdk::Vec<Milestone>,
 
-    /// Optional: address of a trusted arbiter for dispute resolution.
-    /// If None, disputes require both parties to agree on resolution.
-    /// TODO (contributor): implement arbiter selection and staking
+    /// Optional trusted arbiter selected for dispute resolution.
+    ///
+    /// Ledger constraints:
+    /// - The address is stored inside the persistent escrow record and shares
+    ///   that record's TTL; selecting an arbiter creates no separate index.
+    /// - Selection adds one bounded `Address` to the creation transaction and
+    ///   does not introduce an unbounded collection or additional token fee.
+    /// - The selected address must be distinct from both parties and present
+    ///   on the arbiter allowlist when the escrow is created.
+    /// - Selection itself has no timestamp expiry. Dispute cooldowns use ledger
+    ///   sequence, while escrow auto-cancellation uses ledger timestamp.
+    /// - Resolution may pay the configured `arbiter_fee_bps`; selection alone
+    ///   never transfers funds.
     pub arbiter: Option<Address>,
 
     /// Addresses authorised to approve milestone releases (multi-sig).
@@ -375,7 +385,8 @@ pub struct EscrowState {
     pub created_at: u64,
 
     /// Optional deadline for the entire escrow (ledger timestamp).
-    /// TODO (contributor): implement auto-cancel on deadline
+    /// At the exact deadline the escrow remains active; it becomes eligible
+    /// for permissionless auto-cancellation once the timestamp is greater.
     pub deadline: Option<u64>,
 
     /// Optional lock time (ledger timestamp) - funds locked until this time.
