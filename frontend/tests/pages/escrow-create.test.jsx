@@ -1,12 +1,17 @@
-import { screen, fireEvent } from '@testing-library/react';
+import { screen, fireEvent, waitFor } from '@testing-library/react';
 import CreateEscrowPage from '../../app/escrow/create/page';
 import { useSearchParams } from 'next/navigation';
 import { renderWithAppProviders } from '../test-utils';
+import { trackCustomMetric } from '../../lib/performance';
+
+jest.mock('../../lib/performance', () => ({ trackCustomMetric: jest.fn() }));
 
 describe('CreateEscrowPage', () => {
   beforeEach(() => {
     useSearchParams.mockReturnValue(new URLSearchParams());
     localStorage.clear();
+    global.fetch = jest.fn();
+    trackCustomMetric.mockClear();
   });
 
   it('renders page heading', () => {
@@ -94,5 +99,43 @@ describe('CreateEscrowPage', () => {
 
     expect(screen.getByDisplayValue('5000')).toBeInTheDocument();
     expect(screen.getByText('Applied template: Monthly Retainer Support')).toBeInTheDocument();
+  });
+
+  it('uploads project metadata and emits privacy-safe telemetry', async () => {
+    global.fetch.mockResolvedValue({ ok: true, json: async () => ({ cid: 'bafy-test-cid' }) });
+    renderWithAppProviders(<CreateEscrowPage />);
+
+    fireEvent.change(screen.getByLabelText(/Project Brief/), {
+      target: { value: 'Private project requirements' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Upload metadata to IPFS' }));
+
+    expect(await screen.findByText('Metadata uploaded successfully.')).toBeInTheDocument();
+    expect(trackCustomMetric).toHaveBeenCalledWith(
+      'escrow-metadata-ipfs-upload',
+      expect.any(Number),
+      { outcome: 'success', payloadType: 'project-brief' },
+    );
+    expect(JSON.stringify(trackCustomMetric.mock.calls)).not.toContain('Private project requirements');
+    expect(JSON.stringify(trackCustomMetric.mock.calls)).not.toContain('bafy-test-cid');
+  });
+
+  it('shows a retryable state when metadata upload fails', async () => {
+    global.fetch.mockResolvedValue({ ok: false, status: 503 });
+    renderWithAppProviders(<CreateEscrowPage />);
+
+    fireEvent.change(screen.getByLabelText(/Project Brief/), {
+      target: { value: 'Project requirements' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Upload metadata to IPFS' }));
+
+    await waitFor(() => expect(screen.getByText('Metadata upload failed. Please retry.')).toBeVisible());
+  });
+
+  it('keeps upload motion removable through reduced-motion utilities', () => {
+    renderWithAppProviders(<CreateEscrowPage />);
+    expect(screen.getByRole('button', { name: 'Upload metadata to IPFS' })).toHaveClass(
+      'motion-reduce:transition-none',
+    );
   });
 });

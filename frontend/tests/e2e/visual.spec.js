@@ -40,4 +40,22 @@ test.describe('visual regression', () => {
     const screenshot = await page.screenshot({ fullPage: true });
     expect(screenshot).toMatchSnapshot('create-escrow-page.png');
   });
+
+  test('metadata upload success matches the approved baseline', async ({ page }) => {
+    test.skip(
+      test.info().project.name !== 'chromium',
+      'Visual baselines are maintained for Chromium.',
+    );
+    await page.route('**/api/ipfs/upload', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: '{"cid":"bafy-demo"}' }),
+    );
+    await seedWalletAuth(page);
+    await page.goto('/escrow/create', { waitUntil: 'domcontentloaded' });
+    await page.getByLabel(/Project Brief/).fill('Website design and delivery requirements');
+    await page.getByRole('button', { name: 'Upload metadata to IPFS' }).click();
+    await expect(page.getByText('Metadata uploaded successfully.')).toBeVisible();
+
+    const uploadRegion = page.getByRole('button', { name: 'Upload metadata to IPFS' }).locator('..');
+    expect(await uploadRegion.screenshot()).toMatchSnapshot('metadata-upload-success.png');
+  });
 });
