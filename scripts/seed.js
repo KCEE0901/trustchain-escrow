@@ -15,6 +15,7 @@
  */
 
 import 'dotenv/config';
+import { pathToFileURL } from 'node:url';
 
 // ── CLI argument parsing ──────────────────────────────────────────────────────
 
@@ -141,7 +142,7 @@ const SEED_DATA = {
   ],
 };
 
-async function seed() {
+export async function seed({ executeSeedData } = {}) {
   console.log('🌱 Seeding database…\n');
 
   // ── Idempotency guard ─────────────────────────────────────────────────────
@@ -216,11 +217,16 @@ async function seed() {
   console.log(`  Extra escrows (--count): ${extraCount}`);
   console.log(`  Dry-run:                 ${isDryRun}`);
   console.log(`  Force re-seed:           ${forceReseed}`);
+  if (executeSeedData) {
+    await executeSeedData(SEED_DATA, { isDryRun, forceReseed, extraCount });
+  }
   console.log('');
   console.log('✅ Done');
 }
 
-seed().catch((err) => {
-  console.error('Seed failed:', err);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  seed().catch((err) => {
+    console.error('Seed failed:', err);
+    process.exitCode = 1;
+  });
+}

@@ -34,6 +34,7 @@ import {
   broadcastTransaction,
   isValidStellarAddress,
 } from '../../../lib/stellar';
+import { trackCustomMetric } from '../../../lib/performance';
 
 const STEPS = [
   { id: 1, label: 'Counterparty' },
@@ -84,12 +85,14 @@ export default function CreateEscrowPage() {
     tokenAddress: 'usdc',
     totalAmount: '',
     briefDescription: '',
+    metadataHash: '',
     deadline: '',
     milestones: [{ ...DEFAULT_MILESTONE }],
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const [templateNotice, setTemplateNotice] = useState('');
+  const [metadataUpload, setMetadataUpload] = useState({ status: 'idle', message: '' });
   const [appliedQueryTemplateId, setAppliedQueryTemplateId] = useState(null);
 
   // Touched state tracks which fields the user has interacted with
@@ -118,6 +121,47 @@ export default function CreateEscrowPage() {
     setFormData((previous) => applyTemplateToForm(previous, template));
     setCurrentStep(1);
     setTemplateNotice(`Applied template: ${template.name}`);
+  };
+
+  const handleMetadataUpload = async () => {
+    if (!formData.briefDescription.trim()) {
+      setMetadataUpload({ status: 'error', message: 'Add a project brief before uploading.' });
+      return;
+    }
+
+    const startedAt = performance.now();
+    setMetadataUpload({ status: 'uploading', message: 'Uploading metadata…' });
+
+    try {
+      const response = await fetch('/api/ipfs/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description: formData.briefDescription }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Upload failed with status ${response.status}`);
+      }
+
+      const result = await response.json();
+      const metadataHash = result.cid || result.hash;
+      if (!metadataHash) {
+        throw new Error('Upload response did not include a content identifier');
+      }
+
+      setFormData((data) => ({ ...data, metadataHash }));
+      setMetadataUpload({ status: 'success', message: 'Metadata uploaded successfully.' });
+      trackCustomMetric('escrow-metadata-ipfs-upload', performance.now() - startedAt, {
+        outcome: 'success',
+        payloadType: 'project-brief',
+      });
+    } catch {
+      setMetadataUpload({ status: 'error', message: 'Metadata upload failed. Please retry.' });
+      trackCustomMetric('escrow-metadata-ipfs-upload', performance.now() - startedAt, {
+        outcome: 'failure',
+        payloadType: 'project-brief',
+      });
+    }
   };
 
   // TODO (contributor — Issue #33): implement form submission
@@ -232,6 +276,8 @@ export default function CreateEscrowPage() {
             setTouched={setTouched}
             amountError={amountError}
             descriptionError={descriptionError}
+            metadataUpload={metadataUpload}
+            onMetadataUpload={handleMetadataUpload}
           />
         )}
         {currentStep === 2 && (
@@ -276,7 +322,15 @@ export default function CreateEscrowPage() {
 /**
  * Step 1: Enter counterparty details.
  */
-function StepCounterparty({ formData, setFormData, setTouched, amountError, descriptionError }) {
+function StepCounterparty({
+  formData,
+  setFormData,
+  setTouched,
+  amountError,
+  descriptionError,
+  metadataUpload,
+  onMetadataUpload,
+}) {
   return (
     <div className="space-y-4">
       <h2 className="text-lg font-semibold text-white">Counterparty & Funds</h2>
@@ -351,7 +405,33 @@ function StepCounterparty({ formData, setFormData, setTouched, amountError, desc
             {descriptionError}
           </p>
         )}
-        {/* TODO (contributor): upload to IPFS and store hash */}
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={onMetadataUpload}
+            disabled={metadataUpload.status === 'uploading'}
+            className="rounded-lg border border-indigo-500/50 px-3 py-2 text-sm text-indigo-300 transition-colors hover:bg-indigo-500/10 disabled:cursor-not-allowed disabled:opacity-60 motion-reduce:transition-none"
+          >
+            {metadataUpload.status === 'uploading' && (
+              <span
+                className="mr-2 inline-block h-3 w-3 animate-spin rounded-full border-2 border-indigo-300 border-t-transparent motion-reduce:animate-none"
+                aria-hidden="true"
+              />
+            )}
+            {metadataUpload.status === 'uploading' ? 'Uploading…' : 'Upload metadata to IPFS'}
+          </button>
+          {metadataUpload.message && (
+            <p
+              role="status"
+              aria-live="polite"
+              className={`text-sm transition-opacity motion-reduce:transition-none ${
+                metadataUpload.status === 'error' ? 'text-red-400' : 'text-emerald-400'
+              }`}
+            >
+              {metadataUpload.message}
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );
