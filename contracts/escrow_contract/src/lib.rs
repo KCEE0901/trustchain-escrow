@@ -5358,6 +5358,11 @@ impl EscrowContract {
     }
 
     /// Returns the contract pause state and whitelist status for a token.
+    ///
+    /// Indexers must derive status changes from the corresponding whitelist
+    /// events, whose topics include the operation and affected token and whose
+    /// data includes the authoritative caller or enabled state. The tuple order
+    /// is stable across upgrades: `(paused, whitelist_enabled, token_approved)`.
     /// Contract entry point: `get_token_status`.
     pub fn get_token_status(env: Env, token: Address) -> (bool, bool, bool) {
         (
