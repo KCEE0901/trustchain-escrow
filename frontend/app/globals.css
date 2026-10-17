@@ -37,6 +37,10 @@
     Honour the OS "reduce motion" setting. Transitions and animations are
     decorative here, so they collapse to a near-instant change rather than
     being removed outright, which keeps state changes perceivable.
+
+    Colour/opacity feedback is preserved explicitly: those properties are not
+    motion, so they keep a short transition while transform-based motion is
+    neutralised. This keeps hover/press feedback visible without movement.
   */
   @media (prefers-reduced-motion: reduce) {
     *,
@@ -45,7 +49,18 @@
       animation-duration: 0.01ms !important;
       animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;
+      transition-property: opacity, color, background-color, border-color !important;
       scroll-behavior: auto !important;
+    }
+
+    /* Transform-based motion is decorative: remove it entirely. */
+    .animate-slide-in {
+      animation: none !important;
+    }
+
+    .card:hover,
+    .card:focus-within {
+      transform: none !important;
     }
   }
 
@@ -151,6 +166,38 @@
   }
   .badge-cancelled {
     @apply bg-red-500/20 text-red-800 border border-red-500/30 dark:text-red-300;
+  }
+
+  /*
+    Permission-aware action gating. Hooks set `data-action-state` on an action
+    element after authoritative role/escrow-state checks; the attribute drives
+    the visual state so gating stays declarative and testable.
+
+    - `disabled`: action is visible but inert (pointer-events off, dimmed).
+    - `hidden`: action is removed from layout and the accessibility tree.
+  */
+  [data-action-state='disabled'] {
+    @apply pointer-events-none cursor-not-allowed opacity-50;
+  }
+
+  [data-action-state='disabled'][aria-disabled='true'] {
+    @apply opacity-50;
+  }
+
+  [data-action-state='hidden'] {
+    display: none !important;
+  }
+
+  /*
+    Telemetry-safe attribute contract. Components annotate interactions with
+    `data-telemetry-event` (stable event name) and `data-telemetry-outcome`
+    (stable outcome token). These selectors are intentionally no-op styling:
+    they document the contract and give visual-regression snapshots a stable
+    hook. Never place wallet addresses or sensitive payloads in these values.
+  */
+  [data-telemetry-event],
+  [data-telemetry-outcome] {
+    /* no-op: annotation only */
   }
 }
 

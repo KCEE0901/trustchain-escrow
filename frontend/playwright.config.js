@@ -25,8 +25,12 @@ export default defineConfig({
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
+    reducedMotion: 'reduce',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'mobile-chromium', use: { ...devices['Pixel 5'] } },
+  ],
   webServer: process.env.PLAYWRIGHT_DISABLE_WEBSERVER
     ? undefined
     : {
