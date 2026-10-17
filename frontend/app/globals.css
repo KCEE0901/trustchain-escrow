@@ -16,6 +16,13 @@
 
 /* Custom base styles */
 @layer base {
+  /*
+    Design tokens live in a single deterministic :root block. Declarations are
+    ordered base-first so later overrides (media queries below) always win, and
+    each token is declared exactly once so stale or conflicting declarations
+    cannot clobber it. Keep names/values stable — they are part of the public
+    token contract.
+  */
   :root {
     /* TODO (contributor — easy, Issue #31): define a full design token system */
     --color-accent: #6366f1; /* indigo-500 */
@@ -37,6 +44,9 @@
     Honour the OS "reduce motion" setting. Transitions and animations are
     decorative here, so they collapse to a near-instant change rather than
     being removed outright, which keeps state changes perceivable.
+
+    This media query is intentionally ordered after the base transition
+    declarations above so its overrides deterministically win.
   */
   @media (prefers-reduced-motion: reduce) {
     *,
@@ -109,7 +119,8 @@
 
   /*
     Windows high-contrast / forced-colours mode strips the ring utilities, so
-    fall back to a real outline there.
+    fall back to a real outline there. Ordered after the base focus-visible
+    rules above so the outline override is deterministic.
   */
   @media (forced-colors: active) {
     button:focus-visible,
