@@ -1136,4 +1136,36 @@ mod tests {
         let result = client.try_cast_vote(&voter, &id, &true);
         assert!(result.is_err(), "Expected AlreadyVoted error");
     }
+    #[test]
+    fn slashing_preserves_stake_accounting_invariants() {
+        let (env, admin, token_admin, token, client) = setup();
+        let arbitrator = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        mint(&env, &token_admin, &token, &arbitrator, 2_000);
+        client.stake_arbitrator(&arbitrator, &2_000);
+        assert_eq!(client.slash_arbitrator(&admin, &arbitrator, &recipient, &str(&env, "evidence")), 200);
+        assert!(client.is_arbitrator(&arbitrator));
+        assert_eq!(token::Client::new(&env, &token).balance(&recipient), 200);
+    }
+
+    #[test]
+    fn slashing_at_minimum_removes_ineligible_arbitrator() {
+        let (env, admin, token_admin, token, client) = setup();
+        let arbitrator = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        mint(&env, &token_admin, &token, &arbitrator, 1_000);
+        client.stake_arbitrator(&arbitrator, &1_000);
+        assert_eq!(client.slash_arbitrator(&admin, &arbitrator, &recipient, &str(&env, "boundary")), 100);
+        assert!(!client.is_arbitrator(&arbitrator));
+    }
+
+    #[test]
+    fn slashing_rejects_non_admin_and_missing_stake() {
+        let (env, admin, _, _, client) = setup();
+        let outsider = Address::generate(&env);
+        let arbitrator = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        assert_eq!(client.try_slash_arbitrator(&outsider, &arbitrator, &recipient, &str(&env, "bad")), Err(Ok(crate::GovError::AdminOnly)));
+        assert_eq!(client.try_slash_arbitrator(&admin, &arbitrator, &recipient, &str(&env, "missing")), Err(Ok(crate::GovError::NotArbitrator)));
+    }
 }
