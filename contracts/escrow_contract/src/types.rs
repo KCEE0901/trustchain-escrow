@@ -374,8 +374,12 @@ pub struct EscrowState {
     /// Ledger timestamp of escrow creation.
     pub created_at: u64,
 
-    /// Optional deadline for the entire escrow (ledger timestamp).
-    /// TODO (contributor): implement auto-cancel on deadline
+    /// Optional deadline for the entire escrow, expressed as ledger timestamp.
+    /// Creation rejects deadlines at or before the current timestamp. The
+    /// escrow remains active at the exact deadline and becomes eligible for
+    /// permissionless auto-cancellation only when `timestamp > deadline`.
+    /// Expiry performs one bounded escrow read/write and one refund transfer;
+    /// it does not scan milestones and shares the escrow record's persistent TTL.
     pub deadline: Option<u64>,
 
     /// Optional lock time (ledger timestamp) - funds locked until this time.
@@ -411,15 +415,20 @@ pub struct EscrowState {
 
 /// On-chain reputation record for a user address.
 ///
-/// Built up over time as escrows complete or are disputed.
+/// Built up deterministically as escrows complete or are disputed.
+///
+/// Scoring uses integer base units only: completion adds `10 + min(volume / 1000, 10)`,
+/// dispute subtracts five with saturating arithmetic, and counters use fixed-width
+/// integers. No wall-clock, randomness, floating point, or iteration order affects
+/// the score. `last_updated` records ledger timestamp but is not a scoring input.
+/// The record is one bounded persistent entry and receives the standard persistent TTL.
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct ReputationRecord {
     /// The user this record belongs to.
     pub address: Address,
 
-    /// Total reputation points accumulated.
-    /// Formula: TODO (contributor) — define scoring algorithm.
+    /// Total reputation points accumulated using the deterministic formula above.
     pub total_score: u64,
 
     /// Number of escrows completed successfully.

@@ -65,6 +65,7 @@ mod bridge;
 mod bridge_tests;
 mod contract_version_tests;
 mod creation_validation_tests;
+mod deadline_compatibility_tests;
 mod deployment_tests;
 mod dispute_evidence;
 mod dispute_evidence_tests;
