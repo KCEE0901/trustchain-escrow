@@ -23,16 +23,27 @@ export default function KycAdminPage() {
 
   useEffect(() => {
     setLoading(true);
+    let isCurrentRequest = true;
+    const controller = new AbortController();
     const params = new URLSearchParams({ page, limit: 20 });
     if (statusFilter) params.set('status', statusFilter);
 
-    fetch(`${API_BASE}/api/kyc/admin?${params}`)
+    fetch(`${API_BASE}/api/kyc/admin?${params}`, { signal: controller.signal })
       .then((r) => r.json())
       .then((d) => {
+        if (!isCurrentRequest) return;
         setRecords(d.data ?? []);
         setTotal(d.total ?? 0);
       })
-      .finally(() => setLoading(false));
+      .catch(() => {})
+      .finally(() => {
+        if (isCurrentRequest) setLoading(false);
+      });
+
+    return () => {
+      isCurrentRequest = false;
+      controller.abort();
+    };
   }, [page, statusFilter]);
 
   return (

@@ -46,6 +46,8 @@ const ALERT_CONFIG = {
  * Track last sent alerts to prevent spam
  */
 const lastAlerts = new Map();
+let syncLagCalculationPromise;
+let syncLagAlertInFlight = false;
 
 /**
  * Check if an alert should be sent (cooldown period)
@@ -253,18 +255,25 @@ export const monitorQueueHealth = async () => {
       });
     }
 
-    // Check sync lag (would need to be calculated from event timestamps)
+    // Check sync lag from the newest indexed ledger event.
     const syncLag = await calculateSyncLag();
     if (syncLag > ALERT_CONFIG.SYNC_LAG_THRESHOLD) {
-      await sendAlert({
-        type: ALERT_TYPES.SYNC_LAG_HIGH,
-        severity: syncLag > 60000 ? ALERT_SEVERITY.ERROR : ALERT_SEVERITY.WARNING,
-        message: `Index sync lag is ${(syncLag / 1000).toFixed(1)} seconds (threshold: ${ALERT_CONFIG.SYNC_LAG_THRESHOLD / 1000}s)`,
-        metadata: {
-          syncLag,
-          threshold: ALERT_CONFIG.SYNC_LAG_THRESHOLD,
-        },
-      });
+      if (!syncLagAlertInFlight) {
+        syncLagAlertInFlight = true;
+        try {
+          await sendAlert({
+            type: ALERT_TYPES.SYNC_LAG_HIGH,
+            severity: syncLag > 60000 ? ALERT_SEVERITY.ERROR : ALERT_SEVERITY.WARNING,
+            message: `Index sync lag is ${(syncLag / 1000).toFixed(1)} seconds (threshold: ${ALERT_CONFIG.SYNC_LAG_THRESHOLD / 1000}s)`,
+            metadata: {
+              syncLag,
+              threshold: ALERT_CONFIG.SYNC_LAG_THRESHOLD,
+            },
+          });
+        } finally {
+          syncLagAlertInFlight = false;
+        }
+      }
     }
   } catch (error) {
     console.error('[Alert] Error monitoring queue health:', error);
@@ -276,9 +285,34 @@ export const monitorQueueHealth = async () => {
  * @returns {number} Sync lag in milliseconds
  */
 const calculateSyncLag = async () => {
-  // TODO: Implement sync lag calculation by comparing the latest blockchain
-  // ledger with the last processed ledger.
-  return 0;
+  if (syncLagCalculationPromise) return syncLagCalculationPromise;
+
+  const calculation = (async () => {
+    try {
+      const { default: prisma } = await import('../lib/prisma.js');
+      if (typeof prisma?.contractEvent?.findFirst !== 'function') return 0;
+
+      const latestEvent = await prisma.contractEvent.findFirst({
+        orderBy: { ledgerAt: 'desc' },
+        select: { ledgerAt: true },
+      });
+      if (!latestEvent?.ledgerAt) return 0;
+
+      const ledgerTimestamp = new Date(latestEvent.ledgerAt).getTime();
+      if (!Number.isFinite(ledgerTimestamp)) return 0;
+
+      return Math.max(0, Date.now() - ledgerTimestamp);
+    } catch {
+      return 0;
+    }
+  })();
+
+  syncLagCalculationPromise = calculation;
+  try {
+    return await calculation;
+  } finally {
+    if (syncLagCalculationPromise === calculation) syncLagCalculationPromise = undefined;
+  }
 };
 
 /**
