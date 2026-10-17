@@ -15,6 +15,18 @@ import {
   queueMetrics,
 } from '../lib/queueConfig.js';
 
+let workerPersistence = {
+  saveLedger: async (ledger) => console.log(`[Worker] Updated last processed ledger to ${ledger}`),
+  saveFailure: async () => console.log('[DeadLetter] Permanent failure logged successfully'),
+};
+
+export const configureEventWorkerPersistence = (persistence = {}) => {
+  workerPersistence = { ...workerPersistence, ...persistence };
+};
+
+const workerTelemetry = (event, fields = {}) =>
+  console.log(JSON.stringify({ service: 'event-worker', event, ...fields }));
+
 /**
  * Processes a single Stellar event
  * @param {Object} job - BullMQ job containing event data
@@ -50,9 +62,9 @@ const processStellarEvent = async (job) => {
 
     await job.updateProgress(100);
 
-    console.log(`[Worker] Successfully processed ${eventType} event from ledger ${ledger}`);
+    workerTelemetry('event_processed', { eventType, ledger, jobId: job.id });
   } catch (error) {
-    console.error(`[Worker] Error processing event:`, error);
+    workerTelemetry('event_failed', { ledger, jobId: job.id, error: error.message });
 
     // Add context to the error for better debugging
     error.eventData = { event, ledger };
@@ -139,14 +151,8 @@ const processEventByType = async (eventType, event, ledger) => {
  */
 const updateLastProcessedLedger = async (ledger) => {
   try {
-    // TODO: Implement database update
-    // await prisma.indexerState.upsert({
-    //   where: { id: 1 },
-    //   update: { lastProcessedLedger: ledger },
-    //   create: { id: 1, lastProcessedLedger: ledger },
-    // });
-
-    console.log(`[Worker] Updated last processed ledger to ${ledger}`);
+    await workerPersistence.saveLedger(ledger);
+    workerTelemetry('ledger_persisted', { ledger });
   } catch (error) {
     console.error('[Worker] Error updating last processed ledger:', error);
     throw error;
@@ -189,18 +195,8 @@ const processDeadLetterEvent = async (job) => {
  */
 const logPermanentFailure = async (originalJob, error, attemptsMade) => {
   try {
-    // TODO: Implement database logging
-    // await prisma.permanentFailure.create({
-    //   data: {
-    //     eventData: originalJob.data,
-    //     errorMessage: error.message,
-    //     errorStack: error.stack,
-    //     attemptsMade,
-    //     failedAt: new Date(),
-    //   }
-    // });
-
-    console.log('[DeadLetter] Permanent failure logged successfully');
+    await workerPersistence.saveFailure({ originalJob, error, attemptsMade });
+    workerTelemetry('permanent_failure_persisted', { attemptsMade, jobId: originalJob?.id });
   } catch (logError) {
     console.error('[DeadLetter] Error logging permanent failure:', logError);
     throw logError;

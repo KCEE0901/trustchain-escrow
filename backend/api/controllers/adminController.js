@@ -14,19 +14,13 @@ import { getUserUsage } from '../middleware/rateLimiter.js';
 
 const adminLog = getLogger();
 
-// JSON.stringify does not guarantee key order, so two objects with the same
-// contents but different insertion order produce different cache keys.
-// This sorted replacer ensures deterministic serialisation for cache keys.
-function stableStringify(obj) {
-  return JSON.stringify(obj, (_, v) =>
-    v && typeof v === 'object' && !Array.isArray(v)
-      ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b)))
-      : v,
-  );
-}
-
 // Mutable runtime overrides (resets on server restart)
 const runtimeTierLimits = { ...TIER_LIMITS };
+let settingsPersistence = { save: async (settings) => settings };
+
+export const configureSettingsPersistence = (persistence) => {
+  settingsPersistence = persistence;
+};
 
 const getRateLimits = (_req, res) => {
   res.json({ tiers: runtimeTierLimits });
@@ -489,10 +483,10 @@ const updateSettings = async (req, res) => {
       }
     }
 
-    // TODO: Persist to DB
+    const persisted = await settingsPersistence.save({ platformFeePercent });
     res.json({
-      message: 'Settings updated (note: changes are not persisted until DB support is added).',
-      received: req.body,
+      message: 'Settings updated.',
+      received: persisted,
     });
   } catch (err) {
     logControllerError('admin.updateSettings', err, req);

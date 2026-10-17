@@ -91,6 +91,7 @@ mod partial_cancel_tests;
 mod pause_tests;
 mod platform_fee;
 mod property_invariant_tests;
+mod reputation_determinism_tests;
 mod reentrancy_guard_tests;
 mod self_escrow_tests;
 mod slippage_tests;
