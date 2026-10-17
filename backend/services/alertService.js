@@ -46,6 +46,17 @@ const ALERT_CONFIG = {
  * Track last sent alerts to prevent spam
  */
 const lastAlerts = new Map();
+const deliveredEmailAlerts = new Set();
+let alertEmailSender = null;
+
+export const configureAlertEmailSender = (sender) => {
+  alertEmailSender = typeof sender === 'function' ? sender : null;
+};
+
+export const resetAlertEmailDeliveryState = () => {
+  deliveredEmailAlerts.clear();
+  alertEmailSender = null;
+};
 
 /**
  * Check if an alert should be sent (cooldown period)
@@ -141,18 +152,48 @@ const consoleAlert = (alert) => {
  * @param {Object} alert - Alert data
  */
 const emailAlert = async (alert) => {
-  try {
-    // TODO: Implement email sending
-    // const emailService = await import('./emailService.js');
-    // await emailService.sendAlert({
-    //   to: process.env.ALERT_EMAIL_RECIPIENTS?.split(','),
-    //   subject: `[${alert.severity.toUpperCase()}] ${alert.type}`,
-    //   body: formatEmailAlert(alert),
-    // });
+  const idempotencyKey = alert.idempotencyKey || `${alert.type}:${alert.message}`;
 
-    console.log(`[Alert] Email alert would be sent for ${alert.type}`);
+  if (deliveredEmailAlerts.has(idempotencyKey)) {
+    return { status: 'duplicate', idempotencyKey };
+  }
+
+  if (!alertEmailSender) {
+    return { status: 'degraded', reason: 'email_transport_unavailable' };
+  }
+
+  const recipients = (process.env.ALERT_EMAIL_RECIPIENTS || '')
+    .split(',')
+    .map((recipient) => recipient.trim())
+    .filter(Boolean);
+
+  try {
+    await alertEmailSender({
+      to: recipients,
+      subject: `[${alert.severity.toUpperCase()}] ${alert.type}`,
+      body: formatEmailAlert(alert),
+      idempotencyKey,
+    });
+    deliveredEmailAlerts.add(idempotencyKey);
+    console.log(
+      JSON.stringify({
+        service: 'alert-email',
+        event: 'delivery_succeeded',
+        alertType: alert.type,
+        recipientCount: recipients.length,
+      }),
+    );
+    return { status: 'delivered', idempotencyKey };
   } catch (error) {
-    console.error('[Alert] Error sending email alert:', error);
+    console.error(
+      JSON.stringify({
+        service: 'alert-email',
+        event: 'delivery_failed',
+        alertType: alert.type,
+        error: error.message,
+      }),
+    );
+    return { status: 'degraded', reason: 'email_delivery_failed' };
   }
 };
 

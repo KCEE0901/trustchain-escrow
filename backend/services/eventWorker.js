@@ -15,6 +15,13 @@ import {
   queueMetrics,
 } from '../lib/queueConfig.js';
 
+let permanentFailureAlerter = async () => ({ status: 'disabled' });
+
+export const configurePermanentFailureAlerter = (alerter) => {
+  permanentFailureAlerter =
+    typeof alerter === 'function' ? alerter : async () => ({ status: 'disabled' });
+};
+
 /**
  * Processes a single Stellar event
  * @param {Object} job - BullMQ job containing event data
@@ -167,12 +174,12 @@ const processDeadLetterEvent = async (job) => {
   try {
     // Log the failure for manual investigation
     await logPermanentFailure(originalJob, error, attemptsMade);
-
-    // TODO: Send alert to monitoring system
-    // await alertService.sendAlert({
-    //   type: 'PERMANENT_EVENT_FAILURE',
-    //   data: { originalJob, error, attemptsMade }
-    // });
+    await permanentFailureAlerter({
+      type: 'PERMANENT_EVENT_FAILURE',
+      jobId: originalJob?.id,
+      attemptsMade,
+      error: error?.message || String(error),
+    });
 
     console.log('[DeadLetter] Successfully logged permanent failure');
   } catch (logError) {
