@@ -15,6 +15,20 @@ import {
   queueMetrics,
 } from '../lib/queueConfig.js';
 
+const completedEvents = new Map();
+const inFlightEvents = new Map();
+const EVENT_RETENTION_MS = Number(process.env.EVENT_RETENTION_MS || 86400000);
+const EVENT_RETENTION_LIMIT = Number(process.env.EVENT_RETENTION_LIMIT || 10000);
+
+const eventKey = ({ event, ledger }) => `${ledger}:${event?.id || event?.pagingToken || event?.topic?.[0]}`;
+export const pruneEventHistory = (now = Date.now()) => {
+  for (const [key, completedAt] of completedEvents) {
+    if (now - completedAt > EVENT_RETENTION_MS) completedEvents.delete(key);
+  }
+  while (completedEvents.size > EVENT_RETENTION_LIMIT) completedEvents.delete(completedEvents.keys().next().value);
+  return completedEvents.size;
+};
+
 /**
  * Processes a single Stellar event
  * @param {Object} job - BullMQ job containing event data
@@ -22,7 +36,13 @@ import {
 const processStellarEvent = async (job) => {
   const { event, ledger } = job.data;
 
-  try {
+  const key = eventKey(job.data);
+  pruneEventHistory();
+  if (completedEvents.has(key)) return { status: 'duplicate', key };
+  if (inFlightEvents.has(key)) return inFlightEvents.get(key);
+
+  const processing = (async () => {
+   try {
     queueMetrics.totalJobs++;
 
     // Update job progress
@@ -50,7 +70,10 @@ const processStellarEvent = async (job) => {
 
     await job.updateProgress(100);
 
+    completedEvents.set(key, Date.now());
+    pruneEventHistory();
     console.log(`[Worker] Successfully processed ${eventType} event from ledger ${ledger}`);
+    return { status: 'processed', key };
   } catch (error) {
     console.error(`[Worker] Error processing event:`, error);
 
@@ -58,8 +81,13 @@ const processStellarEvent = async (job) => {
     error.eventData = { event, ledger };
     error.timestamp = new Date().toISOString();
 
-    throw error; // Re-throw to trigger BullMQ retry logic
+    throw error;
+  } finally {
+    inFlightEvents.delete(key);
   }
+  })();
+  inFlightEvents.set(key, processing);
+  return processing;
 };
 
 /**
@@ -147,9 +175,10 @@ const updateLastProcessedLedger = async (ledger) => {
     // });
 
     console.log(`[Worker] Updated last processed ledger to ${ledger}`);
+    return { status: 'persisted', ledger };
   } catch (error) {
     console.error('[Worker] Error updating last processed ledger:', error);
-    throw error;
+    return { status: 'degraded', ledger, reason: 'persistence_unavailable' };
   }
 };
 
@@ -279,4 +308,5 @@ export {
   updateLastProcessedLedger,
   processDeadLetterEvent,
   logPermanentFailure,
+  completedEvents,
 };
