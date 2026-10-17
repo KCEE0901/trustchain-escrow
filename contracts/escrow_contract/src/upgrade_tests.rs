@@ -21,8 +21,8 @@ mod upgrade_tests {
     use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, String, Vec};
 
     use crate::{
-        EscrowContract, EscrowContractClient, EscrowStatus, MultisigConfig, MS_PENDING,
-        MS_SUBMITTED,
+        EscrowContract, EscrowContractClient, EscrowError, EscrowStatus, MultisigConfig,
+        MS_PENDING, MS_SUBMITTED,
     };
 
     fn no_multisig(env: &Env) -> MultisigConfig {
@@ -434,6 +434,168 @@ mod upgrade_tests {
         assert_eq!(escrow.total_amount, 500_000);
         assert_eq!(escrow.status, EscrowStatus::Active);
         assert_eq!(contract.escrow_count(), 1u64);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Wrapped token registry enforcement compatibility tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// A wrapped token registered before an upgrade must remain enforced after
+    /// the upgrade: escrows with the registered token still succeed, while
+    /// escrows with an unregistered token still fail with `EscrowError::E3`.
+    #[test]
+    fn test_upgrade_preserves_wrapped_token_registry_enforcement() {
+        let (env, admin, client_addr, freelancer, contract) = setup_initialized();
+
+        // Register a wrapped token and enable the whitelist pre-upgrade.
+        let wrapped = register_token(&env, &admin, &client_addr, 2_000_000);
+        contract.add_approved_token(&admin, &wrapped);
+        contract.set_token_whitelist_enabled(&admin, &true);
+
+        // Sanity check pre-upgrade enforcement.
+        let pre_id = contract.create_escrow(
+            &client_addr,
+            &freelancer,
+            &wrapped,
+            &500_000,
+            &hash32(&env, 1),
+            &None,
+            &None,
+            &None,
+            &None,
+            &no_multisig(&env),
+            &None,
+        );
+        assert_eq!(contract.get_escrow(&pre_id).token, wrapped);
+
+        // Simulate a version bump.
+        let wasm_hash = upload_dummy_wasm(&env);
+        contract.upgrade(&admin, &wasm_hash);
+
+        // Registered token still accepted post-upgrade.
+        let post_id = contract.create_escrow(
+            &client_addr,
+            &freelancer,
+            &wrapped,
+            &500_000,
+            &hash32(&env, 2),
+            &None,
+            &None,
+            &None,
+            &None,
+            &no_multisig(&env),
+            &None,
+        );
+        assert_eq!(contract.get_escrow(&post_id).token, wrapped);
+
+        // Unregistered token still rejected post-upgrade with E3.
+        let unregistered = register_token(&env, &admin, &client_addr, 1_000_000);
+        let result = contract.try_create_escrow(
+            &client_addr,
+            &freelancer,
+            &unregistered,
+            &100_000,
+            &hash32(&env, 3),
+            &None,
+            &None,
+            &None,
+            &None,
+            &no_multisig(&env),
+            &None,
+        );
+        assert_eq!(
+            result,
+            Err(Ok(EscrowError::E3)),
+            "unregistered token must still be rejected after upgrade"
+        );
+    }
+
+    /// Public API signatures for the registry functions must be unchanged by
+    /// an upgrade: the same argument shapes work for the admin, and non-admin
+    /// callers still receive the same authorization error.
+    #[test]
+    fn test_upgrade_preserves_registry_api_signatures() {
+        let (env, admin, client_addr, _freelancer, contract) = setup_initialized();
+        let token = register_token(&env, &admin, &client_addr, 1_000_000);
+
+        let wasm_hash = upload_dummy_wasm(&env);
+        contract.upgrade(&admin, &wasm_hash);
+
+        // Admin calls with the original argument shapes must succeed.
+        contract.add_approved_token(&admin, &token);
+        contract.set_token_whitelist_enabled(&admin, &true);
+        contract.remove_approved_token(&admin, &token);
+
+        // Non-admin callers must still be rejected with E87 for each function.
+        let impostor = Address::generate(&env);
+        assert_eq!(
+            contract.try_add_approved_token(&impostor, &token),
+            Err(Ok(EscrowError::E87)),
+        );
+        assert_eq!(
+            contract.try_remove_approved_token(&impostor, &token),
+            Err(Ok(EscrowError::E87)),
+        );
+        assert_eq!(
+            contract.try_set_token_whitelist_enabled(&impostor, &true),
+            Err(Ok(EscrowError::E87)),
+        );
+    }
+
+    /// Failure path: an unknown token remains rejected post-upgrade, no
+    /// registry state is lost, and the contract version has advanced while
+    /// enforcement behavior is identical.
+    #[test]
+    fn test_upgrade_unknown_token_still_rejected_and_version_advanced() {
+        let (env, admin, client_addr, freelancer, contract) = setup_initialized();
+
+        let wrapped = register_token(&env, &admin, &client_addr, 1_000_000);
+        contract.add_approved_token(&admin, &wrapped);
+        contract.set_token_whitelist_enabled(&admin, &true);
+
+        let pre_version = contract.get_contract_version().version;
+
+        let wasm_hash = upload_dummy_wasm(&env);
+        contract.upgrade(&admin, &wasm_hash);
+
+        let post_version = contract.get_contract_version().version;
+        assert!(
+            post_version > pre_version,
+            "contract version must advance after upgrade"
+        );
+
+        // Unknown token rejected post-upgrade with E3.
+        let unknown = register_token(&env, &admin, &client_addr, 1_000_000);
+        let result = contract.try_create_escrow(
+            &client_addr,
+            &freelancer,
+            &unknown,
+            &100_000,
+            &hash32(&env, 4),
+            &None,
+            &None,
+            &None,
+            &None,
+            &no_multisig(&env),
+            &None,
+        );
+        assert_eq!(result, Err(Ok(EscrowError::E3)));
+
+        // Registry entry was not lost: the registered token still works.
+        let ok_id = contract.create_escrow(
+            &client_addr,
+            &freelancer,
+            &wrapped,
+            &100_000,
+            &hash32(&env, 5),
+            &None,
+            &None,
+            &None,
+            &None,
+            &no_multisig(&env),
+            &None,
+        );
+        assert_eq!(contract.get_escrow(&ok_id).token, wrapped);
     }
 
     /// Multiple sequential upgrades must not corrupt accumulated state.

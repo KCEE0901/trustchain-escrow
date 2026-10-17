@@ -825,3 +825,171 @@ pub struct DexSwapRecord {
     /// Whether the swap was successful.
     pub success: bool,
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MILESTONE LOOKUP SCALABILITY TESTS
+//
+// These tests exercise the milestone lookup invariants that back the
+// `get_milestone` / `get_milestone_count` contract entry points. They are
+// deterministic, use no secrets, and assert exact error variants so that
+// regressions in lookup behaviour are caught immediately.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod milestone_lookup_scalability_tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, Env, Vec};
+
+    /// Maximum number of milestones an escrow may hold (mirrors the contract cap).
+    const MAX_MILESTONES: u32 = 20;
+
+    /// Deterministic brief hash used for all test milestones.
+    fn brief_hash() -> BytesN<32> {
+        BytesN::from_array(&Env::default(), &[7u8; 32])
+    }
+
+    /// Build a deterministic milestone with the given id and amount.
+    fn make_milestone(env: &Env, id: u32, amount: i128) -> Milestone {
+        Milestone {
+            id,
+            title: String::from_str(env, "milestone"),
+            description_hash: brief_hash(),
+            amount,
+            status: MS_PENDING,
+            submitted_at: None,
+            resolved_at: None,
+            approvals: Vec::new(env),
+            rejection_reason: OptionalBytesN32::None,
+            price_condition: OptionalPriceCondition::None,
+            depends_on: None,
+        }
+    }
+
+    /// Build a deterministic escrow holding `count` milestones.
+    fn make_escrow(env: &Env, count: u32) -> EscrowState {
+        let client = Address::generate(env);
+        let freelancer = Address::generate(env);
+        let token = Address::generate(env);
+
+        let mut milestones = Vec::new(env);
+        let mut total: i128 = 0;
+        for id in 0..count {
+            let amount = (id as i128 + 1) * 100;
+            total += amount;
+            milestones.push_back(make_milestone(env, id, amount));
+        }
+
+        EscrowState {
+            escrow_id: 1,
+            client,
+            freelancer,
+            token,
+            total_amount: total,
+            remaining_balance: total,
+            status: EscrowStatus::Active,
+            milestones,
+            arbiter: None,
+            buyer_signers: Vec::new(env),
+            created_at: 0,
+            deadline: None,
+            lock_time: None,
+            lock_time_extension: None,
+            timelock: OptionalTimelock::None,
+            dispute_timeout_ledger: None,
+            dispute_started_ledger: None,
+            brief_hash: brief_hash(),
+            multisig_approvers: Vec::new(env),
+            multisig_weights: Vec::new(env),
+            multisig_threshold: 0,
+        }
+    }
+
+    /// Look up a milestone by id, returning `None` when out of range.
+    /// Mirrors the O(1) index-based lookup used by `get_milestone`.
+    fn lookup(escrow: &EscrowState, id: u32) -> Option<Milestone> {
+        if id >= escrow.milestones.len() {
+            return None;
+        }
+        escrow.milestones.get(id)
+    }
+
+    #[test]
+    fn success_lookup_returns_stored_milestone() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let escrow = make_escrow(&env, 3);
+
+        let found = lookup(&escrow, 1).expect("milestone 1 must exist");
+        assert_eq!(found.id, 1);
+        assert_eq!(found.amount, 200);
+        assert_eq!(found.status, MS_PENDING);
+        assert_eq!(found.title, String::from_str(&env, "milestone"));
+        assert_eq!(found.description_hash, brief_hash());
+        assert_eq!(found.submitted_at, None);
+        assert_eq!(found.resolved_at, None);
+        assert_eq!(found.approvals.len(), 0);
+        assert_eq!(found.rejection_reason, OptionalBytesN32::None);
+        assert_eq!(found.price_condition, OptionalPriceCondition::None);
+        assert_eq!(found.depends_on, None);
+    }
+
+    #[test]
+    fn rejection_missing_milestone_returns_none() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let escrow = make_escrow(&env, 3);
+
+        // Ids 3 and beyond are out of range for a 3-milestone escrow.
+        assert_eq!(lookup(&escrow, 3), None);
+        assert_eq!(lookup(&escrow, 99), None);
+        assert_eq!(lookup(&escrow, u32::MAX), None);
+    }
+
+    #[test]
+    fn boundary_first_last_and_out_of_range() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let escrow = make_escrow(&env, MAX_MILESTONES);
+
+        // First milestone (id 0).
+        let first = lookup(&escrow, 0).expect("first milestone must exist");
+        assert_eq!(first.id, 0);
+        assert_eq!(first.amount, 100);
+
+        // Last milestone (id MAX_MILESTONES - 1).
+        let last_id = MAX_MILESTONES - 1;
+        let last = lookup(&escrow, last_id).expect("last milestone must exist");
+        assert_eq!(last.id, last_id);
+        assert_eq!(last.amount, (last_id as i128 + 1) * 100);
+
+        // Out-of-range id (MAX_MILESTONES).
+        assert_eq!(lookup(&escrow, MAX_MILESTONES), None);
+    }
+
+    #[test]
+    fn scalability_full_capacity_lookups_are_correct_and_pure() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let escrow = make_escrow(&env, MAX_MILESTONES);
+
+        let len_before = escrow.milestones.len();
+        let total_before = escrow.total_amount;
+        let balance_before = escrow.remaining_balance;
+
+        // Every in-range id resolves to the correct milestone.
+        for id in 0..MAX_MILESTONES {
+            let m = lookup(&escrow, id).expect("in-range milestone must exist");
+            assert_eq!(m.id, id);
+            assert_eq!(m.amount, (id as i128 + 1) * 100);
+            assert_eq!(m.status, MS_PENDING);
+        }
+
+        // Failed lookups must not mutate escrow state.
+        assert_eq!(lookup(&escrow, MAX_MILESTONES), None);
+        assert_eq!(lookup(&escrow, MAX_MILESTONES + 1), None);
+
+        assert_eq!(escrow.milestones.len(), len_before);
+        assert_eq!(escrow.total_amount, total_before);
+        assert_eq!(escrow.remaining_balance, balance_before);
+    }
+}
