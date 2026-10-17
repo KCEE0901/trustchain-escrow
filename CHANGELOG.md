@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documentation: operational runbook for common tasks (#14)
 - Documentation: Stellar network integration and testnet setup (#15)
 - Documentation: changelog and versioning policy (#16)
+- `esc_exp` event on deadline auto-cancellation (`trigger_expiry`) carrying escrow id, caller, refund recipient, token, refunded amount, deadline and processing time, alongside the existing `esc_can` event (#512)
+- Admin settings persistence (`platform_settings` table) with a stable degraded response from `GET /api/admin/settings` and a 503 from `PATCH` when the store is unavailable (#519)
+- Idempotent permanent-failure alerting in the event worker: one dead-letter job and one alert per failed event across retries and concurrent workers (#522)
+
+### Security
+
+- `update_reputation` now requires the current admin's authorization and rejects negative volume, which previously wrapped to a near-maximum score (#513)
 
 ## [2.0.0] - 2026-04-21
 

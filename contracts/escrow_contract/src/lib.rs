@@ -75,6 +75,7 @@ mod escrow_template_tests;
 mod event_names;
 mod event_tests;
 mod events;
+mod expiry_event_tests;
 mod extension;
 mod governance_escalation_tests;
 mod lock_time_enforcement_tests;
@@ -94,6 +95,7 @@ mod pause_tests;
 mod platform_fee;
 mod property_invariant_tests;
 mod reentrancy_guard_tests;
+mod reputation_auth_tests;
 mod self_escrow_tests;
 mod simulation;
 mod simulation_tests;
@@ -4837,9 +4839,15 @@ impl EscrowContract {
 
     /// Updates on-chain reputation for a user.
     ///
+    /// Admin only: requires the *current* admin's authorization for these
+    /// exact arguments, so a former admin, a pending admin, the subject
+    /// address or anyone else is rejected.
+    ///
     /// Scoring:
     /// - Completed escrow: +10 base + 1 per 1000 units volume (capped at +20)
     /// - Disputed escrow:  -5 score, increment disputed_count
+    ///
+    /// `volume` must be non-negative (`E17`).
     pub fn update_reputation(
         env: Env,
         address: Address,
@@ -4848,6 +4856,16 @@ impl EscrowContract {
         volume: i128,
     ) -> Result<(), EscrowError> {
         ContractStorage::require_not_paused(&env)?;
+        ContractStorage::require_initialized(&env)?;
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(EscrowError::E2)?;
+        admin.require_auth();
+        if volume < 0 {
+            return Err(EscrowError::E17);
+        }
         Self::_update_reputation_internal(&env, &address, completed, disputed, volume);
         Ok(())
     }
@@ -6109,16 +6127,17 @@ impl EscrowContract {
         let now = env.ledger().timestamp();
 
         if completed {
-            // +10 base + 1 per 1000 volume units, capped at +20 total
-            let volume_bonus = (volume / 1_000).min(10) as u64;
+            // +10 base + 1 per 1000 volume units, capped at +20 total.
+            // Clamped at 0 so a negative volume can never wrap to a huge u64.
+            let volume_bonus = (volume / 1_000).clamp(0, 10) as u64;
             record.total_score = record.total_score.saturating_add(10 + volume_bonus);
-            record.completed_escrows += 1;
+            record.completed_escrows = record.completed_escrows.saturating_add(1);
             record.total_volume = record.total_volume.saturating_add(volume);
         }
 
         if disputed {
             record.total_score = record.total_score.saturating_sub(5);
-            record.disputed_escrows += 1;
+            record.disputed_escrows = record.disputed_escrows.saturating_add(1);
         }
 
         record.last_updated = now;

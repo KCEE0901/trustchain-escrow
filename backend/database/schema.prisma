@@ -673,6 +673,20 @@ model FeatureFlag {
   @@map("feature_flags")
 }
 
+// ── Platform Settings ─────────────────────────────────────────────────────────
+
+/// Admin-managed overrides for platform settings (e.g. platformFeePercent).
+/// Optional infrastructure: when unavailable, the admin API falls back to the
+/// env/config defaults and reports a degraded persistence status.
+model PlatformSetting {
+  key       String   @id
+  value     String
+  updatedBy String?  @map("updated_by")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("platform_settings")
+}
+
 enum KycStatus {
   Pending
   Init

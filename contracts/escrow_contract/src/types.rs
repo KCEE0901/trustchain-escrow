@@ -423,6 +423,15 @@ pub struct EscrowState {
 /// On-chain reputation record for a user address.
 ///
 /// Built up over time as escrows complete or are disputed.
+///
+/// Scores are written only by the contract itself (dispute resolution) or by
+/// `update_reputation`, which requires the *current* admin's authorization
+/// for the exact arguments. A former admin, a proposed-but-not-accepted
+/// admin, the subject address or any other account cannot change a score.
+///
+/// Scoring is deterministic: the same sequence of updates always yields the
+/// same `total_score`, independent of ledger time or call order of other
+/// addresses (`last_updated` is the only time-dependent field).
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct ReputationRecord {
@@ -430,7 +439,13 @@ pub struct ReputationRecord {
     pub address: Address,
 
     /// Total reputation points accumulated.
-    /// Formula: TODO (contributor) — define scoring algorithm.
+    ///
+    /// Formula, applied per update:
+    /// - completed escrow: `+10 + min(volume / 1_000, 10)` (so +10..=+20);
+    ///   `volume` must be non-negative
+    /// - disputed escrow: `-5`, saturating at 0
+    ///
+    /// Additions saturate at `u64::MAX`; nothing wraps.
     pub total_score: u64,
 
     /// Number of escrows completed successfully.
@@ -471,6 +486,33 @@ pub struct RecurringScheduleStatus {
     pub payments_remaining: u32,
     /// Token amount released per payment.
     pub payment_amount: i128,
+}
+
+/// Payload of the `esc_exp` event emitted when an escrow is auto-cancelled
+/// because its deadline passed (`trigger_expiry`).
+///
+/// Topics are `("esc_exp", escrow_id)`. The payload carries everything an
+/// indexer needs to record the cancellation without reading contract state:
+/// who triggered it, who was refunded, in which token, how much, the deadline
+/// that was missed, and the ledger time it was processed. The generic
+/// `esc_can` event is still emitted alongside it for existing consumers.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EscrowExpiredEvent {
+    /// The escrow that expired.
+    pub escrow_id: u64,
+    /// Address that called `trigger_expiry` (any party or a keeper).
+    pub triggered_by: Address,
+    /// Address that received the refund (the escrow's client/depositor).
+    pub refunded_to: Address,
+    /// Token the refund was paid in.
+    pub token: Address,
+    /// Amount refunded; `0` when nothing was left to return.
+    pub refunded_amount: i128,
+    /// The escrow's deadline (ledger timestamp) that was missed.
+    pub deadline: u64,
+    /// Ledger timestamp at which the expiry was processed (`> deadline`).
+    pub expired_at: u64,
 }
 
 /// A cancellation request for an escrow.

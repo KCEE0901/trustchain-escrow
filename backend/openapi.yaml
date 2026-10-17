@@ -1738,8 +1738,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PlatformSettings'
+        '400':
+          description: platformFeePercent is not a number between 0 and 100
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '503':
+          description: >
+            Settings store unavailable; nothing was saved
+            (`code: SETTINGS_STORE_UNAVAILABLE`).
 
   /api/admin/audit-logs:
     get:
@@ -2384,6 +2390,18 @@ components:
         updatedAt:
           type: string
           format: date-time
+        persistence:
+          type: object
+          description: >
+            Settings store status. `degraded` means the store was unavailable
+            and the values shown are the env/config defaults.
+          properties:
+            status:
+              type: string
+              enum: [ok, degraded]
+            reason:
+              type: string
+              enum: [settings_store_unavailable]
 
     PaginatedAuditLogs:
       allOf:
