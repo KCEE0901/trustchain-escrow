@@ -15,16 +15,19 @@
  */
 
 import 'dotenv/config';
+import { pathToFileURL } from 'node:url';
 
 // ── CLI argument parsing ──────────────────────────────────────────────────────
 
-const args = process.argv.slice(2);
-const isDryRun = args.includes('--dry-run');
-const forceReseed = args.includes('--force');
-const countIdx = args.indexOf('--count');
-const extraCount = countIdx !== -1 ? Math.max(0, parseInt(args[countIdx + 1] ?? '0', 10)) : 0;
-
-if (isDryRun) console.log('🔍  Dry-run mode — no writes will occur\n');
+export function parseSeedOptions(args = process.argv.slice(2)) {
+  const countIndex = args.indexOf('--count');
+  return {
+    isDryRun: args.includes('--dry-run'),
+    forceReseed: args.includes('--force'),
+    extraCount:
+      countIndex !== -1 ? Math.max(0, parseInt(args[countIndex + 1] ?? '0', 10) || 0) : 0,
+  };
+}
 
 const SEED_DATA = {
   escrows: [
@@ -141,86 +144,161 @@ const SEED_DATA = {
   ],
 };
 
-async function seed() {
+let activeSeedRun = null;
+
+function emitSeedTelemetry(logger, event, details = {}) {
+  logger.log(
+    JSON.stringify({
+      service: 'database-seed',
+      event,
+      ...details,
+    }),
+  );
+}
+
+async function executeSeed({ database, options, logger, now }) {
+  const { isDryRun, forceReseed, extraCount } = options;
+  const startedAt = now();
+
   console.log('🌱 Seeding database…\n');
+  emitSeedTelemetry(logger, 'seed_started', {
+    dryRun: isDryRun,
+    forceReseed,
+    fixtureEscrows: SEED_DATA.escrows.length,
+    fixtureMilestones: SEED_DATA.milestones.length,
+    fixtureReputationRecords: SEED_DATA.reputationRecords.length,
+    extraCount,
+  });
+
+  if (isDryRun) {
+    emitSeedTelemetry(logger, 'seed_completed', {
+      status: 'dry_run',
+      durationMs: now() - startedAt,
+    });
+    return { status: 'dry_run' };
+  }
+
+  if (!database) {
+    logger.warn('Seed database adapter is unavailable; no writes were attempted.');
+    emitSeedTelemetry(logger, 'seed_degraded', {
+      reason: 'database_adapter_unavailable',
+      durationMs: now() - startedAt,
+    });
+    return { status: 'degraded', reason: 'database_adapter_unavailable' };
+  }
 
   // ── Idempotency guard ─────────────────────────────────────────────────────
   // Running seed twice in CI can produce duplicate-key errors or corrupt test
   // baseline data. The guard checks for existing rows before writing and
   // aborts unless --force is passed, making the script safe to run in pipelines.
 
-  // TODO (contributor — Issue #44): uncomment when Prisma is installed
-  /*
-  if (!forceReseed) {
-    const existingCount = await prisma.escrow.count();
+  try {
+    const existingCount = await database.escrow.count();
     if (existingCount > 0) {
-      console.log(`ℹ️  Database already contains ${existingCount} escrow(s).`);
-      console.log('   Pass --force to re-seed. Exiting without changes.\n');
-      return;
+      if (!forceReseed) {
+        logger.log(`Database already contains ${existingCount} escrow(s); seed skipped.`);
+        emitSeedTelemetry(logger, 'seed_skipped', {
+          reason: 'existing_data',
+          existingEscrowCount: existingCount,
+          durationMs: now() - startedAt,
+        });
+        return { status: 'skipped', reason: 'existing_data' };
+      }
     }
+
+    await database.$transaction(async (transaction) => {
+      if (forceReseed) {
+        await transaction.dispute.deleteMany();
+        await transaction.milestone.deleteMany();
+        await transaction.escrow.deleteMany();
+        await transaction.reputationRecord.deleteMany();
+      }
+
+      for (const escrow of SEED_DATA.escrows) {
+        await transaction.escrow.upsert({
+          where: { id: escrow.id },
+          update: {},
+          create: escrow,
+        });
+      }
+
+      for (const milestone of SEED_DATA.milestones) {
+        await transaction.milestone.upsert({
+          where: {
+            escrowId_milestoneIndex: {
+              escrowId: milestone.escrowId,
+              milestoneIndex: milestone.milestoneIndex,
+            },
+          },
+          update: {},
+          create: milestone,
+        });
+      }
+
+      for (const reputationRecord of SEED_DATA.reputationRecords) {
+        await transaction.reputationRecord.upsert({
+          where: { address: reputationRecord.address },
+          update: {},
+          create: reputationRecord,
+        });
+      }
+    });
+
+    emitSeedTelemetry(logger, 'seed_completed', {
+      status: 'success',
+      durationMs: now() - startedAt,
+    });
+    return { status: 'success' };
+  } catch (error) {
+    if (['ECONNREFUSED', 'P1001', 'P1002'].includes(error.code)) {
+      logger.warn('Seed database is unavailable; no further writes will be attempted.');
+      emitSeedTelemetry(logger, 'seed_degraded', {
+        reason: 'database_unavailable',
+        errorType: error.name || 'Error',
+        durationMs: now() - startedAt,
+      });
+      return { status: 'degraded', reason: 'database_unavailable' };
+    }
+
+    emitSeedTelemetry(logger, 'seed_failed', {
+      errorType: error.name || 'Error',
+      durationMs: now() - startedAt,
+    });
+    throw error;
   }
-
-  if (isDryRun) {
-    console.log('Seed data preview (dry-run):');
-    console.log(`  Escrows (fixtures):    ${SEED_DATA.escrows.length}`);
-    console.log(`  Milestones (fixtures): ${SEED_DATA.milestones.length}`);
-    console.log(`  Reputation (fixtures): ${SEED_DATA.reputationRecords.length}`);
-    console.log(`  Extra escrows (--count): ${extraCount}`);
-    return;
-  }
-
-  await prisma.$transaction(async (tx) => {
-    if (forceReseed) {
-      await tx.dispute.deleteMany();
-      await tx.milestone.deleteMany();
-      await tx.escrow.deleteMany();
-      await tx.reputationRecord.deleteMany();
-      console.log('   🗑️  Cleared existing data (--force)');
-    }
-
-    // Upsert so repeated runs are idempotent even with --force skipped
-    for (const escrow of SEED_DATA.escrows) {
-      await tx.escrow.upsert({
-        where: { id: escrow.id },
-        update: {},
-        create: escrow,
-      });
-    }
-    console.log(`   ✅ Upserted ${SEED_DATA.escrows.length} fixture escrows`);
-
-    for (const m of SEED_DATA.milestones) {
-      await tx.milestone.upsert({
-        where: { escrowId_milestoneIndex: { escrowId: m.escrowId, milestoneIndex: m.milestoneIndex } },
-        update: {},
-        create: m,
-      });
-    }
-    console.log(`   ✅ Upserted ${SEED_DATA.milestones.length} milestones`);
-
-    for (const rep of SEED_DATA.reputationRecords) {
-      await tx.reputationRecord.upsert({
-        where: { address: rep.address },
-        update: {},
-        create: rep,
-      });
-    }
-    console.log(`   ✅ Upserted ${SEED_DATA.reputationRecords.length} reputation records`);
-  });
-  */
-
-  console.log('⚠️  Seed logic is stubbed — see Issue #44 to implement');
-  console.log('\nSeed data preview:');
-  console.log(`  Escrows (fixtures):      ${SEED_DATA.escrows.length}`);
-  console.log(`  Milestones (fixtures):   ${SEED_DATA.milestones.length}`);
-  console.log(`  Reputation (fixtures):   ${SEED_DATA.reputationRecords.length}`);
-  console.log(`  Extra escrows (--count): ${extraCount}`);
-  console.log(`  Dry-run:                 ${isDryRun}`);
-  console.log(`  Force re-seed:           ${forceReseed}`);
-  console.log('');
-  console.log('✅ Done');
 }
 
-seed().catch((err) => {
-  console.error('Seed failed:', err);
-  process.exit(1);
-});
+export function seed({
+  database = null,
+  options = parseSeedOptions(),
+  logger = console,
+  now = Date.now,
+} = {}) {
+  if (activeSeedRun) {
+    emitSeedTelemetry(logger, 'seed_joined', { reason: 'run_in_progress' });
+    return activeSeedRun;
+  }
+
+  activeSeedRun = executeSeed({ database, options, logger, now }).finally(() => {
+    activeSeedRun = null;
+  });
+  return activeSeedRun;
+}
+
+async function main() {
+  let database;
+  try {
+    ({ default: database } = await import('../backend/lib/prisma.js'));
+    const result = await seed({ database });
+    if (result.status === 'degraded') process.exitCode = 1;
+  } catch (error) {
+    console.error('Seed failed:', error.message);
+    process.exitCode = 1;
+  } finally {
+    await database?.$disconnect?.();
+  }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}
