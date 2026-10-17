@@ -40,12 +40,38 @@ const ALERT_CONFIG = {
   MEMORY_USAGE_THRESHOLD: 90, // 90% memory usage
   SYNC_LAG_THRESHOLD: 30000, // 30 seconds in milliseconds
   ALERT_COOLDOWN: 300000, // 5 minutes between same alert type
+  ALERT_RETENTION: Number(process.env.ALERT_RETENTION_MS || 86400000),
+  ALERT_HISTORY_LIMIT: Number(process.env.ALERT_HISTORY_LIMIT || 1000),
+  SYNC_LAG_RETRIES: 3,
+  SYNC_LAG_TIMEOUT: Number(process.env.SYNC_LAG_TIMEOUT_MS || 2000),
 };
 
 /**
  * Track last sent alerts to prevent spam
  */
 const lastAlerts = new Map();
+const inFlightAlerts = new Map();
+let emailSender = null;
+let syncLagDependencies = null;
+let lastKnownSyncLag = 0;
+
+export const configureAlertService = ({ sendEmail, getLatestLedger, getLastProcessedLedger } = {}) => {
+  emailSender = typeof sendEmail === 'function' ? sendEmail : null;
+  syncLagDependencies =
+    typeof getLatestLedger === 'function' && typeof getLastProcessedLedger === 'function'
+      ? { getLatestLedger, getLastProcessedLedger }
+      : null;
+};
+
+export const pruneAlertHistory = (now = Date.now()) => {
+  for (const [type, sentAt] of lastAlerts) {
+    if (now - sentAt > ALERT_CONFIG.ALERT_RETENTION) lastAlerts.delete(type);
+  }
+  while (lastAlerts.size > ALERT_CONFIG.ALERT_HISTORY_LIMIT) {
+    lastAlerts.delete(lastAlerts.keys().next().value);
+  }
+  return lastAlerts.size;
+};
 
 /**
  * Check if an alert should be sent (cooldown period)
@@ -53,6 +79,7 @@ const lastAlerts = new Map();
  * @returns {boolean} Whether alert should be sent
  */
 const shouldSendAlert = (alertType) => {
+  pruneAlertHistory();
   const lastSent = lastAlerts.get(alertType);
   if (!lastSent) return true;
 
@@ -66,6 +93,7 @@ const shouldSendAlert = (alertType) => {
  */
 const markAlertSent = (alertType) => {
   lastAlerts.set(alertType, Date.now());
+  pruneAlertHistory();
 };
 
 /**
@@ -75,9 +103,13 @@ const markAlertSent = (alertType) => {
 const sendAlert = async (alertData) => {
   const { type, severity, message, metadata } = alertData;
 
+  if (inFlightAlerts.has(type)) {
+    return { status: 'coalesced', type };
+  }
+
   if (!shouldSendAlert(type)) {
     console.log(`[Alert] Skipped ${type} alert due to cooldown`);
-    return;
+    return { status: 'skipped', type, reason: 'cooldown' };
   }
 
   const timestamp = new Date().toISOString();
@@ -90,30 +122,36 @@ const sendAlert = async (alertData) => {
     service: 'stellar-event-queue',
   };
 
-  try {
+  const delivery = (async () => {
+    const channels = { console: 'sent', email: 'disabled', webhook: 'disabled', monitoring: 'disabled' };
     // Send to console (always)
     consoleAlert(alert);
 
     // Send to email if configured
     if (process.env.ALERT_EMAIL_ENABLED === 'true') {
-      await emailAlert(alert);
+      channels.email = (await emailAlert(alert)).status;
     }
 
     // Send to webhook if configured
     if (process.env.ALERT_WEBHOOK_URL) {
       await webhookAlert(alert);
+      channels.webhook = 'sent';
     }
 
     // Send to monitoring system if configured
     if (process.env.MONITORING_SYSTEM_ENABLED === 'true') {
       await monitoringSystemAlert(alert);
+      channels.monitoring = 'sent';
     }
 
     markAlertSent(type);
     console.log(`[Alert] ${type} alert sent successfully`);
-  } catch (error) {
-    console.error('[Alert] Error sending alert:', error);
-  }
+    const degraded = Object.values(channels).includes('degraded');
+    return { status: degraded ? 'degraded' : 'sent', type, channels };
+  })().finally(() => inFlightAlerts.delete(type));
+
+  inFlightAlerts.set(type, delivery);
+  return delivery;
 };
 
 /**
@@ -141,18 +179,20 @@ const consoleAlert = (alert) => {
  * @param {Object} alert - Alert data
  */
 const emailAlert = async (alert) => {
+  if (!emailSender) {
+    console.warn(`[Alert] Email delivery unavailable for ${alert.type}`);
+    return { status: 'degraded', reason: 'email_transport_unavailable' };
+  }
   try {
-    // TODO: Implement email sending
-    // const emailService = await import('./emailService.js');
-    // await emailService.sendAlert({
-    //   to: process.env.ALERT_EMAIL_RECIPIENTS?.split(','),
-    //   subject: `[${alert.severity.toUpperCase()}] ${alert.type}`,
-    //   body: formatEmailAlert(alert),
-    // });
-
-    console.log(`[Alert] Email alert would be sent for ${alert.type}`);
+    await emailSender({
+      recipients: process.env.ALERT_EMAIL_RECIPIENTS?.split(',').filter(Boolean) || [],
+      subject: `[${alert.severity.toUpperCase()}] ${alert.type}`,
+      body: formatEmailAlert(alert),
+    });
+    return { status: 'sent' };
   } catch (error) {
-    console.error('[Alert] Error sending email alert:', error);
+    console.error(`[Alert] Email delivery failed for ${alert.type}: ${error.message}`);
+    return { status: 'degraded', reason: 'email_delivery_failed' };
   }
 };
 
@@ -275,10 +315,32 @@ export const monitorQueueHealth = async () => {
  * Calculate sync lag between blockchain and database
  * @returns {number} Sync lag in milliseconds
  */
-const calculateSyncLag = async () => {
-  // TODO: Implement sync lag calculation by comparing the latest blockchain
-  // ledger with the last processed ledger.
-  return 0;
+const calculateSyncLag = async (dependencies = syncLagDependencies) => {
+  if (!dependencies) return lastKnownSyncLag;
+
+  for (let attempt = 1; attempt <= ALERT_CONFIG.SYNC_LAG_RETRIES; attempt += 1) {
+    try {
+      const timeout = new Promise((_, reject) => {
+        const timer = setTimeout(() => reject(new Error('sync lag dependency timeout')), ALERT_CONFIG.SYNC_LAG_TIMEOUT);
+        timer.unref?.();
+      });
+      const [latest, processed] = await Promise.race([
+        Promise.all([dependencies.getLatestLedger(), dependencies.getLastProcessedLedger()]),
+        timeout,
+      ]);
+      if (!Number.isFinite(latest) || !Number.isFinite(processed) || latest < processed) {
+        throw new Error('malformed sync lag response');
+      }
+      lastKnownSyncLag = latest - processed;
+      return lastKnownSyncLag;
+    } catch (error) {
+      if (attempt === ALERT_CONFIG.SYNC_LAG_RETRIES) {
+        console.error(`[Alert] Sync lag calculation degraded: ${error.message}`);
+        return lastKnownSyncLag;
+      }
+    }
+  }
+  return lastKnownSyncLag;
 };
 
 /**
@@ -338,4 +400,5 @@ export {
   monitoringSystemAlert,
   formatEmailAlert,
   calculateSyncLag,
+  lastAlerts,
 };
