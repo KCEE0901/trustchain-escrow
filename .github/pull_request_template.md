@@ -1,40 +1,27 @@
 ## Summary
 
-Briefly describe what changed and why.
+<!-- Describe the change and the motivation. -->
 
-Closes #
+## Related Issue
 
-## Changes
+<!-- e.g. Closes #617 -->
 
--
--
--
+## Branch Parity & Rollback Validation
+
+- [ ] This change targets `main` and `develop` with equivalent behavior (no branch-only logic).
+- [ ] Rollback path was exercised (or is covered by CI) and service health was verified afterward.
+- [ ] Data consistency was verified after rollback (no orphaned or partially persisted records).
+- [ ] Failure/boundary paths were considered (missing rollback target, failed health check).
 
 ## Testing
 
-List the exact commands you ran locally.
+<!-- List the commands run and their results. -->
 
-```bash
-# Examples
-cargo test --workspace
-npm run test -w backend
-npm run test -w frontend
-npm run lint
-```
-
-## Review Notes
-
-Call out any context reviewers should know:
-
-- areas that need extra attention
-- follow-up work or known limitations
-- deployment or migration considerations
+- [ ] Lint passes
+- [ ] Tests pass
+- [ ] Build passes
 
 ## Checklist
 
-- [ ] Code compiles, or the updated docs reference working commands
-- [ ] Tests were added or updated when behavior changed
-- [ ] Linting and formatting were run
-- [ ] Documentation was updated when needed
-- [ ] No breaking changes, or they are clearly described
-- [ ] Screenshots or recordings are included for UI changes
+- [ ] Logs and errors are deterministic and contain no secrets.
+- [ ] Public behavior outside this change is preserved.

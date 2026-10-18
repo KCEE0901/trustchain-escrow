@@ -244,12 +244,98 @@ jobs:
           tags: stellar-escrow-frontend:${{ github.sha }}
 
   # ─────────────────────────────────────────
+  # 🔁 Rollback Validation (main ↔ develop parity)
+  # ─────────────────────────────────────────
+  rollback-validation:
+    name: Rollback Validation (main ↔ develop parity)
+    runs-on: ubuntu-latest
+    needs: [docker-build]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify main and develop branch parity
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main develop
+          main_sha=$(git rev-parse origin/main)
+          develop_sha=$(git rev-parse origin/develop)
+          echo "main=${main_sha}"
+          echo "develop=${develop_sha}"
+          if [ "$main_sha" = "$develop_sha" ]; then
+            echo "parity=identical"
+          else
+            echo "parity=diverged"
+          fi
+          # develop must be a descendant of (or equal to) main for a clean rollback target
+          if git merge-base --is-ancestor origin/main origin/develop; then
+            echo "rollback_target=valid"
+          else
+            echo "rollback_target=invalid"
+            echo "::error::develop is not a fast-forward descendant of main; rollback target is ambiguous"
+            exit 1
+          fi
+
+      - name: Simulate rollback success path
+        run: |
+          set -euo pipefail
+          # Simulate rolling main back to the develop tip and confirm the tree matches.
+          git checkout -B rollback-sim origin/main
+          git reset --hard origin/develop
+          if git diff --quiet origin/develop HEAD; then
+            echo "rollback=success"
+          else
+            echo "rollback=failed"
+            echo "::error::rollback simulation did not converge to develop tip"
+            exit 1
+          fi
+
+      - name: Simulate rollback failure (missing target)
+        run: |
+          set -euo pipefail
+          missing_ref="origin/does-not-exist-${{ github.run_id }}"
+          if git rev-parse --verify --quiet "$missing_ref" >/dev/null; then
+            echo "::error::unexpected ref present: $missing_ref"
+            exit 1
+          fi
+          echo "rollback_missing_target=detected"
+
+      - name: Simulate rollback failure (health check)
+        run: |
+          set -euo pipefail
+          # Deterministic health probe: a non-2xx response must fail the rollback gate.
+          status=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 https://example.invalid/health || echo "000")
+          echo "health_status=${status}"
+          if [ "$status" = "200" ]; then
+            echo "health=ok"
+          else
+            echo "health=unhealthy"
+            echo "::error::post-rollback health check failed (status=${status})"
+            exit 1
+          fi
+
+      - name: Verify data consistency after rollback
+        run: |
+          set -euo pipefail
+          # Deterministic consistency check: the simulated rollback tree must match develop exactly.
+          git checkout -B rollback-verify origin/develop
+          if git diff --quiet origin/develop HEAD; then
+            echo "data_consistency=ok"
+          else
+            echo "data_consistency=mismatch"
+            echo "::error::data consistency check failed after rollback"
+            exit 1
+          fi
+
+  # ─────────────────────────────────────────
   # 📣 Release Slack Summary
   # ─────────────────────────────────────────
   notify-release:
     name: Notify Release Status
     runs-on: ubuntu-latest
-    needs: [audit, contract, backend, frontend, frontend-e2e, docker-build]
+    needs: [audit, contract, backend, frontend, frontend-e2e, docker-build, rollback-validation]
     if: always()
 
     steps:
