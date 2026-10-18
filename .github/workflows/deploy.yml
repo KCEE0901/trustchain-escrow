@@ -85,6 +85,48 @@ jobs:
           fi
           echo "PASS: unhealthy rollback rejected"
 
+      - name: Incident response runbook (main/develop parity)
+        run: |
+          set -euo pipefail
+          # Documentation-only step: prints the incident response runbook for
+          # main/develop branch parity. Output is deterministic and secret-free.
+          cat <<'RUNBOOK'
+          ============================================================
+          INCIDENT RESPONSE: main / develop branch parity
+          ============================================================
+
+          1. DETECTION
+             - This workflow's "Verify branch parity" step warns when
+               develop is ahead of main (drift).
+             - A failed "Validate rollback target exists" or
+               "Simulate rollback and verify health" step signals a
+               parity/rollback incident.
+             - Slack notifications (Staging/Production) report deploy
+               success or failure for both branches.
+
+          2. CONTAINMENT
+             - Freeze merges to main and develop (enable branch
+               protection / require PR review).
+             - Pause deploys by disabling this workflow or cancelling
+               in-flight runs.
+             - Do not force-push; preserve history for rollback.
+
+          3. RECOVERY
+             - Restore parity: merge develop into main (or cherry-pick
+               the missing commits) so main and develop match.
+             - Roll back to the last known-good commit (HEAD~1 target
+               validated above) if a bad deploy shipped.
+             - Re-run this workflow to confirm parity and rollback
+               validation pass.
+
+          4. POST-RECOVERY VERIFICATION
+             - Confirm "Verify branch parity" reports 0 commits ahead.
+             - Confirm rollback target resolves and health simulation
+               passes (primary + both failure paths).
+             - Confirm Slack notifications report success for both
+               branches.
+          RUNBOOK
+
   deploy-staging:
     name: Deploy to Staging
     runs-on: ubuntu-latest
