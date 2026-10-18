@@ -17,6 +17,125 @@ const adminLog = getLogger();
 // Mutable runtime overrides (resets on server restart)
 const runtimeTierLimits = { ...TIER_LIMITS };
 
+// ── Dynamic admin settings persistence ────────────────────────────────────────
+// In-memory store for dynamic admin settings. Values are persisted as-is but
+// telemetry never records the raw value — only bounded metadata.
+const dynamicSettings = new Map();
+
+const SETTING_KEY_PATTERN = /^[a-z][a-z0-9_.]{0,63}$/;
+const MAX_SETTING_VALUE_BYTES = 4096;
+
+/**
+ * Emit a bounded, deterministic telemetry event for a settings operation.
+ * Never includes the setting value or any secret material.
+ */
+function emitSettingsTelemetry({ outcome, key, reason, requestId, performedBy, durationMs }) {
+  const event = {
+    type: 'admin_settings_telemetry',
+    action: 'PERSIST_DYNAMIC_SETTING',
+    outcome,
+    key: typeof key === 'string' && SETTING_KEY_PATTERN.test(key) ? key : 'invalid',
+    reason: reason ?? null,
+    requestId: requestId ?? null,
+    performedBy: performedBy ?? 'unknown',
+    durationMs: Number.isFinite(durationMs) ? Math.round(durationMs) : null,
+  };
+  if (outcome === 'success') {
+    adminLog.info(event);
+  } else {
+    adminLog.warn(event);
+  }
+}
+
+/**
+ * PUT /api/admin/settings/:key
+ * Persists a dynamic admin setting. Emits structured telemetry for the success
+ * path and for validation / persistence failure paths.
+ */
+const updateDynamicSetting = async (req, res) => {
+  const startedAt = Date.now();
+  const { key } = req.params;
+  const { value } = req.body ?? {};
+  const performedBy = req.user?.address ?? 'unknown';
+  const requestId = req.id;
+
+  if (typeof key !== 'string' || !SETTING_KEY_PATTERN.test(key)) {
+    emitSettingsTelemetry({
+      outcome: 'rejected',
+      key,
+      reason: 'invalid_key',
+      requestId,
+      performedBy,
+      durationMs: Date.now() - startedAt,
+    });
+    return res.status(400).json({ error: 'Invalid setting key.' });
+  }
+
+  if (value === undefined) {
+    emitSettingsTelemetry({
+      outcome: 'rejected',
+      key,
+      reason: 'missing_value',
+      requestId,
+      performedBy,
+      durationMs: Date.now() - startedAt,
+    });
+    return res.status(400).json({ error: 'value is required.' });
+  }
+
+  let serialized;
+  try {
+    serialized = JSON.stringify(value);
+  } catch {
+    emitSettingsTelemetry({
+      outcome: 'rejected',
+      key,
+      reason: 'unserializable_value',
+      requestId,
+      performedBy,
+      durationMs: Date.now() - startedAt,
+    });
+    return res.status(400).json({ error: 'value must be JSON-serializable.' });
+  }
+
+  if (Buffer.byteLength(serialized, 'utf8') > MAX_SETTING_VALUE_BYTES) {
+    emitSettingsTelemetry({
+      outcome: 'rejected',
+      key,
+      reason: 'value_too_large',
+      requestId,
+      performedBy,
+      durationMs: Date.now() - startedAt,
+    });
+    return res.status(413).json({ error: 'value exceeds maximum size.' });
+  }
+
+  try {
+    dynamicSettings.set(key, value);
+  } catch (err) {
+    emitSettingsTelemetry({
+      outcome: 'error',
+      key,
+      reason: 'persistence_error',
+      requestId,
+      performedBy,
+      durationMs: Date.now() - startedAt,
+    });
+    logControllerError('admin.updateDynamicSetting', err, req);
+    return res.status(500).json({ error: 'Failed to persist setting.' });
+  }
+
+  emitSettingsTelemetry({
+    outcome: 'success',
+    key,
+    requestId,
+    performedBy,
+    durationMs: Date.now() - startedAt,
+  });
+
+  res.json({ key, updated: true });
+};
+
 const getRateLimits = (_req, res) => {
   res.json({ tiers: runtimeTierLimits });
 };
@@ -276,372 +395,4 @@ const listDisputes = async (req, res) => {
       prisma.dispute.count({ where }),
     ]);
 
-    const result = buildPaginatedResponse(disputes, { total, page, limit });
-    await cache.set(cacheKey, result, 15);
-    res.json(result);
-  } catch (err) {
-    logControllerError('admin.listDisputes', err, req);
-    res.status(500).json({ error: err.message });
-  }
-};
-
-/**
- * POST /api/admin/disputes/:id/resolve
- * Resolves an open dispute by recording the admin's decision.
- *
- * Body: { clientAmount: string, freelancerAmount: string, notes: string }
- */
-const resolveDispute = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { clientAmount, freelancerAmount, notes = '' } = req.body;
-    const tenantId = req.tenant?.id;
-
-    if (clientAmount === undefined || freelancerAmount === undefined) {
-      return res.status(400).json({ error: 'clientAmount and freelancerAmount are required.' });
-    }
-
-    const disputeId = parseInt(id);
-
-    // Single transaction: read → validate → update → audit log
-    const result = await prisma.$transaction(async (tx) => {
-      const dispute = await tx.dispute.findFirst({
-        where: { id: disputeId, ...(tenantId ? { tenantId } : {}) },
-        select: { id: true, escrowId: true, resolvedAt: true },
-      });
-
-      if (!dispute) return { error: 'Dispute not found.', status: 404 };
-      if (dispute.resolvedAt) return { error: 'Dispute already resolved.', status: 409 };
-
-      await Promise.all([
-        tx.dispute.updateMany({
-          where: { id: disputeId, ...(tenantId ? { tenantId } : {}) },
-          data: {
-            resolvedAt: new Date(),
-            clientAmount: String(clientAmount),
-            freelancerAmount: String(freelancerAmount),
-            resolvedBy: 'admin',
-          },
-        }),
-        tx.adminAuditLog.create({
-          data: {
-            action: 'RESOLVE_DISPUTE',
-            targetAddress: dispute.escrowId.toString(),
-            reason: notes,
-            performedBy: 'admin',
-            performedAt: new Date(),
-          },
-        }),
-      ]);
-
-      const updated = await tx.dispute.findFirst({
-        where: { id: disputeId, ...(tenantId ? { tenantId } : {}) },
-      });
-
-      return { dispute: updated };
-    });
-
-    if (result.error) {
-      return res.status(result.status).json({ error: result.error });
-    }
-
-    await cache.invalidateTags(['escrows', `escrow:${result.dispute.escrowId}`]);
-    await cache.invalidatePrefix('admin:disputes');
-    res.json({ message: 'Dispute resolved.', dispute: result.dispute });
-  } catch (err) {
-    logControllerError('admin.resolveDispute', err, req);
-    res.status(500).json({ error: err.message });
-  }
-};
-
-// ── Platform Statistics ────────────────────────────────────────────────────────
-
-/**
- * GET /api/admin/stats
- * Returns aggregated platform statistics.
- * Optimized: uses groupBy to get all escrow status counts in one query
- * instead of 4 separate COUNT queries.
- */
-const getStats = async (req, res) => {
-  try {
-    const cacheKey = 'admin:stats';
-    const cached = await cache.get(cacheKey);
-    if (cached) return res.json(cached);
-
-    // 3 queries instead of 6: groupBy replaces 4 separate escrow counts
-    const [escrowStatusCounts, totalUsers, openDisputes] = await Promise.all([
-      prisma.escrow.groupBy({
-        by: ['status'],
-        _count: { id: true },
-      }),
-      prisma.reputationRecord.count(),
-      prisma.dispute.count({ where: { resolvedAt: null } }),
-    ]);
-
-    const countsByStatus = Object.fromEntries(
-      escrowStatusCounts.map((r) => [r.status, r._count.id]),
-    );
-
-    const totalEscrows = escrowStatusCounts.reduce((sum, r) => sum + r._count.id, 0);
-
-    const result = {
-      escrows: {
-        total: totalEscrows,
-        active: countsByStatus.Active ?? 0,
-        completed: countsByStatus.Completed ?? 0,
-        disputed: countsByStatus.Disputed ?? 0,
-      },
-      users: { total: totalUsers },
-      disputes: {
-        open: openDisputes,
-        resolved: (countsByStatus.Disputed ?? 0) - openDisputes,
-      },
-    };
-
-    await cache.set(cacheKey, result, 30);
-    res.json(result);
-  } catch (err) {
-    logControllerError('admin.getStats', err, req);
-    res.status(500).json({ error: err.message });
-  }
-};
-
-// ── Audit Logs ─────────────────────────────────────────────────────────────────
-
-/**
- * GET /api/admin/audit-logs
- * Returns a paginated audit log of all admin actions.
- */
-const getAuditLogs = async (req, res) => {
-  try {
-    const { page, limit, skip } = parsePagination(req.query);
-
-    const cacheKey = `admin:audit-logs:${page}:${limit}`;
-    const cached = await cache.get(cacheKey);
-    if (cached) return res.json(cached);
-
-    const [logs, total] = await prisma.$transaction([
-      prisma.adminAuditLog.findMany({
-        skip,
-        take: limit,
-        orderBy: { performedAt: 'desc' },
-      }),
-      prisma.adminAuditLog.count(),
-    ]);
-
-    const result = buildPaginatedResponse(logs, { total, page, limit });
-    await cache.set(cacheKey, result, 15);
-    res.json(result);
-  } catch (err) {
-    logControllerError('admin.getAuditLogs', err, req);
-    res.status(500).json({ error: err.message });
-  }
-};
-
-// ── Fee Management ─────────────────────────────────────────────────────────────
-//
-// Settings are read from env/config and may be overridden by rows in the
-// `platform_settings` table. The table is optional infrastructure: if the
-// database is down, slow, or the Prisma client predates the model, reads fall
-// back to env defaults with a stable `persistence: { status: 'degraded' }`
-// marker instead of failing, and writes are refused with a 503 so a change is
-// never reported as saved when it was not.
-
-/** Keys that may be persisted. Anything else in a PATCH body is ignored. */
-const PERSISTED_SETTING_KEYS = ['platformFeePercent'];
-const DEFAULT_SETTINGS_STORE_TIMEOUT_MS = 2000;
-const SETTINGS_DEGRADED_REASON = 'settings_store_unavailable';
-const SETTINGS_STORE_UNAVAILABLE = 'SETTINGS_STORE_UNAVAILABLE';
-
-class SettingsStoreError extends Error {
-  constructor(reason) {
-    super(`settings store ${reason}`);
-    this.name = 'SettingsStoreError';
-    this.reason = reason;
-  }
-}
-
-function envSettings() {
-  return {
-    platformFeePercent: process.env.PLATFORM_FEE_PERCENT || '1.5',
-    stellarNetwork: process.env.STELLAR_NETWORK || 'testnet',
-    allowedOrigins: process.env.ALLOWED_ORIGINS || 'http://localhost:3000',
-  };
-}
-
-function settingsStoreTimeoutMs() {
-  const parsed = parseInt(process.env.ADMIN_SETTINGS_STORE_TIMEOUT_MS ?? '', 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_SETTINGS_STORE_TIMEOUT_MS;
-}
-
-/** Returns the fee as a canonical string, or null when it is not a valid percentage. */
-function normalizeFeePercent(value) {
-  if (value === null || value === undefined || value === '') return null;
-  const fee = Number(value);
-  if (!Number.isFinite(fee) || fee < 0 || fee > 100) return null;
-  return String(fee);
-}
-
-/**
- * Runs `operation` against the settings delegate, failing fast (instead of
- * hanging the request) when the store is missing or does not answer in time.
- */
-async function withSettingsStore(operation) {
-  const store = prisma?.platformSetting;
-  if (!store) throw new SettingsStoreError('not_configured');
-
-  let timer;
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new SettingsStoreError('timeout')), settingsStoreTimeoutMs());
-    timer.unref?.();
-  });
-  try {
-    return await Promise.race([operation(store), timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/**
- * Stable, secret-free classification of a store failure. Raw driver messages
- * can contain connection strings or hostnames, so they are never logged.
- */
-function settingsFailureReason(err) {
-  if (err instanceof SettingsStoreError) return err.reason;
-  if (typeof err?.code === 'string' && /^P\d{4}$/.test(err.code)) return `prisma_${err.code}`;
-  return 'unavailable';
-}
-
-function logSettingsDegraded(operation, err, req) {
-  adminLog.warn({
-    type: 'admin_settings_degraded',
-    operation,
-    reason: settingsFailureReason(err),
-    requestId: req?.id,
-  });
-}
-
-/**
- * GET /api/admin/settings
- * Returns platform settings: env/config defaults overlaid with persisted
- * overrides. Degrades to the defaults (HTTP 200) when the store is unavailable.
- */
-const getSettings = async (req, res) => {
-  const defaults = envSettings();
-  try {
-    let rows;
-    try {
-      rows = await withSettingsStore((store) =>
-        store.findMany({ where: { key: { in: PERSISTED_SETTING_KEYS } } }),
-      );
-    } catch (err) {
-      logSettingsDegraded('getSettings', err, req);
-      return res.json({
-        ...defaults,
-        persistence: { status: 'degraded', reason: SETTINGS_DEGRADED_REASON },
-      });
-    }
-
-    const overrides = {};
-    for (const row of Array.isArray(rows) ? rows : []) {
-      if (row?.key === 'platformFeePercent') {
-        // A corrupted row must not leak an invalid fee to clients.
-        const fee = normalizeFeePercent(row.value);
-        if (fee !== null) overrides.platformFeePercent = fee;
-      }
-    }
-
-    res.json({ ...defaults, ...overrides, persistence: { status: 'ok' } });
-  } catch (err) {
-    logControllerError('admin.getSettings', err, req);
-    res.status(500).json({ error: err.message });
-  }
-};
-
-/**
- * PATCH /api/admin/settings
- * Validates and persists platform settings. Only `PERSISTED_SETTING_KEYS` are
- * stored; other fields are reported back under `ignored`. Returns 503 without
- * applying anything when the settings store is unavailable.
- */
-const updateSettings = async (req, res) => {
-  try {
-    const body = req.body && typeof req.body === 'object' ? req.body : {};
-    const { platformFeePercent } = body;
-
-    const updates = {};
-    if (platformFeePercent !== undefined) {
-      const fee = normalizeFeePercent(platformFeePercent);
-      if (fee === null) {
-        return res
-          .status(400)
-          .json({ error: 'platformFeePercent must be a number between 0 and 100.' });
-      }
-      updates.platformFeePercent = fee;
-    }
-
-    const persistedKeys = Object.keys(updates).sort();
-    const ignored = Object.keys(body)
-      .filter((key) => !PERSISTED_SETTING_KEYS.includes(key))
-      .sort();
-
-    if (persistedKeys.length > 0) {
-      const updatedBy = req.user?.address ?? null;
-      try {
-        await withSettingsStore((store) =>
-          Promise.all(
-            persistedKeys.map((key) =>
-              store.upsert({
-                where: { key },
-                update: { value: updates[key], updatedBy },
-                create: { key, value: updates[key], updatedBy },
-              }),
-            ),
-          ),
-        );
-      } catch (err) {
-        logSettingsDegraded('updateSettings', err, req);
-        return res.status(503).json({
-          error: 'Settings store is unavailable; no changes were saved.',
-          code: SETTINGS_STORE_UNAVAILABLE,
-          persisted: [],
-        });
-      }
-
-      adminLog.warn({
-        type: 'admin_action',
-        action: 'UPDATE_SETTINGS',
-        updated: updates,
-        performedBy: updatedBy ?? 'unknown',
-        requestId: req.id,
-      });
-    }
-
-    res.json({
-      message: persistedKeys.length > 0 ? 'Settings updated.' : 'No persistable settings provided.',
-      persisted: persistedKeys,
-      ignored,
-      settings: { ...envSettings(), ...updates },
-      received: req.body,
-    });
-  } catch (err) {
-    logControllerError('admin.updateSettings', err, req);
-    res.status(500).json({ error: err.message });
-  }
-};
-
-export default {
-  listUsers,
-  getUserDetail,
-  suspendUser,
-  banUser,
-  listDisputes,
-  resolveDispute,
-  getStats,
-  getAuditLogs,
-  getSettings,
-  updateSettings,
-  getRateLimits,
-  updateRateLimit,
-  getUserRateLimitUsage,
-};
+    const result = buildPaginatedResponse(d
