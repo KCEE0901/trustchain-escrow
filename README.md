@@ -352,3 +352,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, the Soroban toolchain, h
 
 <!-- handsoff-issue-596 -->
 - #596: Add authorization boundary coverage for buyer signer count validation
+
+<!-- handsoff-issue-598 -->
+- #598: Add fuzz coverage for buyer signer count validation
