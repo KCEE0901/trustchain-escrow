@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `esc_exp` event on deadline auto-cancellation (`trigger_expiry`) carrying escrow id, caller, refund recipient, token, refunded amount, deadline and processing time, alongside the existing `esc_can` event (#512)
 - Admin settings persistence (`platform_settings` table) with a stable degraded response from `GET /api/admin/settings` and a 503 from `PATCH` when the store is unavailable (#519)
 - Idempotent permanent-failure alerting in the event worker: one dead-letter job and one alert per failed event across retries and concurrent workers (#522)
+- `arb_upd` event now carries an `ArbiterUpdatedEvent` payload (escrow id, previous and new arbiter, ledger timestamp and sequence) for deterministic indexing, with completeness tests (#509)
+- Storage-growth benchmark and budget for the arbiter selection lifecycle (#508)
+- Authorization boundary tests for the wrapped token registry: missing, stale and incorrect admin auth (#501)
+- Opt-in, privacy-safe telemetry for `useReputation` lookups that never records wallet addresses or payloads (#500)
 
 ### Security
 

@@ -15,7 +15,7 @@
 use soroban_sdk::{symbol_short, Address, Env};
 
 use crate::event_names as ev;
-use crate::types::EscrowExpiredEvent;
+use crate::types::{ArbiterUpdatedEvent, EscrowExpiredEvent};
 
 pub fn emit_escrow_created(
     env: &Env,
@@ -378,9 +378,12 @@ pub fn emit_rent_withdrawn(env: &Env, escrow_id: u64, recipient: &Address, amoun
         .publish((ev::RENT_WITHDRAWN, escrow_id), (recipient.clone(), amount));
 }
 
-pub fn emit_arbiter_updated(env: &Env, escrow_id: u64, new_arbiter: &Option<Address>) {
+/// Emitted when the arbiter of an escrow is selected, replaced or removed.
+///
+/// Topics: `(arb_upd, escrow_id)`. Data: [`ArbiterUpdatedEvent`].
+pub fn emit_arbiter_updated(env: &Env, event: &ArbiterUpdatedEvent) {
     env.events()
-        .publish((ev::ARBITER_UPDATED, escrow_id), new_arbiter.clone());
+        .publish((ev::ARBITER_UPDATED, event.escrow_id), event.clone());
 }
 
 /// Emitted when an NFT-gated escrow is created.
