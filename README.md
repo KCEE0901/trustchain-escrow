@@ -349,3 +349,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, the Soroban toolchain, h
 
 <!-- handsoff-issue-592 -->
 - #592: Add configuration preflight checks for pull-request merge regression detection
+
+<!-- handsoff-issue-593 -->
+- #593: Add least-privilege controls for pull-request merge regression detection
