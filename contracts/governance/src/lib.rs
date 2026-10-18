@@ -842,7 +842,9 @@ impl GovernanceContract {
         {
             None => {
                 // First call — start cooldown
-                let expires = now + Self::WITHDRAW_COOLDOWN;
+                let expires = now
+                    .checked_add(Self::WITHDRAW_COOLDOWN)
+                    .ok_or(GovError::ArithmeticOverflow)?;
                 env.storage().persistent().set(&cooldown_key, &expires);
                 Storage::bump_persistent(&env, &cooldown_key);
                 return Err(GovError::StakeCooldownActive);

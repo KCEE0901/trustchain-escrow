@@ -690,3 +690,140 @@ impl EscrowExtensions {
 }
 
 mod tests;
+
+#[cfg(test)]
+mod limits_upgrade_compat_tests {
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger},
+        token, Address, BytesN, Env, Vec,
+    };
+
+    use crate::{
+        BatchEscrowParams, DataKey, EscrowExtensions, EscrowExtensionsClient, ExtError,
+        PendingUpgrade, MAX_BATCH_SIZE, MAX_FEE_BPS, UPGRADE_DELAY_SECONDS,
+    };
+
+    /// Registers the contract and writes the instance storage exactly as an
+    /// earlier version would have left it (no `initialize` call).
+    fn legacy(fee_bps: u32, counter: u64) -> (Env, Address, EscrowExtensionsClient<'static>) {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().with_mut(|l| l.timestamp = 10_000);
+        let admin = Address::generate(&env);
+        let id = env.register_contract(None, EscrowExtensions);
+        let client = EscrowExtensionsClient::new(&env, &id);
+        env.as_contract(&id, || {
+            env.storage().instance().set(&DataKey::Admin, &admin);
+            env.storage().instance().set(&DataKey::FeeBps, &fee_bps);
+            env.storage()
+                .instance()
+                .set(&DataKey::StorageVersion, &counter);
+        });
+        (env, admin, client)
+    }
+
+    fn batch(env: &Env, token: &Address, n: u32) -> Vec<BatchEscrowParams> {
+        let mut v = Vec::new(env);
+        for i in 0..n {
+            v.push_back(BatchEscrowParams {
+                freelancer: Address::generate(env),
+                token: token.clone(),
+                total_amount: 100,
+                brief_hash: BytesN::from_array(env, &[i as u8; 32]),
+                arbiter: None,
+                deadline: None,
+            });
+        }
+        v
+    }
+
+    #[test]
+    fn legacy_fee_storage_keeps_the_fee_cap() {
+        let (_env, admin, client) = legacy(150, 0);
+        assert_eq!(client.get_fee_bps(), 150);
+
+        client.set_fee_bps(&admin, &MAX_FEE_BPS);
+        assert_eq!(client.get_fee_bps(), MAX_FEE_BPS);
+        assert_eq!(
+            client
+                .try_set_fee_bps(&admin, &(MAX_FEE_BPS + 1))
+                .unwrap_err()
+                .unwrap(),
+            ExtError::FeeTooHigh
+        );
+        assert_eq!(client.get_fee_bps(), MAX_FEE_BPS);
+    }
+
+    #[test]
+    fn legacy_state_cannot_be_reinitialized() {
+        let (env, _admin, client) = legacy(0, 0);
+        let other = Address::generate(&env);
+        assert_eq!(
+            client.try_initialize(&other, &0).unwrap_err().unwrap(),
+            ExtError::AlreadyInitialized
+        );
+    }
+
+    #[test]
+    fn legacy_batch_counter_continues_at_the_batch_size_limit() {
+        let (env, _admin, client) = legacy(0, 5);
+        let token_admin = Address::generate(&env);
+        let token = env.register_stellar_asset_contract_v2(token_admin).address();
+        let payer = Address::generate(&env);
+        token::StellarAssetClient::new(&env, &token).mint(&payer, &10_000);
+
+        let ids = client.create_batch(&payer, &batch(&env, &token, MAX_BATCH_SIZE));
+        assert_eq!(ids.len(), MAX_BATCH_SIZE);
+        assert_eq!(ids.get(0).unwrap(), 5);
+        assert_eq!(ids.get(MAX_BATCH_SIZE - 1).unwrap(), 5 + u64::from(MAX_BATCH_SIZE) - 1);
+        let after = client.batch_escrow_count();
+        assert_eq!(after, 5 + u64::from(MAX_BATCH_SIZE));
+
+        assert_eq!(
+            client
+                .try_create_batch(&payer, &batch(&env, &token, MAX_BATCH_SIZE + 1))
+                .unwrap_err()
+                .unwrap(),
+            ExtError::BatchTooLarge
+        );
+        assert_eq!(
+            client
+                .try_create_batch(&payer, &batch(&env, &token, 0))
+                .unwrap_err()
+                .unwrap(),
+            ExtError::BatchEmpty
+        );
+        assert_eq!(client.batch_escrow_count(), after);
+    }
+
+    #[test]
+    fn legacy_pending_upgrade_keeps_the_delay_limit() {
+        let (env, admin, client) = legacy(0, 0);
+        let hash = BytesN::from_array(&env, &[0xAA; 32]);
+        let now = env.ledger().timestamp();
+        let pending = PendingUpgrade {
+            new_wasm_hash: hash.clone(),
+            queued_at: now,
+            executable_after: now + UPGRADE_DELAY_SECONDS,
+            queued_by: admin.clone(),
+        };
+        env.as_contract(&client.address, || {
+            env.storage()
+                .instance()
+                .set(&DataKey::PendingUpgrade, &pending);
+        });
+
+        assert_eq!(client.get_pending_upgrade().unwrap().new_wasm_hash, hash);
+        assert_eq!(
+            client.try_queue_upgrade(&admin, &hash).unwrap_err().unwrap(),
+            ExtError::UpgradeAlreadyPending
+        );
+        env.ledger()
+            .with_mut(|l| l.timestamp = now + UPGRADE_DELAY_SECONDS - 1);
+        assert_eq!(
+            client.try_execute_upgrade(&admin).unwrap_err().unwrap(),
+            ExtError::UpgradeDelayNotElapsed
+        );
+        assert!(client.get_pending_upgrade().is_some());
+    }
+}
