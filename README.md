@@ -349,3 +349,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, the Soroban toolchain, h
 
 <!-- handsoff-issue-595 -->
 - #595: Add explicit error mapping for wrapped token registry enforcement
+
+<!-- handsoff-issue-596 -->
+- #596: Add authorization boundary coverage for buyer signer count validation
