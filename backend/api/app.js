@@ -138,4 +138,8 @@ app.use((err, req, res, next) => {
   return errorHandler(err, req, res, next);
 });
 
+// Expose the frozen middleware ordering contract so concurrency tests can
+// assert deterministic ordering without reaching into Express internals.
+app.locals.middlewareMetrics = MIDDLEWARE_METRICS;
+
 module.exports = app;
