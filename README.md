@@ -344,3 +344,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, the Soroban toolchain, h
 ## License
 
 [MIT](LICENSE)
+
+## Handsoff notes
+
+<!-- handsoff-issue-595 -->
+- #595: Add explicit error mapping for wrapped token registry enforcement
