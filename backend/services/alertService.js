@@ -70,6 +70,63 @@ const markAlertSent = (alertType) => {
 };
 
 /**
+ * Parse the configured alert email recipients into a clean list.
+ * @param {string|undefined} raw - Raw comma-separated recipients value
+ * @returns {string[]} Trimmed, non-empty recipient addresses
+ */
+const parseEmailRecipients = (raw) => {
+  if (typeof raw !== 'string') return [];
+  return raw
+    .split(',')
+    .map((recipient) => recipient.trim())
+    .filter((recipient) => recipient.length > 0);
+};
+
+/**
+ * Validate alert email delivery configuration.
+ *
+ * Fails fast with an actionable, secret-free error when the email channel is
+ * enabled but misconfigured, or when contradictory settings are present.
+ *
+ * @param {Object} [env=process.env] - Environment to validate
+ * @returns {{ enabled: boolean, recipients: string[] }} Normalized config
+ * @throws {Error} When the configuration is invalid
+ */
+export const validateAlertEmailConfig = (env = process.env) => {
+  const enabled = env.ALERT_EMAIL_ENABLED === 'true';
+  const recipients = parseEmailRecipients(env.ALERT_EMAIL_RECIPIENTS);
+
+  if (!enabled) {
+    if (recipients.length > 0) {
+      throw new Error(
+        'Invalid alert email configuration: ALERT_EMAIL_RECIPIENTS is set but ALERT_EMAIL_ENABLED is not "true". ' +
+          'Set ALERT_EMAIL_ENABLED=true to enable email delivery or remove ALERT_EMAIL_RECIPIENTS.'
+      );
+    }
+    return { enabled: false, recipients: [] };
+  }
+
+  if (recipients.length === 0) {
+    throw new Error(
+      'Invalid alert email configuration: ALERT_EMAIL_ENABLED is "true" but ALERT_EMAIL_RECIPIENTS is empty. ' +
+        'Provide a comma-separated list of recipient addresses.'
+    );
+  }
+
+  const invalidRecipients = recipients.filter(
+    (recipient) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)
+  );
+  if (invalidRecipients.length > 0) {
+    throw new Error(
+      `Invalid alert email configuration: ${invalidRecipients.length} recipient address(es) are malformed. ` +
+        'Each ALERT_EMAIL_RECIPIENTS entry must be a valid email address.'
+    );
+  }
+
+  return { enabled: true, recipients };
+};
+
+/**
  * Send alert to all configured channels
  * @param {Object} alertData - Alert data. An optional `dedupeKey` scopes the
  *   cooldown to that key instead of the alert type, so distinct incidents of
@@ -101,7 +158,8 @@ const sendAlert = async (alertData) => {
 
     // Send to email if configured
     if (process.env.ALERT_EMAIL_ENABLED === 'true') {
-      await emailAlert(alert);
+      const emailConfig = validateAlertEmailConfig();
+      await emailAlert(alert, emailConfig);
     }
 
     // Send to webhook if configured
@@ -146,18 +204,25 @@ const consoleAlert = (alert) => {
 /**
  * Email alert handler
  * @param {Object} alert - Alert data
+ * @param {{ enabled: boolean, recipients: string[] }} [emailConfig] - Validated
+ *   email configuration. When omitted it is validated from the environment.
  */
-const emailAlert = async (alert) => {
+const emailAlert = async (alert, emailConfig) => {
   try {
+    const config = emailConfig ?? validateAlertEmailConfig();
+    if (!config.enabled) return;
+
     // TODO: Implement email sending
     // const emailService = await import('./emailService.js');
     // await emailService.sendAlert({
-    //   to: process.env.ALERT_EMAIL_RECIPIENTS?.split(','),
+    //   to: config.recipients,
     //   subject: `[${alert.severity.toUpperCase()}] ${alert.type}`,
     //   body: formatEmailAlert(alert),
     // });
 
-    console.log(`[Alert] Email alert would be sent for ${alert.type}`);
+    console.log(
+      `[Alert] Email alert would be sent for ${alert.type} to ${config.recipients.length} recipient(s)`
+    );
   } catch (error) {
     console.error('[Alert] Error sending email alert:', error);
   }
@@ -280,69 +345,6 @@ export const monitorQueueHealth = async () => {
 
 /**
  * Calculate sync lag between blockchain and database
- * @returns {number} Sync lag in milliseconds
- */
-const calculateSyncLag = async () => {
-  // TODO: Implement sync lag calculation by comparing the latest blockchain
-  // ledger with the last processed ledger.
-  return 0;
-};
+ 
 
-/**
- * Alert for Redis connection issues
- * @param {boolean} connected - Redis connection status
- */
-export const alertRedisConnection = async (connected) => {
-  if (!connected) {
-    await sendAlert({
-      type: ALERT_TYPES.REDIS_CONNECTION_LOST,
-      severity: ALERT_SEVERITY.CRITICAL,
-      message: 'Redis connection lost - queue processing will be affected',
-      metadata: {
-        connectionStatus: connected,
-      },
-    });
-  }
-};
-
-/**
- * Alert for queue processing stopped
- * @param {number} waitingJobs - Number of waiting jobs
- * @param {number} activeJobs - Number of active jobs
- */
-export const alertQueueProcessingStopped = async (waitingJobs, activeJobs) => {
-  if (waitingJobs > 0 && activeJobs === 0) {
-    await sendAlert({
-      type: ALERT_TYPES.QUEUE_PROCESSING_STOPPED,
-      severity: ALERT_SEVERITY.WARNING,
-      message: `Queue has ${waitingJobs} waiting jobs but no active processing`,
-      metadata: {
-        waitingJobs,
-        activeJobs,
-      },
-    });
-  }
-};
-
-/**
- * Start the monitoring service
- */
-export const startMonitoring = () => {
-  // Monitor every 30 seconds
-  setInterval(monitorQueueHealth, 30000);
-
-  console.log('[Alert] Queue monitoring service started');
-};
-
-// Export for testing
-export {
-  sendAlert,
-  shouldSendAlert,
-  markAlertSent,
-  consoleAlert,
-  emailAlert,
-  webhookAlert,
-  monitoringSystemAlert,
-  formatEmailAlert,
-  calculateSyncLag,
-};
+/* … truncated 1638 chars — edit only what you need near the top … */
