@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Storage-growth benchmark and regression budget for milestone lookup scalability: constant `EscrowMeta` size, bounded milestone entries, position-independent lookup cost (#505)
+- Authorization boundary tests for milestone paths: missing, stale and incorrect auth on add/batch/rename/cap changes, and auth-free lookups (#504)
+- Bounded, prunable sync-lag history in `alertService` with `calculateSyncLag` reporting only fresh samples (#498)
+- Permission-aware gating for reputation actions derived from the escrow record and state (#499)
 - Test coverage for governance quorum-not-reached scenario resulting in `Defeated` proposal status (#658)
 - Test coverage for `execute_proposal` rejection on `Defeated` proposals (#658)
 - Test coverage for `cast_vote` rejection after `cancel_proposal` (#659)

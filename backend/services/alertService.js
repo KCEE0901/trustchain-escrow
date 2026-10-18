@@ -278,14 +278,139 @@ export const monitorQueueHealth = async () => {
   }
 };
 
+// ── Sync-lag samples and retention ───────────────────────────────────────────
+
 /**
- * Calculate sync lag between blockchain and database
- * @returns {number} Sync lag in milliseconds
+ * Bounds for the in-memory sync-lag history. Samples older than `MAX_AGE_MS`
+ * or beyond the newest `MAX_SAMPLES` are dropped, so the history cannot grow
+ * without limit however often the indexer reports.
  */
-const calculateSyncLag = async () => {
-  // TODO: Implement sync lag calculation by comparing the latest blockchain
-  // ledger with the last processed ledger.
-  return 0;
+export const SYNC_LAG_RETENTION = Object.freeze({
+  MAX_SAMPLES: 120, // one hour at the 30s monitoring interval
+  MAX_AGE_MS: 60 * 60 * 1000, // 1 hour
+  /** A sample older than this no longer describes the current lag. */
+  STALE_AFTER_MS: 5 * 60 * 1000, // 5 minutes
+});
+
+const syncLagRetention = { ...SYNC_LAG_RETENTION };
+let syncLagSamples = [];
+
+const isNonNegativeNumber = (value) => Number.isFinite(value) && value >= 0;
+const isPositiveInteger = (value) => Number.isInteger(value) && value > 0;
+
+/**
+ * Override the retention bounds (all fields optional). Invalid values are
+ * ignored and the current setting kept. Existing samples are pruned at once.
+ *
+ * @param {{ maxSamples?: number, maxAgeMs?: number, staleAfterMs?: number }} [options]
+ * @returns {{ maxSamples: number, maxAgeMs: number, staleAfterMs: number }} effective settings
+ */
+const configureSyncLagRetention = ({ maxSamples, maxAgeMs, staleAfterMs } = {}) => {
+  if (isPositiveInteger(maxSamples)) syncLagRetention.MAX_SAMPLES = maxSamples;
+  if (isPositiveInteger(maxAgeMs)) syncLagRetention.MAX_AGE_MS = maxAgeMs;
+  if (isPositiveInteger(staleAfterMs)) syncLagRetention.STALE_AFTER_MS = staleAfterMs;
+  pruneSyncLagSamples();
+  return getSyncLagRetention();
+};
+
+/** @returns {{ maxSamples: number, maxAgeMs: number, staleAfterMs: number }} */
+const getSyncLagRetention = () => ({
+  maxSamples: syncLagRetention.MAX_SAMPLES,
+  maxAgeMs: syncLagRetention.MAX_AGE_MS,
+  staleAfterMs: syncLagRetention.STALE_AFTER_MS,
+});
+
+/**
+ * Record one observation of the indexer's position. Lag is the time between
+ * the newest ledger on chain closing and the last processed ledger closing.
+ * Only these numbers are kept: no event payloads, addresses or URLs.
+ *
+ * @param {Object} sample
+ * @param {number} sample.latestLedger - newest ledger sequence on chain
+ * @param {number} sample.processedLedger - last ledger sequence indexed
+ * @param {number} sample.latestClosedAt - close time of latestLedger (ms epoch)
+ * @param {number} sample.processedClosedAt - close time of processedLedger (ms epoch)
+ * @param {number} [sample.observedAt=Date.now()] - when the sample was taken (ms epoch)
+ * @returns {boolean} whether the sample was valid and stored
+ */
+const recordSyncLagSample = ({
+  latestLedger,
+  processedLedger,
+  latestClosedAt,
+  processedClosedAt,
+  observedAt = Date.now(),
+} = {}) => {
+  if (
+    !Number.isInteger(latestLedger) ||
+    !Number.isInteger(processedLedger) ||
+    latestLedger < 0 ||
+    processedLedger < 0 ||
+    processedLedger > latestLedger ||
+    !isNonNegativeNumber(latestClosedAt) ||
+    !isNonNegativeNumber(processedClosedAt) ||
+    !isNonNegativeNumber(observedAt)
+  ) {
+    return false;
+  }
+
+  syncLagSamples.push({
+    latestLedger,
+    processedLedger,
+    ledgersBehind: latestLedger - processedLedger,
+    // A clock skew that puts the processed ledger "after" the latest one
+    // means the indexer is caught up, not ahead.
+    lagMs: Math.max(0, latestClosedAt - processedClosedAt),
+    observedAt,
+  });
+  // Keep samples ordered by observation time, even if reports arrive late.
+  syncLagSamples.sort((a, b) => a.observedAt - b.observedAt);
+  pruneSyncLagSamples(observedAt);
+  return true;
+};
+
+/**
+ * Drop samples older than the retention window and beyond the sample cap.
+ * Safe to call at any time; repeated calls are idempotent.
+ *
+ * @param {number} [now=Date.now()]
+ * @returns {number} how many samples were removed
+ */
+const pruneSyncLagSamples = (now = Date.now()) => {
+  const before = syncLagSamples.length;
+  const cutoff = now - syncLagRetention.MAX_AGE_MS;
+  let kept = syncLagSamples.filter((s) => s.observedAt >= cutoff);
+  if (kept.length > syncLagRetention.MAX_SAMPLES) {
+    kept = kept.slice(kept.length - syncLagRetention.MAX_SAMPLES);
+  }
+  syncLagSamples = kept;
+  return before - kept.length;
+};
+
+/** Remove every stored sample. @returns {number} how many were removed */
+const clearSyncLagSamples = () => {
+  const removed = syncLagSamples.length;
+  syncLagSamples = [];
+  return removed;
+};
+
+/** @returns {Array<Object>} copies of the retained samples, oldest first */
+const getSyncLagSamples = () => syncLagSamples.map((s) => ({ ...s }));
+
+/**
+ * Calculate sync lag between blockchain and database from the newest sample.
+ * Returns 0 when there is no sample, or when the newest one is stale, so an
+ * indexer that stopped reporting is not alerted on with an outdated value.
+ *
+ * @param {number} [now=Date.now()]
+ * @returns {Promise<number>} Sync lag in milliseconds
+ */
+const calculateSyncLag = async (now = Date.now()) => {
+  pruneSyncLagSamples(now);
+  const latest = syncLagSamples[syncLagSamples.length - 1];
+  if (!latest || now - latest.observedAt > syncLagRetention.STALE_AFTER_MS) {
+    return 0;
+  }
+  return latest.lagMs;
 };
 
 /**
@@ -345,4 +470,10 @@ export {
   monitoringSystemAlert,
   formatEmailAlert,
   calculateSyncLag,
+  recordSyncLagSample,
+  pruneSyncLagSamples,
+  clearSyncLagSamples,
+  getSyncLagSamples,
+  configureSyncLagRetention,
+  getSyncLagRetention,
 };
