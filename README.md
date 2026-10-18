@@ -352,3 +352,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, the Soroban toolchain, h
 
 <!-- handsoff-issue-620 -->
 - #620: Add rollback validation for pull-request merge regression detection
+
+<!-- handsoff-issue-621 -->
+- #621: Add operator telemetry for pull-request merge regression detection
