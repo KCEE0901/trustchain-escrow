@@ -13,3 +13,8 @@
 
 # Branch parity failure routing: main and develop share the same owner
 # so a single notification per failure event is delivered.
+
+# Pull-request merge regression detection (issue #594): the CI workflow
+# routes regression failures to this owner. A single owner is listed so
+# each regression event produces exactly one notification (no duplication).
+/.github/workflows/ci.yml @handsoff/ci-owners
