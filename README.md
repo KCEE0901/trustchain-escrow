@@ -349,3 +349,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, the Soroban toolchain, h
 
 <!-- handsoff-issue-613 -->
 - #613: Add graceful degradation for API production middleware ordering
+
+<!-- handsoff-issue-614 -->
+- #614: Add retention controls for API production middleware ordering
