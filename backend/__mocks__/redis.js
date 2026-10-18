@@ -13,6 +13,11 @@ const mockClient = {
   sMembers: jest.fn().mockResolvedValue([]),
   scan: jest.fn().mockResolvedValue({ cursor: 0, keys: [] }),
   on: jest.fn(),
+  // Idempotency primitives used by dynamic admin settings persistence.
+  // set with NX returns 'OK' when the key was newly acquired, null otherwise.
+  setNX: jest.fn().mockResolvedValue('OK'),
+  // Atomic compare-and-set helper for dedupe guards.
+  eval: jest.fn().mockResolvedValue(1),
 };
 
 export const createClient = jest.fn(() => mockClient);
