@@ -2,7 +2,7 @@ name: Deploy
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   workflow_dispatch:
 
 env:
@@ -43,14 +43,6 @@ jobs:
           SLACK_COLOR: good
           SLACK_MESSAGE: 'Staging Deployment: success'
 
-      - name: Slack Notification Failure
-        if: ${{ failure() && env.SLACK_WEBHOOK != '' }}
-        uses: rtCamp/action-slack-notify@v2
-        env:
-          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-          SLACK_COLOR: danger
-          SLACK_MESSAGE: 'Staging Deployment: failure'
-
   deploy-production:
     name: Deploy to Production
     runs-on: ubuntu-latest
@@ -74,10 +66,27 @@ jobs:
           SLACK_COLOR: good
           SLACK_MESSAGE: 'Production Deployment: success'
 
+  # Single, deduplicated failure notification for the whole workflow run.
+  # Runs once per failed run (not per job/matrix entry) and only for main/develop.
+  notify-failure:
+    name: Notify Failure
+    runs-on: ubuntu-latest
+    needs: [deploy-staging, deploy-production]
+    if: ${{ always() && failure() && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') }}
+    steps:
+      - name: Resolve owner
+        id: owner
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "owner=@release-owners" >> "$GITHUB_OUTPUT"
+          else
+            echo "owner=@develop-owners" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Slack Notification Failure
-        if: ${{ failure() && env.SLACK_WEBHOOK != '' }}
+        if: ${{ env.SLACK_WEBHOOK != '' }}
         uses: rtCamp/action-slack-notify@v2
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
           SLACK_COLOR: danger
-          SLACK_MESSAGE: 'Production Deployment: failure'
+          SLACK_MESSAGE: 'Deployment failed on ${{ github.ref_name }} — ${{ steps.owner.outputs.owner }} please investigate: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
