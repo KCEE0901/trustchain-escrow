@@ -344,3 +344,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, the Soroban toolchain, h
 ## License
 
 [MIT](LICENSE)
+
+## Handsoff notes
+
+<!-- handsoff-issue-623 -->
+- #623: Add storage-growth benchmark for reputation scoring determinism
