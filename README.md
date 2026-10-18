@@ -344,3 +344,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, the Soroban toolchain, h
 ## License
 
 [MIT](LICENSE)
+
+## Handsoff notes
+
+<!-- handsoff-issue-592 -->
+- #592: Add configuration preflight checks for pull-request merge regression detection
