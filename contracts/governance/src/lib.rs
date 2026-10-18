@@ -825,7 +825,9 @@ impl GovernanceContract {
         {
             None => {
                 // First call — start cooldown
-                let expires = now + Self::WITHDRAW_COOLDOWN;
+                let expires = now
+                    .checked_add(Self::WITHDRAW_COOLDOWN)
+                    .ok_or(GovError::ArithmeticOverflow)?;
                 env.storage().persistent().set(&cooldown_key, &expires);
                 Storage::bump_persistent(&env, &cooldown_key);
                 return Err(GovError::StakeCooldownActive);
@@ -1257,5 +1259,237 @@ impl GovernanceContract {
     /// Returns whether `address` is in the selection registry.
     pub fn is_in_registry(env: Env, address: Address) -> bool {
         arbitrators::registry_contains(&env, &address)
+    }
+}
+
+#[cfg(test)]
+mod arbiter_withdrawal_tests {
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger},
+        token, Address, Env,
+    };
+
+    use crate::{DataKey, GovError, GovernanceContract, GovernanceContractClient};
+
+    const COOLDOWN: u64 = 604_800;
+    const START: u64 = 1_000;
+
+    fn setup(mock_auths: bool) -> (Env, Address, GovernanceContractClient<'static>) {
+        let env = Env::default();
+        if mock_auths {
+            env.mock_all_auths();
+        }
+        env.ledger().with_mut(|l| l.timestamp = START);
+
+        let admin = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token = env
+            .register_stellar_asset_contract_v2(token_admin)
+            .address();
+        let contract_id = env.register_contract(None, GovernanceContract);
+        let client = GovernanceContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &token, &100, &60, &3_600, &7_200, &400, &5_100);
+        (env, token, client)
+    }
+
+    fn stake(env: &Env, token: &Address, client: &GovernanceContractClient, who: &Address, n: i128) {
+        token::StellarAssetClient::new(env, token).mint(who, &n);
+        client.stake_arbitrator(who, &n);
+    }
+
+    fn seed_cooldown(env: &Env, client: &GovernanceContractClient, who: &Address, expires: u64) {
+        env.as_contract(&client.address, || {
+            env.storage()
+                .persistent()
+                .set(&DataKey::WithdrawCooldown(who.clone()), &expires);
+        });
+    }
+
+    fn has_key(env: &Env, client: &GovernanceContractClient, key: DataKey) -> bool {
+        env.as_contract(&client.address, || env.storage().persistent().has(&key))
+    }
+
+    // ── #430: explicit error mapping ─────────────────────────────────────────
+
+    #[test]
+    fn withdraw_maps_each_failure_to_a_stable_error() {
+        let (env, token, client) = setup(true);
+        let nobody = Address::generate(&env);
+        let arbitrator = Address::generate(&env);
+        stake(&env, &token, &client, &arbitrator, 2_000);
+
+        assert_eq!(
+            client.try_withdraw_stake(&nobody),
+            Err(Ok(GovError::NoStakeToWithdraw))
+        );
+        assert_eq!(
+            client.try_withdraw_stake(&arbitrator),
+            Err(Ok(GovError::StakeCooldownActive))
+        );
+        seed_cooldown(&env, &client, &arbitrator, START + 1);
+        assert_eq!(
+            client.try_withdraw_stake(&arbitrator),
+            Err(Ok(GovError::StakeCooldownActive))
+        );
+    }
+
+    #[test]
+    fn withdraw_cooldown_timestamp_overflow_returns_arithmetic_overflow() {
+        let (env, token, client) = setup(true);
+        let arbitrator = Address::generate(&env);
+        stake(&env, &token, &client, &arbitrator, 2_000);
+        env.ledger().with_mut(|l| l.timestamp = u64::MAX);
+
+        assert_eq!(
+            client.try_withdraw_stake(&arbitrator),
+            Err(Ok(GovError::ArithmeticOverflow))
+        );
+        assert!(client.is_arbitrator(&arbitrator));
+    }
+
+    #[test]
+    fn withdraw_succeeds_exactly_at_cooldown_expiry() {
+        let (env, token, client) = setup(true);
+        let arbitrator = Address::generate(&env);
+        stake(&env, &token, &client, &arbitrator, 2_000);
+        seed_cooldown(&env, &client, &arbitrator, START + COOLDOWN);
+
+        assert_eq!(
+            client.try_withdraw_stake(&arbitrator),
+            Err(Ok(GovError::StakeCooldownActive))
+        );
+        env.ledger().with_mut(|l| l.timestamp = START + COOLDOWN);
+        assert_eq!(client.withdraw_stake(&arbitrator), 2_000);
+        assert_eq!(token::Client::new(&env, &token).balance(&arbitrator), 2_000);
+    }
+
+    // ── #428: authorization boundaries ───────────────────────────────────────
+
+    #[test]
+    fn withdraw_requires_the_staker_authorization() {
+        let (env, token, client) = setup(true);
+        let arbitrator = Address::generate(&env);
+        stake(&env, &token, &client, &arbitrator, 2_000);
+        seed_cooldown(&env, &client, &arbitrator, START);
+
+        client.withdraw_stake(&arbitrator);
+
+        let auths = env.auths();
+        assert_eq!(auths.len(), 1);
+        assert_eq!(auths[0].0, arbitrator);
+    }
+
+    #[test]
+    fn withdraw_without_authorization_is_rejected_and_state_kept() {
+        // No `mock_all_auths`: any `require_auth` must fail.
+        let (env, _token, client) = setup(false);
+        let arbitrator = Address::generate(&env);
+        env.as_contract(&client.address, || {
+            env.storage()
+                .persistent()
+                .set(&DataKey::ArbitratorStake(arbitrator.clone()), &2_000_i128);
+            env.storage()
+                .persistent()
+                .set(&DataKey::Arbitrator(arbitrator.clone()), &true);
+        });
+        seed_cooldown(&env, &client, &arbitrator, START);
+
+        assert!(client.try_withdraw_stake(&arbitrator).is_err());
+        assert!(client.is_arbitrator(&arbitrator));
+        assert!(has_key(&env, &client, DataKey::ArbitratorStake(arbitrator)));
+    }
+
+    #[test]
+    fn withdraw_by_other_account_cannot_touch_the_stake() {
+        let (env, token, client) = setup(true);
+        let arbitrator = Address::generate(&env);
+        let other = Address::generate(&env);
+        stake(&env, &token, &client, &arbitrator, 2_000);
+        seed_cooldown(&env, &client, &arbitrator, START);
+
+        assert_eq!(
+            client.try_withdraw_stake(&other),
+            Err(Ok(GovError::NoStakeToWithdraw))
+        );
+        assert!(client.is_arbitrator(&arbitrator));
+        assert_eq!(token::Client::new(&env, &token).balance(&other), 0);
+    }
+
+    #[test]
+    fn withdraw_with_future_cooldown_is_rejected_until_it_elapses() {
+        let (env, token, client) = setup(true);
+        let arbitrator = Address::generate(&env);
+        stake(&env, &token, &client, &arbitrator, 2_000);
+        seed_cooldown(&env, &client, &arbitrator, START + 10);
+
+        assert_eq!(
+            client.try_withdraw_stake(&arbitrator),
+            Err(Ok(GovError::StakeCooldownActive))
+        );
+        env.ledger().with_mut(|l| l.timestamp = START + 10);
+        assert_eq!(client.withdraw_stake(&arbitrator), 2_000);
+    }
+
+    // ── #429: storage-growth benchmark ───────────────────────────────────────
+
+    #[test]
+    fn withdraw_removes_every_per_arbitrator_entry() {
+        let (env, token, client) = setup(true);
+        let arbitrator = Address::generate(&env);
+        stake(&env, &token, &client, &arbitrator, 2_000);
+        seed_cooldown(&env, &client, &arbitrator, START);
+        assert!(has_key(&env, &client, DataKey::ArbitratorStake(arbitrator.clone())));
+        assert!(has_key(&env, &client, DataKey::Arbitrator(arbitrator.clone())));
+        assert!(has_key(&env, &client, DataKey::WithdrawCooldown(arbitrator.clone())));
+
+        client.withdraw_stake(&arbitrator);
+
+        assert!(!has_key(&env, &client, DataKey::ArbitratorStake(arbitrator.clone())));
+        assert!(!has_key(&env, &client, DataKey::Arbitrator(arbitrator.clone())));
+        assert!(!has_key(&env, &client, DataKey::WithdrawCooldown(arbitrator)));
+    }
+
+    #[test]
+    fn withdraw_leaves_no_storage_behind_across_many_arbitrators() {
+        let (env, token, client) = setup(true);
+        let mut all = soroban_sdk::Vec::new(&env);
+        for _ in 0..25 {
+            let a = Address::generate(&env);
+            stake(&env, &token, &client, &a, 1_500);
+            seed_cooldown(&env, &client, &a, START);
+            all.push_back(a);
+        }
+        for a in all.iter() {
+            assert_eq!(client.withdraw_stake(&a), 1_500);
+        }
+        for a in all.iter() {
+            assert!(!has_key(&env, &client, DataKey::ArbitratorStake(a.clone())));
+            assert!(!has_key(&env, &client, DataKey::Arbitrator(a.clone())));
+            assert!(!has_key(&env, &client, DataKey::WithdrawCooldown(a)));
+        }
+        assert_eq!(token::Client::new(&env, &token).balance(&client.address), 0);
+    }
+
+    #[test]
+    fn withdraw_cost_does_not_grow_with_registered_arbitrators() {
+        let cost = |others: u32| {
+            let (env, token, client) = setup(true);
+            for _ in 0..others {
+                stake(&env, &token, &client, &Address::generate(&env), 1_500);
+            }
+            let arbitrator = Address::generate(&env);
+            stake(&env, &token, &client, &arbitrator, 1_500);
+            seed_cooldown(&env, &client, &arbitrator, START);
+            env.budget().reset_unlimited();
+            client.withdraw_stake(&arbitrator);
+            env.budget().cpu_instruction_cost()
+        };
+        let baseline = cost(0);
+        let crowded = cost(40);
+        // Constant-time: allow a small margin, but nothing proportional to N.
+        assert!(
+            crowded <= baseline + baseline / 4,
+            "baseline {baseline}, crowded {crowded}"
+        );
     }
 }
