@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Tests for event worker persistence configuration validation (issue #605).
+ * Tests for event worker configuration validation (issues #605 and #606).
  *
  * These tests exercise the fail-fast validation that runs when the event
  * worker is initialized. They assert the primary success path plus several
@@ -9,7 +9,7 @@
  * and never leak secret values.
  */
 
-const { validatePersistenceConfig } = require('../eventWorker');
+const { validatePersistenceConfig, validateAlertingConfig } = require('../eventWorker');
 
 const VALID_CONFIG = {
   persistence: {
@@ -114,6 +114,111 @@ describe('event worker persistence configuration validation', () => {
 
       expect(serialized).not.toContain('super-secret');
       expect(serialized).not.toContain(VALID_CONFIG.persistence.connectionString);
+    });
+  });
+});
+
+const VALID_ALERTING_CONFIG = {
+  alerting: {
+    enabled: true,
+    webhookUrl: 'https://hooks.example.com/services/secret-token-abc123',
+    failureThreshold: 5,
+    cooldownMs: 60000,
+  },
+};
+
+function cloneAlertingConfig(overrides = {}) {
+  return {
+    ...VALID_ALERTING_CONFIG,
+    alerting: { ...VALID_ALERTING_CONFIG.alerting, ...overrides },
+  };
+}
+
+describe('event worker failure alerting configuration validation', () => {
+  describe('success path', () => {
+    it('accepts a fully specified, consistent alerting configuration', () => {
+      expect(() => validateAlertingConfig(VALID_ALERTING_CONFIG)).not.toThrow();
+      expect(validateAlertingConfig(VALID_ALERTING_CONFIG)).toEqual({ valid: true, errors: [] });
+    });
+
+    it('accepts a disabled alerting configuration without requiring a webhook URL', () => {
+      const config = cloneAlertingConfig({ enabled: false, webhookUrl: undefined });
+      expect(validateAlertingConfig(config)).toEqual({ valid: true, errors: [] });
+    });
+  });
+
+  describe('failure paths', () => {
+    it('rejects enabled alerting without a webhook URL', () => {
+      const config = cloneAlertingConfig({ webhookUrl: '' });
+      const result = validateAlertingConfig(config);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain(
+        'alerting.webhookUrl is required when alerting.enabled is true'
+      );
+    });
+
+    it('rejects a webhook URL that is not a valid http(s) URL', () => {
+      const config = cloneAlertingConfig({ webhookUrl: 'not-a-url' });
+      const result = validateAlertingConfig(config);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain(
+        'alerting.webhookUrl must be a valid http(s) URL'
+      );
+    });
+
+    it('rejects a non-positive failure threshold', () => {
+      const config = cloneAlertingConfig({ failureThreshold: 0 });
+      const result = validateAlertingConfig(config);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain(
+        'alerting.failureThreshold must be a positive integer'
+      );
+    });
+  });
+
+  describe('boundary paths', () => {
+    it('rejects a negative cooldown interval', () => {
+      const config = cloneAlertingConfig({ cooldownMs: -1 });
+      const result = validateAlertingConfig(config);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain(
+        'alerting.cooldownMs must be a non-negative number'
+      );
+    });
+
+    it('reports every problem at once rather than stopping at the first', () => {
+      const config = cloneAlertingConfig({
+        webhookUrl: 'not-a-url',
+        failureThreshold: 0,
+        cooldownMs: -1,
+      });
+      const result = validateAlertingConfig(config);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors.length).toBeGreaterThanOrEqual(3);
+    });
+  });
+
+  describe('determinism and secret hygiene', () => {
+    it('produces identical results across repeated invocations', () => {
+      const config = cloneAlertingConfig({ webhookUrl: 'not-a-url' });
+      const first = validateAlertingConfig(config);
+      const second = validateAlertingConfig(config);
+
+      expect(first).toEqual(second);
+    });
+
+    it('never includes the webhook URL secret in error messages', () => {
+      const config = cloneAlertingConfig({ failureThreshold: 0 });
+      const result = validateAlertingConfig(config);
+      const serialized = JSON.stringify(result);
+
+      expect(serialized).not.toContain('secret-token-abc123');
+      expect(serialized).not.toContain(VALID_ALERTING_CONFIG.alerting.webhookUrl);
     });
   });
 });

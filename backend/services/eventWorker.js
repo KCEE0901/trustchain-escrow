@@ -121,6 +121,105 @@ export const loadPersistenceConfig = (env = process.env) => {
   });
 };
 
+// ── Failure alerting configuration validation ─────────────────────────────────
+//
+// Failure alerting is opt-in. When enabled it requires a webhook URL and a
+// positive failure threshold; contradictory or malformed settings must fail
+// fast at startup with an actionable, deterministic message. Webhook URLs are
+// treated as secrets and are never echoed in error messages or logs.
+
+/** Defaults for the failure-alerting runtime settings. */
+export const ALERTING_DEFAULTS = Object.freeze({
+  enabled: false,
+  failureThreshold: 1,
+});
+
+const isHttpUrl = (value) => {
+  if (typeof value !== 'string' || value.trim() === '') return false;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Validate event worker failure-alerting configuration.
+ *
+ * @param {Object} [config] - alerting settings (defaults applied per field)
+ * @param {boolean} [config.enabled] - whether failure alerting is active
+ * @param {string} [config.webhookUrl] - alert delivery webhook (secret)
+ * @param {number} [config.failureThreshold] - consecutive failures before alerting
+ * @returns {Object} normalized configuration
+ * @throws {Error} with a deterministic, secret-free message on invalid input
+ */
+export const validateAlertingConfig = (config = {}) => {
+  const resolved = {
+    enabled: config.enabled ?? ALERTING_DEFAULTS.enabled,
+    webhookUrl: config.webhookUrl,
+    failureThreshold: config.failureThreshold ?? ALERTING_DEFAULTS.failureThreshold,
+  };
+
+  if (typeof resolved.enabled !== 'boolean') {
+    throw new Error(
+      `Invalid event worker alerting config: enabled must be a boolean (received ${describeValue(resolved.enabled)})`,
+    );
+  }
+  if (!isPositiveInteger(resolved.failureThreshold)) {
+    throw new Error(
+      `Invalid event worker alerting config: failureThreshold must be a positive integer (received ${describeValue(resolved.failureThreshold)})`,
+    );
+  }
+
+  if (resolved.enabled) {
+    if (resolved.webhookUrl === undefined || resolved.webhookUrl === null || resolved.webhookUrl === '') {
+      throw new Error(
+        'Invalid event worker alerting config: webhookUrl is required when alerting is enabled',
+      );
+    }
+    if (!isHttpUrl(resolved.webhookUrl)) {
+      throw new Error(
+        'Invalid event worker alerting config: webhookUrl must be a valid http(s) URL',
+      );
+    }
+  } else if (resolved.webhookUrl !== undefined && resolved.webhookUrl !== null && resolved.webhookUrl !== '') {
+    if (!isHttpUrl(resolved.webhookUrl)) {
+      throw new Error(
+        'Invalid event worker alerting config: webhookUrl must be a valid http(s) URL',
+      );
+    }
+  }
+
+  return resolved;
+};
+
+/**
+ * Read failure-alerting settings from the environment and validate them.
+ * The webhook URL is read but never logged; only its presence is validated.
+ *
+ * @param {Object} [env] - environment source (defaults to process.env)
+ * @returns {Object} normalized configuration
+ */
+export const loadAlertingConfig = (env = process.env) => {
+  const parseBoolean = (raw) => {
+    if (raw === undefined || raw === '') return undefined;
+    if (raw === 'true' || raw === '1') return true;
+    if (raw === 'false' || raw === '0') return false;
+    return raw;
+  };
+  const parseNumber = (raw) => {
+    if (raw === undefined || raw === '') return undefined;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : raw;
+  };
+  return validateAlertingConfig({
+    enabled: parseBoolean(env.EVENT_WORKER_ALERTING_ENABLED),
+    webhookUrl: env.EVENT_WORKER_ALERT_WEBHOOK_URL,
+    failureThreshold: parseNumber(env.EVENT_WORKER_ALERT_FAILURE_THRESHOLD),
+  });
+};
+
 // ── Failure alerting idempotency ───────────────────────────────────────────────
 //
 // A permanently failed event must produce exactly one dead-letter job and one
@@ -186,144 +285,6 @@ export const createMemoryAlertDedupeStore = (now = () => Date.now()) => {
   const live = (key) => {
     const entry = entries.get(key);
     if (entry && entry.expiresAt <= now()) {
-      entries.delete(key);
-      return undefined;
-    }
-    return entry;
-  };
-  return {
-    async claim(key, token, leaseMs) {
-      if (live(key)) return false;
-      entries.set(key, { value: `pending:${token}`, expiresAt: now() + leaseMs });
-      return true;
-    },
-    async markSent(key, ttlMs) {
-      entries.set(key, { value: 'sent', expiresAt: now() + ttlMs });
-    },
-    async release(key, token) {
-      if (live(key)?.value === `pending:${token}`) entries.delete(key);
-    },
-  };
-};
+      entries.delete(key)
 
-// Deletes the key only if it still holds this worker's claim token.
-const RELEASE_IF_OWNER_SCRIPT =
-  "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) end return 0";
-
-/** Cross-process dedupe store backed by an ioredis client. */
-export const createRedisAlertDedupeStore = (redis) => ({
-  async claim(key, token, leaseMs) {
-    const result = await redis.set(FAILURE_ALERT_KEY_PREFIX + key, `pending:${token}`, 'PX', leaseMs, 'NX');
-    return result === 'OK';
-  },
-  async markSent(key, ttlMs) {
-    await redis.set(FAILURE_ALERT_KEY_PREFIX + key, 'sent', 'PX', ttlMs);
-  },
-  async release(key, token) {
-    await redis.eval(RELEASE_IF_OWNER_SCRIPT, 1, FAILURE_ALERT_KEY_PREFIX + key, `pending:${token}`);
-  },
-});
-
-const defaultAlertDedupeStore = () =>
-  connection && typeof connection.set === 'function' && typeof connection.eval === 'function'
-    ? createRedisAlertDedupeStore(connection)
-    : createMemoryAlertDedupeStore();
-
-/** Default sender: routes through alertService, keyed per failure (not per type). */
-const defaultFailureAlertSender = async (alert) => {
-  const outcome = await sendAlert({
-    type: ALERT_TYPES.PERMANENT_EVENT_FAILURE,
-    severity: ALERT_SEVERITY.CRITICAL,
-    message: `Stellar event permanently failed after ${alert.attemptsMade} attempts`,
-    metadata: alert,
-    dedupeKey: `${ALERT_TYPES.PERMANENT_EVENT_FAILURE}:${alert.alertKey}`,
-  });
-  if (outcome === 'failed') throw new Error('alert delivery failed');
-};
-
-let failureAlerting = { store: undefined, sender: defaultFailureAlertSender };
-
-/**
- * Override the dedupe store and/or alert sender (tests, custom channels).
- * Call with no arguments to restore the defaults.
- */
-export const configureFailureAlerting = ({ store, sender } = {}) => {
-  failureAlerting = { store, sender: sender ?? defaultFailureAlertSender };
-};
-
-const alertDedupeStore = () => {
-  if (!failureAlerting.store) failureAlerting.store = defaultAlertDedupeStore();
-  return failureAlerting.store;
-};
-
-/**
- * Send the alert for a permanent failure at most once per failure key.
- *
- * @returns {Promise<'sent'|'duplicate'>}
- * @throws when delivery fails (after releasing the claim, so a retry can alert)
- */
-export const sendPermanentFailureAlert = async ({ alertKey, originalJob, error, attemptsMade }) => {
-  const store = alertDedupeStore();
-  const token = randomUUID();
-
-  let claimed;
-  try {
-    claimed = await store.claim(alertKey, token, FAILURE_ALERT_LEASE_MS);
-  } catch {
-    // If dedupe storage itself is down, prefer a possible duplicate alert
-    // over silently dropping a permanent failure.
-    console.warn(`[DeadLetter] Alert dedupe store unavailable for ${alertKey}; sending without dedupe`);
-    claimed = true;
-  }
-  if (!claimed) {
-    console.log(`[DeadLetter] Alert for ${alertKey} already sent or in flight; skipping`);
-    return 'duplicate';
-  }
-
-  const alert = {
-    alertKey,
-    ledger: originalJob?.ledger ?? null,
-    eventType: describeEventType(originalJob?.event),
-    attemptsMade: attemptsMade ?? null,
-    error: safeErrorMessage(error),
-  };
-
-  try {
-    await failureAlerting.sender(alert);
-  } catch (sendError) {
-    await store.release(alertKey, token).catch(() => {});
-    throw sendError;
-  }
-  await store.markSent(alertKey, FAILURE_ALERT_TTL_MS).catch(() => {
-    console.warn(`[DeadLetter] Could not record alert ${alertKey} as sent`);
-  });
-  return 'sent';
-};
-
-/** Event type for alert metadata; never throws on malformed events. */
-const describeEventType = (event) => {
-  try {
-    return parseEventType(event);
-  } catch {
-    return 'Unknown';
-  }
-};
-
-/**
- * Processes a single Stellar event
- * @param {Object} job - BullMQ job containing event data
- */
-const processStellarEvent = async (job) => {
-  const { event, ledger } = job.data;
-
-  try {
-    queueMetrics.totalJobs++;
-
-    // Update job progress
-    await job.updateProgress(10);
-
-    // Validate event data
-    if (!event || !ledger) {
-      throw new Error('Invalid event da
-
-/* … truncated 8103 chars — edit only what you need near the top … */
+/* … truncated 4546 chars — edit only what you need near the top … */
