@@ -344,3 +344,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, the Soroban toolchain, h
 ## License
 
 [MIT](LICENSE)
+
+## Handsoff notes
+
+<!-- handsoff-issue-613 -->
+- #613: Add graceful degradation for API production middleware ordering
