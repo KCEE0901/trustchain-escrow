@@ -5,6 +5,12 @@ import { useEffect, useState } from 'react';
 type Role = 'admin' | 'operator' | 'viewer';
 type EscrowState = 'active' | 'paused' | 'settled' | 'disputed';
 
+type TelemetryEvent =
+  | 'error_boundary_view'
+  | 'error_boundary_retry'
+  | 'error_boundary_retry_blocked'
+  | 'error_boundary_report';
+
 interface GlobalErrorProps {
   error: Error & { digest?: string };
   reset: () => void;
@@ -41,6 +47,28 @@ function canReport(role: Role): boolean {
   return role === 'admin' || role === 'operator';
 }
 
+// Privacy-safe telemetry: only coarse, non-identifying fields are emitted.
+// Never include wallet addresses, error messages, or raw payloads.
+function emitTelemetry(
+  event: TelemetryEvent,
+  role: Role,
+  escrowState: EscrowState,
+  digest: string | null,
+): void {
+  if (typeof window === 'undefined') return;
+  const payload = {
+    event,
+    role,
+    escrowState,
+    digest,
+  };
+  try {
+    console.info('[telemetry]', payload);
+  } catch {
+    // Telemetry must never break the error boundary.
+  }
+}
+
 export default function GlobalError({ error, reset }: GlobalErrorProps) {
   const [role, setRole] = useState<Role>('viewer');
   const [escrowState, setEscrowState] = useState<EscrowState>('settled');
@@ -59,8 +87,25 @@ export default function GlobalError({ error, reset }: GlobalErrorProps) {
     });
   }, [error, role, escrowState]);
 
+  useEffect(() => {
+    emitTelemetry('error_boundary_view', role, escrowState, error.digest ?? null);
+  }, [role, escrowState, error.digest]);
+
   const retryAllowed = canRetry(role, escrowState);
   const reportAllowed = canReport(role);
+
+  const handleRetry = () => {
+    if (!retryAllowed) {
+      emitTelemetry('error_boundary_retry_blocked', role, escrowState, error.digest ?? null);
+      return;
+    }
+    emitTelemetry('error_boundary_retry', role, escrowState, error.digest ?? null);
+    reset();
+  };
+
+  const handleReport = () => {
+    emitTelemetry('error_boundary_report', role, escrowState, error.digest ?? null);
+  };
 
   return (
     <html lang="en">
@@ -79,7 +124,7 @@ export default function GlobalError({ error, reset }: GlobalErrorProps) {
           <div>
             <button
               type="button"
-              onClick={reset}
+              onClick={handleRetry}
               disabled={!retryAllowed}
               aria-disabled={!retryAllowed}
               title={
@@ -91,7 +136,9 @@ export default function GlobalError({ error, reset }: GlobalErrorProps) {
               Try again
             </button>
             {reportAllowed ? (
-              <a href="mailto:support@example.com">Report this issue</a>
+              <a href="mailto:support@example.com" onClick={handleReport}>
+                Report this issue
+              </a>
             ) : null}
           </div>
         </main>

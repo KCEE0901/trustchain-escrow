@@ -16,6 +16,16 @@ type ViewerContext = {
   escrowState: EscrowState;
 };
 
+type TelemetryOutcome = 'rendered' | 'retry' | 'report' | 'support';
+
+type TelemetryEvent = {
+  event: 'error_boundary';
+  outcome: TelemetryOutcome;
+  digest: string;
+  role: ViewerRole;
+  escrowState: EscrowState;
+};
+
 const DEFAULT_CONTEXT: ViewerContext = {
   role: 'anonymous',
   escrowState: 'unknown',
@@ -62,6 +72,29 @@ function canContactSupport(context: ViewerContext): boolean {
   return context.escrowState !== 'unknown';
 }
 
+// Privacy-safe telemetry: only deterministic, non-sensitive fields are emitted.
+// Never include wallet addresses, error messages, or arbitrary payloads.
+function buildTelemetryEvent(
+  outcome: TelemetryOutcome,
+  digest: string | undefined,
+  context: ViewerContext,
+): TelemetryEvent {
+  return {
+    event: 'error_boundary',
+    outcome,
+    digest: digest ?? 'none',
+    role: context.role,
+    escrowState: context.escrowState,
+  };
+}
+
+function emitTelemetry(event: TelemetryEvent): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  console.info('[telemetry]', event);
+}
+
 export default function ErrorBoundary({ error, reset }: ErrorBoundaryProps) {
   const [context, setContext] = useState<ViewerContext>(DEFAULT_CONTEXT);
 
@@ -76,11 +109,26 @@ export default function ErrorBoundary({ error, reset }: ErrorBoundaryProps) {
       role: context.role,
       escrowState: context.escrowState,
     });
+    emitTelemetry(buildTelemetryEvent('rendered', error.digest, context));
   }, [error.digest, context.role, context.escrowState]);
 
   const retryAllowed = canRetry(context);
   const reportAllowed = canReport(context);
   const supportAllowed = canContactSupport(context);
+
+  const handleRetry = () => {
+    emitTelemetry(buildTelemetryEvent('retry', error.digest, context));
+    reset();
+  };
+
+  const handleReport = () => {
+    emitTelemetry(buildTelemetryEvent('report', error.digest, context));
+    window.location.reload();
+  };
+
+  const handleSupport = () => {
+    emitTelemetry(buildTelemetryEvent('support', error.digest, context));
+  };
 
   return (
     <div role="alert" aria-live="assertive">
@@ -95,7 +143,7 @@ export default function ErrorBoundary({ error, reset }: ErrorBoundaryProps) {
       <div>
         <button
           type="button"
-          onClick={reset}
+          onClick={handleRetry}
           disabled={!retryAllowed}
           aria-disabled={!retryAllowed}
           title={retryAllowed ? undefined : 'Sign in to retry'}
@@ -104,13 +152,15 @@ export default function ErrorBoundary({ error, reset }: ErrorBoundaryProps) {
         </button>
 
         {reportAllowed ? (
-          <button type="button" onClick={() => window.location.reload()}>
+          <button type="button" onClick={handleReport}>
             Report issue
           </button>
         ) : null}
 
         {supportAllowed ? (
-          <a href="/support">Contact support</a>
+          <a href="/support" onClick={handleSupport}>
+            Contact support
+          </a>
         ) : (
           <span aria-disabled="true" title="Escrow state unavailable">
             Contact support
