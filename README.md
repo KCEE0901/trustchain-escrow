@@ -355,3 +355,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, the Soroban toolchain, h
 
 <!-- handsoff-issue-621 -->
 - #621: Add operator telemetry for pull-request merge regression detection
+
+<!-- handsoff-issue-622 -->
+- #622: Add reproducibility checks for pull-request merge regression detection
