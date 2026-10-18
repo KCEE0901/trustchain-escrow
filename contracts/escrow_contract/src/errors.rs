@@ -23,4 +23,14 @@ pub enum EscrowError {
     ArbiterSelectionNotPending = 103,
     /// The arbiter selection has already been finalized and cannot change.
     ArbiterSelectionFinalized = 104,
+
+    // --- Deadline auto-cancellation lifecycle (602) ---
+    /// The escrow has no deadline configured, so auto-cancellation cannot run.
+    DeadlineNotSet = 200,
+    /// The deadline has not yet elapsed; auto-cancellation is not permitted.
+    DeadlineNotReached = 201,
+    /// The escrow is already in a terminal state and cannot be auto-cancelled.
+    EscrowAlreadyFinalized = 202,
+    /// The escrow has already been auto-cancelled by a prior call.
+    AlreadyAutoCancelled = 203,
 }
