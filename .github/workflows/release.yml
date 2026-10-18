@@ -260,3 +260,39 @@ jobs:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
           SLACK_COLOR: ${{ contains(needs.*.result, 'failure') && 'danger' || 'good' }}
           SLACK_MESSAGE: "${{ contains(needs.*.result, 'failure') && '❌ Release gate FAILED' || '✅ Release gate PASSED' }} — develop → main — ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+  # ─────────────────────────────────────────
+  # 🚨 Failure Notification Routing
+  # Single deduped alert per failed run, routed to the owning team.
+  # Only fires for main/develop parity; other branches are excluded.
+  # ─────────────────────────────────────────
+  notify-failure:
+    name: Route Failure Notification
+    runs-on: ubuntu-latest
+    needs: [audit, contract, backend, frontend, frontend-e2e, docker-build]
+    if: >-
+      always() &&
+      contains(needs.*.result, 'failure') &&
+      (github.base_ref == 'main' || github.base_ref == 'develop')
+
+    steps:
+      - name: Resolve owner from CODEOWNERS
+        id: owner
+        run: |
+          set -euo pipefail
+          owner="@${{ github.repository_owner }}"
+          if [ -f .github/CODEOWNERS ]; then
+            first=$(grep -vE '^\s*(#|$)' .github/CODEOWNERS | head -n1 | awk '{print $1}' || true)
+            if [ -n "${first:-}" ]; then
+              owner="$first"
+            fi
+          fi
+          echo "owner=$owner" >> "$GITHUB_OUTPUT"
+
+      - name: Slack failure alert (deduped)
+        if: ${{ env.SLACK_WEBHOOK != '' }}
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_COLOR: danger
+          SLACK_MESSAGE: "🚨 Release gate FAILED on ${{ github.base_ref }} — owner: ${{ steps.owner.outputs.owner }} — ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
