@@ -24,6 +24,56 @@ const forceReseed = args.includes('--force');
 const countIdx = args.indexOf('--count');
 const extraCount = countIdx !== -1 ? Math.max(0, parseInt(args[countIdx + 1] ?? '0', 10)) : 0;
 
+// ── Configuration validation ──────────────────────────────────────────────────
+// Fail fast on invalid or contradictory runtime settings before any seeding
+// work happens. Messages are deterministic and never echo secret values.
+
+const VALID_NODE_ENVS = ['development', 'test', 'production'];
+const MAX_EXTRA_COUNT = 10000;
+
+function validateConfig() {
+  const errors = [];
+
+  // --count must be a non-negative integer when provided
+  if (countIdx !== -1) {
+    const rawCount = args[countIdx + 1];
+    if (rawCount === undefined || rawCount.startsWith('--')) {
+      errors.push('--count requires a numeric value (e.g. --count 50).');
+    } else if (!/^\d+$/.test(rawCount)) {
+      errors.push(`--count must be a non-negative integer, received "${rawCount}".`);
+    } else if (Number(rawCount) > MAX_EXTRA_COUNT) {
+      errors.push(`--count must be <= ${MAX_EXTRA_COUNT}, received ${rawCount}.`);
+    }
+  }
+
+  // NODE_ENV, when set, must be a recognized value
+  const nodeEnv = process.env.NODE_ENV;
+  if (nodeEnv !== undefined && nodeEnv !== '' && !VALID_NODE_ENVS.includes(nodeEnv)) {
+    errors.push(
+      `NODE_ENV must be one of ${VALID_NODE_ENVS.join(', ')}, received "${nodeEnv}".`
+    );
+  }
+
+  // Contradictory settings: seeding production is destructive and disallowed
+  if (nodeEnv === 'production') {
+    errors.push('Refusing to seed with NODE_ENV=production. Use a non-production environment.');
+  }
+
+  // Contradictory settings: --force has no effect in a dry-run
+  if (isDryRun && forceReseed) {
+    errors.push('--force cannot be combined with --dry-run (no writes occur in a dry-run).');
+  }
+
+  if (errors.length > 0) {
+    console.error('❌ Invalid seed configuration:');
+    for (const message of errors) console.error(`   - ${message}`);
+    console.error('');
+    process.exit(1);
+  }
+}
+
+validateConfig();
+
 if (isDryRun) console.log('🔍  Dry-run mode — no writes will occur\n');
 
 const SEED_DATA = {
