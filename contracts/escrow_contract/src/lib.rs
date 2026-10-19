@@ -9318,3 +9318,48 @@ mod tests {
         assert!(matches!(result, Err(Ok(EscrowError::E57))));
     }
 }
+
+// BEGIN ISSUE-419 PAYMENT TOKEN STATUS UPGRADE TESTS
+#[cfg(test)]
+mod payment_token_status_upgrade_compat_tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, Bytes, Env};
+
+    #[test]
+    fn whitelist_status_tuple_and_storage_survive_code_upgrade() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let outsider = Address::generate(&env);
+        let approved = Address::generate(&env);
+        let unapproved = Address::generate(&env);
+        let id = env.register_contract(None, EscrowContract);
+        let contract = EscrowContractClient::new(&env, &id);
+        contract.initialize(&admin);
+
+        assert_eq!(contract.get_token_status(&approved), (false, false, false));
+        contract.set_token_whitelist_enabled(&admin, &true);
+        contract.add_approved_token(&admin, &approved);
+        let before = contract.get_token_status(&approved);
+        assert_eq!(before, (false, true, true));
+        assert_eq!(contract.get_token_status(&unapproved), (false, true, false));
+
+        // Same dummy WASM fixture used by existing upgrade_tests.rs.  This
+        // exercises storage/version compatibility in the native Soroban tests;
+        // it is not a migration test between two separately compiled releases.
+        let wasm = Bytes::from_slice(&env, &[0, 97, 115, 109, 1, 0, 0, 0]);
+        let hash = env.deployer().upload_contract_wasm(wasm);
+        assert_eq!(contract.upgrade(&admin, &hash), Ok(2));
+        assert_eq!(contract.get_token_status(&approved), before);
+        assert_eq!(contract.get_token_status(&unapproved), (false, true, false));
+
+        // Authorization still applies and a rejected mutation is non-destructive.
+        assert!(contract.try_remove_approved_token(&outsider, &approved).is_err());
+        assert_eq!(contract.get_token_status(&approved), before);
+        contract.remove_approved_token(&admin, &approved);
+        assert_eq!(contract.get_token_status(&approved), (false, true, false));
+        contract.set_token_whitelist_enabled(&admin, &false);
+        assert_eq!(contract.get_token_status(&approved), (false, false, false));
+    }
+}
+// END ISSUE-419 PAYMENT TOKEN STATUS UPGRADE TESTS
