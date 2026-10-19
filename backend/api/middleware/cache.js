@@ -37,6 +37,11 @@
  *   CACHE_TTL_DETAIL=30
  *   CACHE_TTL_LEADERBOARD=300
  *   CACHE_TTL_EVENTS=15
+ *   CACHE_TTL_REPUTATION=60
+ *   CACHE_TTL_STATIC=600
+ *
+ * Each must be a whole number of seconds in [1, MAX_TTL_SECONDS]; invalid
+ * values (and invalid middleware options) throw at startup.
  *
  * @module middleware/cache
  */
@@ -62,17 +67,66 @@ function degraded(operation, fallback) {
   };
 }
 
+// ── Configuration validation ──────────────────────────────────────────────────
+
+/** Upper bound for any cache TTL (seconds). */
+export const MAX_TTL_SECONDS = 86400;
+
+const TTL_SETTINGS = {
+  DEFAULT: ['CACHE_TTL_DEFAULT', 60],
+  LIST: ['CACHE_TTL_LIST', 15],
+  DETAIL: ['CACHE_TTL_DETAIL', 30],
+  LEADERBOARD: ['CACHE_TTL_LEADERBOARD', 300],
+  EVENTS: ['CACHE_TTL_EVENTS', 15],
+  REPUTATION: ['CACHE_TTL_REPUTATION', 60],
+  STATIC: ['CACHE_TTL_STATIC', 600],
+};
+
+/** Messages name the offending setting but never echo its value. */
+function configError(message) {
+  const err = new Error(`Invalid cache configuration: ${message}`);
+  err.code = 'CACHE_CONFIG_INVALID';
+  return err;
+}
+
+function isValidTtl(value) {
+  return Number.isInteger(value) && value >= 1 && value <= MAX_TTL_SECONDS;
+}
+
+/**
+ * Parses and validates the CACHE_TTL_* settings, failing fast on bad input.
+ *
+ * @param {Record<string, string|undefined>} [env]
+ * @returns {Record<keyof typeof TTL_SETTINGS, number>}
+ */
+export function validateCacheConfig(env = process.env) {
+  const ttl = {};
+  for (const [name, [setting, fallback]] of Object.entries(TTL_SETTINGS)) {
+    const raw = env[setting]?.trim();
+    if (!raw) {
+      ttl[name] = fallback;
+      continue;
+    }
+    const value = /^\d+$/.test(raw) ? Number(raw) : NaN;
+    if (!isValidTtl(value)) {
+      throw configError(
+        `${setting} must be a whole number of seconds between 1 and ${MAX_TTL_SECONDS}`,
+      );
+    }
+    ttl[name] = value;
+  }
+  return Object.freeze(ttl);
+}
+
+function assertListOption(fn, name, value) {
+  if (!Array.isArray(value) && typeof value !== 'function') {
+    throw configError(`${fn} option "${name}" must be an array or a function`);
+  }
+}
+
 // ── TTL presets (overridable via env) ─────────────────────────────────────────
 
-export const TTL = {
-  DEFAULT: parseInt(process.env.CACHE_TTL_DEFAULT || '60', 10),
-  LIST: parseInt(process.env.CACHE_TTL_LIST || '15', 10),
-  DETAIL: parseInt(process.env.CACHE_TTL_DETAIL || '30', 10),
-  LEADERBOARD: parseInt(process.env.CACHE_TTL_LEADERBOARD || '300', 10),
-  EVENTS: parseInt(process.env.CACHE_TTL_EVENTS || '15', 10),
-  REPUTATION: parseInt(process.env.CACHE_TTL_REPUTATION || '60', 10),
-  STATIC: parseInt(process.env.CACHE_TTL_STATIC || '600', 10),
-};
+export const TTL = validateCacheConfig();
 
 // ── Key builder ───────────────────────────────────────────────────────────────
 
@@ -138,6 +192,16 @@ const inflightMisses = createSingleFlight();
  */
 export function cacheResponse(options = {}) {
   const { ttl = TTL.DEFAULT, tags = [], keyFn = buildCacheKey, skip } = options;
+  if (!isValidTtl(ttl)) {
+    throw configError(
+      `cacheResponse option "ttl" must be a whole number of seconds between 1 and ${MAX_TTL_SECONDS}`,
+    );
+  }
+  assertListOption('cacheResponse', 'tags', tags);
+  if (typeof keyFn !== 'function') throw configError('cacheResponse option "keyFn" must be a function');
+  if (skip !== undefined && typeof skip !== 'function') {
+    throw configError('cacheResponse option "skip" must be a function');
+  }
 
   return async (req, res, next) => {
     // Only cache GET / HEAD requests
@@ -233,6 +297,12 @@ function sendHit(res, key, body) {
  */
 export function invalidateOn(options = {}) {
   const { tags = [], keys = [], prefixes = [], when = 'after' } = options;
+  if (when !== 'before' && when !== 'after') {
+    throw configError('invalidateOn option "when" must be "before" or "after"');
+  }
+  assertListOption('invalidateOn', 'tags', tags);
+  assertListOption('invalidateOn', 'keys', keys);
+  assertListOption('invalidateOn', 'prefixes', prefixes);
 
   const doInvalidate = async (req) => {
     // Deduplicate so a repeated tag/key/prefix is only invalidated once per request.
