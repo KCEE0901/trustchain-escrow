@@ -630,6 +630,97 @@ const updateSettings = async (req, res) => {
   }
 };
 
+// ── Settings retention ────────────────────────────────────────────────────────
+//
+// Only `PERSISTED_SETTING_KEYS` are ever read back, so any other row in
+// `platform_settings` (a key from an older release, a manual insert) is dead
+// data that grows without bound. `pruneSettings` removes those rows in bounded
+// batches. Allowlisted rows are never touched, and stale values are never
+// returned or logged: a removed row may hold anything.
+
+/** Most stale rows removed by one prune request. */
+export const SETTINGS_PRUNE_BATCH_LIMIT = 100;
+
+/** Stale (non-allowlisted) setting keys, oldest first, at most `limit` of them. */
+async function findStaleSettingKeys(limit) {
+  const rows = await withSettingsStore((store) =>
+    store.findMany({
+      where: { key: { notIn: PERSISTED_SETTING_KEYS } },
+      select: { key: true },
+      orderBy: [{ updatedAt: 'asc' }, { key: 'asc' }],
+      take: limit + 1,
+    }),
+  );
+  const keys = (Array.isArray(rows) ? rows : [])
+    .map((row) => row?.key)
+    .filter((key) => typeof key === 'string' && !PERSISTED_SETTING_KEYS.includes(key));
+  return { keys: keys.slice(0, limit), hasMore: keys.length > limit };
+}
+
+/**
+ * POST /api/admin/settings/prune
+ * Deletes persisted settings whose key is no longer allowlisted, at most
+ * `SETTINGS_PRUNE_BATCH_LIMIT` per call. `{ "dryRun": true }` reports what
+ * would be removed without deleting. Returns 503, deleting nothing, when the
+ * settings store is unavailable.
+ */
+const pruneSettings = async (req, res) => {
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    if (body.dryRun !== undefined && typeof body.dryRun !== 'boolean') {
+      return res.status(400).json({ error: 'dryRun must be a boolean.' });
+    }
+    const dryRun = body.dryRun === true;
+
+    let stale;
+    let removed = 0;
+    try {
+      stale = await findStaleSettingKeys(SETTINGS_PRUNE_BATCH_LIMIT);
+      if (!dryRun && stale.keys.length > 0) {
+        const result = await withSettingsStore((store) =>
+          store.deleteMany({
+            // Re-check the allowlist in the delete itself, so a key that was
+            // allowlisted in the meantime is never removed.
+            where: { key: { in: stale.keys, notIn: PERSISTED_SETTING_KEYS } },
+          }),
+        );
+        removed = Number.isInteger(result?.count) ? result.count : stale.keys.length;
+      }
+    } catch (err) {
+      logSettingsDegraded('pruneSettings', err, req);
+      return res.status(503).json({
+        error: 'Settings store is unavailable; nothing was pruned.',
+        code: SETTINGS_STORE_UNAVAILABLE,
+        removed: 0,
+      });
+    }
+
+    const keys = [...stale.keys].sort();
+    if (!dryRun && removed > 0) {
+      adminLog.warn({
+        type: 'admin_action',
+        action: 'PRUNE_SETTINGS',
+        removed,
+        keys,
+        performedBy: req.user?.address ?? 'unknown',
+        requestId: req.id,
+      });
+    }
+
+    res.json({
+      dryRun,
+      matched: keys.length,
+      removed,
+      keys,
+      hasMore: stale.hasMore,
+      limit: SETTINGS_PRUNE_BATCH_LIMIT,
+    });
+  } catch (err) {
+    logControllerError('admin.pruneSettings', err, req);
+    res.status(500).json({ error: 'Failed to prune settings.' });
+  }
+};
+
 export default {
   listUsers,
   getUserDetail,
@@ -641,6 +732,7 @@ export default {
   getAuditLogs,
   getSettings,
   updateSettings,
+  pruneSettings,
   getRateLimits,
   updateRateLimit,
   getUserRateLimitUsage,

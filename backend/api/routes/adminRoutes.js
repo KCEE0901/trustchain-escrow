@@ -108,6 +108,14 @@ router.get('/settings', adminController.getSettings);
  */
 router.patch('/settings', requireMfa, adminController.updateSettings);
 
+/**
+ * @route  POST /api/admin/settings/prune
+ * @desc   Remove persisted settings that are no longer allowlisted (bounded batch)
+ * @body   { dryRun?: boolean }
+ * @security Requires MFA verification
+ */
+router.post('/settings/prune', requireMfa, adminController.pruneSettings);
+
 // ── Audit Logs ─────────────────────────────────────────────────────────────────
 /**
  * @route  GET /api/admin/audit-logs
