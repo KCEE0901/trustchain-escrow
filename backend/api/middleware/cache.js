@@ -43,7 +43,24 @@
 
 import { createHash } from 'crypto';
 import cache from '../../lib/cache.js';
-import { createSingleFlight } from '../../lib/operationalControls.js';
+import { createSingleFlight, gracefullyDegrade } from '../../lib/operationalControls.js';
+import { createModuleLogger } from '../../config/logger.js';
+
+const log = createModuleLogger('middleware.cache');
+
+/** Returned in place of a cache read when the cache backend is unavailable. */
+const BYPASS = Symbol('cache.bypass');
+
+/**
+ * Logs a cache backend failure without keys, values, tenant data or error text
+ * (driver errors can echo keys), so log lines stay deterministic.
+ */
+function degraded(operation, fallback) {
+  return () => {
+    log.warn({ message: 'cache_backend_unavailable', operation });
+    return fallback;
+  };
+}
 
 // ── TTL presets (overridable via env) ─────────────────────────────────────────
 
@@ -132,7 +149,15 @@ export function cacheResponse(options = {}) {
     const key = keyFn(req);
 
     // ── Cache hit ─────────────────────────────────────────────────────────────
-    const cached = await cache.get(key);
+    const cached = await gracefullyDegrade(() => cache.get(key), degraded('get', BYPASS));
+
+    // ── Backend unavailable: pass straight through to the handler ─────────────
+    // Nothing is served from or written to the cache, so a failed read can
+    // never fall back to another tenant's entry.
+    if (cached === BYPASS) {
+      res.setHeader('X-Cache', 'BYPASS');
+      return next();
+    }
     if (cached !== null) return sendHit(res, key, cached);
 
     // ── Concurrent miss for the same tenant-scoped key ────────────────────────
@@ -170,7 +195,10 @@ export function cacheResponse(options = {}) {
           const resolvedTags = (typeof tags === 'function' ? tags(req) : tags).map((t) =>
             tenantTag(t, req),
           );
-          await cache.setWithTags(key, body, ttl, resolvedTags);
+          await gracefullyDegrade(
+            () => cache.setWithTags(key, body, ttl, resolvedTags),
+            degraded('set'),
+          );
         }
         settle(ok ? body : undefined);
       }
@@ -223,7 +251,7 @@ export function invalidateOn(options = {}) {
 
   if (when === 'before') {
     return async (req, _res, next) => {
-      await doInvalidate(req);
+      await gracefullyDegrade(() => doInvalidate(req), degraded('invalidate'));
       next();
     };
   }
@@ -234,9 +262,7 @@ export function invalidateOn(options = {}) {
     res.on('finish', () => {
       if (!invalidated && res.statusCode >= 200 && res.statusCode < 300) {
         invalidated = true;
-        doInvalidate(req).catch((err) =>
-          console.error('[Cache] Post-response invalidation failed:', err.message),
-        );
+        gracefullyDegrade(() => doInvalidate(req), degraded('invalidate'));
       }
     });
     next();
