@@ -43,6 +43,7 @@
 
 import { createHash } from 'crypto';
 import cache from '../../lib/cache.js';
+import { createSingleFlight } from '../../lib/operationalControls.js';
 
 // ── TTL presets (overridable via env) ─────────────────────────────────────────
 
@@ -100,6 +101,9 @@ function tenantTag(tag, req) {
 
 // ── Cache response middleware ─────────────────────────────────────────────────
 
+/** Coalesces concurrent misses per tenant-scoped cache key. */
+const inflightMisses = createSingleFlight();
+
 /**
  * @typedef {Object} CacheOptions
  * @property {number}                          [ttl]    — TTL in seconds (default: TTL.DEFAULT)
@@ -129,30 +133,58 @@ export function cacheResponse(options = {}) {
 
     // ── Cache hit ─────────────────────────────────────────────────────────────
     const cached = await cache.get(key);
-    if (cached !== null) {
-      res.setHeader('X-Cache', 'HIT');
+    if (cached !== null) return sendHit(res, key, cached);
+
+    // ── Concurrent miss for the same tenant-scoped key ────────────────────────
+    // Another request is already producing this entry: reuse its result rather
+    // than running the handler and cache write a second time.
+    if (inflightMisses.has(key)) {
+      const shared = await inflightMisses(key, () => undefined);
+      if (shared !== undefined) return sendHit(res, key, shared);
+      res.setHeader('X-Cache', 'MISS');
       res.setHeader('X-Cache-Key', key);
-      return res.json(cached);
+      return next();
     }
 
     res.setHeader('X-Cache', 'MISS');
     res.setHeader('X-Cache-Key', key);
 
-    // ── Intercept res.json to store the response ──────────────────────────────
+    // Leader: followers receive the cached body, or undefined when the handler
+    // did not produce a cacheable response (they then run the handler themselves).
+    let settle;
+    const outcome = new Promise((resolve) => {
+      settle = resolve;
+    });
+    inflightMisses(key, () => outcome);
+    res.on('finish', () => settle(undefined));
+    res.on('close', () => settle(undefined));
+
+    // ── Intercept res.json to store the response (at most once) ───────────────
     const originalJson = res.json.bind(res);
+    let handled = false;
     res.json = async (body) => {
-      // Only cache successful responses
-      if (res.statusCode >= 200 && res.statusCode < 300) {
-        const resolvedTags = (typeof tags === 'function' ? tags(req) : tags).map((t) =>
-          tenantTag(t, req),
-        );
-        await cache.setWithTags(key, body, ttl, resolvedTags);
+      if (!handled) {
+        handled = true;
+        const ok = res.statusCode >= 200 && res.statusCode < 300;
+        if (ok) {
+          const resolvedTags = (typeof tags === 'function' ? tags(req) : tags).map((t) =>
+            tenantTag(t, req),
+          );
+          await cache.setWithTags(key, body, ttl, resolvedTags);
+        }
+        settle(ok ? body : undefined);
       }
       return originalJson(body);
     };
 
     next();
   };
+}
+
+function sendHit(res, key, body) {
+  res.setHeader('X-Cache', 'HIT');
+  res.setHeader('X-Cache-Key', key);
+  return res.json(body);
 }
 
 // ── Invalidation middleware ───────────────────────────────────────────────────
@@ -175,11 +207,12 @@ export function invalidateOn(options = {}) {
   const { tags = [], keys = [], prefixes = [], when = 'after' } = options;
 
   const doInvalidate = async (req) => {
-    const resolvedTags = (typeof tags === 'function' ? tags(req) : tags).map((t) =>
+    // Deduplicate so a repeated tag/key/prefix is only invalidated once per request.
+    const resolvedTags = unique((typeof tags === 'function' ? tags(req) : tags).map((t) =>
       tenantTag(t, req),
-    );
-    const resolvedKeys = typeof keys === 'function' ? keys(req) : keys;
-    const resolvedPrefixes = typeof prefixes === 'function' ? prefixes(req) : prefixes;
+    ));
+    const resolvedKeys = unique(typeof keys === 'function' ? keys(req) : keys);
+    const resolvedPrefixes = unique(typeof prefixes === 'function' ? prefixes(req) : prefixes);
 
     await Promise.all([
       resolvedTags.length ? cache.invalidateTags(resolvedTags) : Promise.resolve(),
@@ -195,10 +228,12 @@ export function invalidateOn(options = {}) {
     };
   }
 
-  // 'after' — invalidate once the response has been sent
+  // 'after' — invalidate once the response has been sent (once per request)
   return (req, res, next) => {
+    let invalidated = false;
     res.on('finish', () => {
-      if (res.statusCode >= 200 && res.statusCode < 300) {
+      if (!invalidated && res.statusCode >= 200 && res.statusCode < 300) {
+        invalidated = true;
         doInvalidate(req).catch((err) =>
           console.error('[Cache] Post-response invalidation failed:', err.message),
         );
@@ -206,6 +241,10 @@ export function invalidateOn(options = {}) {
     });
     next();
   };
+}
+
+function unique(values) {
+  return [...new Set(values)];
 }
 
 // ── Convenience factories ─────────────────────────────────────────────────────
