@@ -10,9 +10,15 @@
  * Implement with SWR — similar pattern to useEscrow.
  * Cache aggressively (revalidateOnFocus: false) since reputation
  * changes infrequently.
+ *
+ * Telemetry: register a reporter with setReputationTelemetryReporter() to
+ * receive one privacy-safe event per lookup. Events never contain the wallet
+ * address, the reputation payload or error messages.
  */
 
 'use client';
+
+import { useEffect } from 'react';
 
 const BADGE_THRESHOLDS = {
   ELITE: 1000,
@@ -45,10 +51,109 @@ export function getBadgeFromScore(score) {
  */
 export function useReputation(address) {
   // TODO: implement
-  return {
+  const result = {
     reputation: null,
     badge: 'NEW',
     isLoading: false,
     error: address ? new Error('useReputation not implemented — see Issue #39') : null,
   };
+
+  const { outcome, badge, errorCode, hasData } = buildReputationTelemetry({
+    address,
+    reputation: result.reputation,
+    error: result.error,
+    isLoading: result.isLoading,
+  });
+
+  useEffect(() => {
+    if (outcome === 'skipped' || outcome === 'loading') return;
+    reportReputationTelemetry({
+      event: REPUTATION_TELEMETRY_EVENT,
+      outcome,
+      badge,
+      errorCode,
+      hasData,
+    });
+    // `address` re-reports when the user looks up someone else; it is never
+    // part of the payload.
+  }, [address, outcome, badge, errorCode, hasData]);
+
+  return result;
+}
+
+// ── Telemetry ─────────────────────────────────────────────────────────────────
+
+export const REPUTATION_TELEMETRY_EVENT = 'reputation.fetch';
+
+let telemetryReporter = null;
+
+/**
+ * Registers the function that receives reputation telemetry events, or
+ * removes it when given anything other than a function. No reporter is
+ * registered by default, so nothing is sent unless the app opts in.
+ *
+ * @param {((event: object) => void)|null} reporter
+ */
+export function setReputationTelemetryReporter(reporter) {
+  telemetryReporter = typeof reporter === 'function' ? reporter : null;
+}
+
+/**
+ * Maps an error to a fixed code. The message is never used as a value, since
+ * it may contain the address or response body.
+ *
+ * @param {unknown} error
+ * @returns {'not_implemented'|'timeout'|'network'|'http_4xx'|'http_5xx'|'unknown'}
+ */
+export function classifyReputationError(error) {
+  if (!error || typeof error !== 'object') return 'unknown';
+  const status = Number(error.status ?? error.response?.status);
+  if (status >= 400 && status < 500) return 'http_4xx';
+  if (status >= 500 && status < 600) return 'http_5xx';
+  if (error.name === 'AbortError' || error.name === 'TimeoutError') return 'timeout';
+  if (error.name === 'TypeError') return 'network';
+  if (typeof error.message === 'string' && /not implemented/i.test(error.message)) {
+    return 'not_implemented';
+  }
+  return 'unknown';
+}
+
+/**
+ * Builds the telemetry event for one reputation lookup. The result depends
+ * only on its inputs and holds no address, score or raw payload: just the
+ * outcome, the derived badge tier and a fixed error code.
+ *
+ * @param {{ address?: string|null, reputation?: object|null, error?: unknown, isLoading?: boolean }} input
+ * @returns {{ event: string, outcome: 'skipped'|'loading'|'success'|'error', badge: string, errorCode: string|null, hasData: boolean }}
+ */
+export function buildReputationTelemetry({ address, reputation, error, isLoading } = {}) {
+  const base = { event: REPUTATION_TELEMETRY_EVENT, badge: 'NEW', errorCode: null, hasData: false };
+  if (!address) return { ...base, outcome: 'skipped' };
+  if (error) return { ...base, outcome: 'error', errorCode: classifyReputationError(error) };
+  if (isLoading) return { ...base, outcome: 'loading' };
+
+  const score = Number(reputation?.total_score ?? reputation?.totalScore ?? reputation?.score);
+  return {
+    ...base,
+    outcome: 'success',
+    badge: getBadgeFromScore(Number.isFinite(score) ? score : 0),
+    hasData: reputation != null,
+  };
+}
+
+/**
+ * Sends an event to the registered reporter. Reporter failures are swallowed
+ * so telemetry can never break the hook.
+ *
+ * @param {object} event
+ * @returns {boolean} whether a reporter accepted the event
+ */
+export function reportReputationTelemetry(event) {
+  if (!telemetryReporter) return false;
+  try {
+    telemetryReporter(event);
+    return true;
+  } catch {
+    return false;
+  }
 }

@@ -56,8 +56,10 @@ mod admin_transfer_tests;
 mod amount_limits_tests;
 mod arbiter_allowlist;
 mod arbiter_allowlist_tests;
+mod arbiter_lifecycle_event_tests;
 mod arbiter_lifecycle_tests;
 mod arbiter_reputation_tests;
+mod arbiter_storage_growth_tests;
 mod arbiter_validation_tests;
 mod auto_expiry;
 mod batch_add_milestones_cap_tests;
@@ -111,6 +113,7 @@ mod token_whitelist_tests;
 mod transfer_client_tests;
 mod types;
 mod upgrade_tests;
+mod wrapped_token_auth_tests;
 
 pub use errors::EscrowError;
 use storage::StorageManager;
@@ -122,7 +125,7 @@ pub use types::{
     StateHistoryEntry, Timelock, MS_APPROVED, MS_DISPUTED, MS_PENDING, MS_REJECTED, MS_RELEASED,
     MS_SUBMITTED,
 };
-use types::{CancellationRequest, RecurringPaymentConfig, SlashRecord};
+use types::{ArbiterUpdatedEvent, CancellationRequest, RecurringPaymentConfig, SlashRecord};
 use types::{FundPayload, ProposalPayload, ProposalType};
 
 use soroban_sdk::{
@@ -5711,9 +5714,19 @@ impl EscrowContract {
             }
         }
 
+        let previous_arbiter = meta.arbiter.clone();
         meta.arbiter = new_arbiter.clone();
         ContractStorage::save_escrow_meta(&env, &meta);
-        events::emit_arbiter_updated(&env, escrow_id, &new_arbiter);
+        events::emit_arbiter_updated(
+            &env,
+            &ArbiterUpdatedEvent {
+                escrow_id,
+                previous_arbiter,
+                new_arbiter,
+                updated_at: env.ledger().timestamp(),
+                ledger: env.ledger().sequence(),
+            },
+        );
         Ok(())
     }
 

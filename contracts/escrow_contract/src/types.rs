@@ -878,3 +878,41 @@ pub struct DexSwapRecord {
     /// Whether the swap was successful.
     pub success: bool,
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ARBITER SELECTION LIFECYCLE
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Payload of the `arb_upd` event, emitted whenever the arbiter of an active
+/// escrow is selected, replaced or removed.
+///
+/// It carries both sides of the change plus the ledger position, so an
+/// indexer can apply events in order and rebuild the arbiter history without
+/// reading contract state. It holds only public addresses and ledger data.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArbiterUpdatedEvent {
+    /// Escrow whose arbiter changed (also the second event topic).
+    pub escrow_id: u64,
+    /// Arbiter before the change; `None` if the escrow had none.
+    pub previous_arbiter: Option<Address>,
+    /// Arbiter after the change; `None` when the arbiter was removed.
+    pub new_arbiter: Option<Address>,
+    /// Ledger timestamp of the change.
+    pub updated_at: u64,
+    /// Ledger sequence of the change, for deterministic ordering.
+    pub ledger: u32,
+}
+
+/// Storage-growth budget for the arbiter selection lifecycle.
+///
+/// Selecting an arbiter may grow the stored `EscrowMeta` entry by at most this
+/// many XDR bytes: one `Option<Address>` going from `None` to `Some`.
+#[allow(dead_code)]
+pub const ARBITER_SELECTION_MAX_META_GROWTH_BYTES: u32 = 64;
+
+/// Replacing or removing an arbiter rewrites `EscrowMeta` in place, so after
+/// any number of updates the entry may never exceed its size with one arbiter
+/// set. No other persistent entry is created by the lifecycle.
+#[allow(dead_code)]
+pub const ARBITER_UPDATE_MAX_META_GROWTH_BYTES: u32 = 0;
