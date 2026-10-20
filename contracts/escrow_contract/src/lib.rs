@@ -83,6 +83,8 @@ mod governance_escalation_tests;
 mod lock_time_enforcement_tests;
 mod max_escrow_amount_tests;
 mod meta_snapshot_tests;
+mod milestone_auth_boundary_tests;
+mod milestone_storage_growth_tests;
 mod module_registration_tests;
 mod multisig_lifecycle_tests;
 mod multisig_threshold_tests;

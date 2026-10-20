@@ -57,6 +57,26 @@ pub const MS_REJECTED: MilestoneStatus = 0x10;
 /// A dispute has been raised on this milestone. Funds are frozen.
 pub const MS_DISPUTED: MilestoneStatus = 0x20;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// MILESTONE LOOKUP SCALABILITY BUDGET
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Each milestone lives in its own `PackedDataKey::Milestone` entry, so adding
+/// milestones must not grow the `EscrowMeta` entry at all.
+#[allow(dead_code)]
+pub const ESCROW_META_GROWTH_PER_MILESTONE_BYTES: u32 = 0;
+
+/// Upper bound on the XDR size of one stored milestone with a title of
+/// `MAX_STRING_LEN` bytes and no approvals yet.
+#[allow(dead_code)]
+pub const MILESTONE_ENTRY_MAX_BYTES: u32 = 1_024;
+
+/// Looking up a milestone reads one entry whatever its index or the number of
+/// milestones, so its CPU cost may vary by at most this percentage between
+/// the first and last milestone of a full escrow.
+#[allow(dead_code)]
+pub const MILESTONE_LOOKUP_MAX_COST_SPREAD_PCT: u64 = 10;
+
 /// Direction for a price-indexed release condition.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
