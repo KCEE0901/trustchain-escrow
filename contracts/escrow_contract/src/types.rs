@@ -535,6 +535,24 @@ pub struct EscrowExpiredEvent {
     pub expired_at: u64,
 }
 
+// ── Deadline auto-cancellation storage budget ───────────────────────────────
+//
+// `trigger_expiry` cancels an expired escrow in place: it rewrites the one
+// `EscrowMeta` entry and creates nothing. These limits are the regression
+// budget enforced by `deadline_storage_growth_tests`.
+
+/// Most the `EscrowMeta` entry may grow, in XDR bytes, when an escrow is
+/// auto-cancelled. Only the status label changes size (`Active` →
+/// `Cancelled` adds 4 bytes of symbol padding).
+#[allow(dead_code)]
+pub const DEADLINE_AUTO_CANCEL_MAX_META_GROWTH_BYTES: u32 = 8;
+
+/// Most the CPU cost of auto-cancelling an escrow may differ, in percent,
+/// between an escrow with no milestones and one at `MAX_MILESTONES`: the
+/// cancellation must not touch milestone entries.
+#[allow(dead_code)]
+pub const DEADLINE_AUTO_CANCEL_MAX_COST_SPREAD_PCT: u64 = 10;
+
 /// A cancellation request for an escrow.
 #[contracttype]
 #[derive(Clone, Debug)]

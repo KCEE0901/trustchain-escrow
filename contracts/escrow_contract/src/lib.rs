@@ -69,6 +69,8 @@ mod bridge_tests;
 mod contract_version_tests;
 mod creation_validation_tests;
 mod deadline_auto_cancellation_tests;
+mod deadline_auth_boundary_tests;
+mod deadline_storage_growth_tests;
 mod deployment_tests;
 mod dispute_evidence;
 mod dispute_evidence_tests;

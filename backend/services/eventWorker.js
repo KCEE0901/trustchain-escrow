@@ -152,6 +152,90 @@ const alertDedupeStore = () => {
   return failureAlerting.store;
 };
 
+// ── Failure alerting telemetry ─────────────────────────────────────────────────
+//
+// Every alert attempt is counted by outcome and logged as one structured line
+// correlated by `alertKey` (a payload hash, never the payload itself). Labels
+// come from fixed sets so metric cardinality stays bounded, and error text,
+// stacks and event payloads are never recorded: they may carry secrets.
+
+/** Outcomes of one `sendPermanentFailureAlert` call. */
+export const FAILURE_ALERT_OUTCOMES = Object.freeze(['sent', 'duplicate', 'delivery_failed']);
+/** Distinct event-type labels tracked before new types fold into `other`. */
+export const MAX_TELEMETRY_EVENT_TYPES = 32;
+const TELEMETRY_EVENT_TYPE_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+
+const emptyFailureAlertMetrics = () => ({
+  outcomes: Object.fromEntries(FAILURE_ALERT_OUTCOMES.map((outcome) => [outcome, 0])),
+  dedupeUnavailable: 0,
+  byEventType: new Map(),
+});
+
+let failureAlertMetrics = emptyFailureAlertMetrics();
+
+/** Bounded event-type label: malformed values are `Unknown`, overflow is `other`. */
+const telemetryEventType = (eventType) => {
+  if (typeof eventType !== 'string' || !TELEMETRY_EVENT_TYPE_PATTERN.test(eventType)) {
+    return 'Unknown';
+  }
+  const { byEventType } = failureAlertMetrics;
+  if (byEventType.has(eventType) || byEventType.size < MAX_TELEMETRY_EVENT_TYPES) return eventType;
+  return 'other';
+};
+
+/**
+ * Record one alert attempt and log it as a single structured line.
+ * @returns {Object} the logged telemetry entry
+ */
+export const recordFailureAlertTelemetry = ({
+  alertKey,
+  outcome,
+  eventType,
+  attemptsMade,
+  ledger,
+  dedupe = 'ok',
+}) => {
+  if (!FAILURE_ALERT_OUTCOMES.includes(outcome)) {
+    throw new Error(`unknown failure alert outcome: ${outcome}`);
+  }
+  const label = telemetryEventType(eventType);
+  failureAlertMetrics.outcomes[outcome] += 1;
+  if (dedupe === 'unavailable') failureAlertMetrics.dedupeUnavailable += 1;
+  const counts =
+    failureAlertMetrics.byEventType.get(label) ??
+    Object.fromEntries(FAILURE_ALERT_OUTCOMES.map((o) => [o, 0]));
+  counts[outcome] += 1;
+  failureAlertMetrics.byEventType.set(label, counts);
+
+  const entry = {
+    type: 'event_failure_alert',
+    alertKey: typeof alertKey === 'string' ? alertKey : null,
+    outcome,
+    eventType: label,
+    attemptsMade: Number.isInteger(attemptsMade) ? attemptsMade : null,
+    ledger: Number.isInteger(ledger) ? ledger : null,
+    dedupe: dedupe === 'unavailable' ? 'unavailable' : 'ok',
+  };
+  console.log(`[AlertTelemetry] ${JSON.stringify(entry)}`);
+  return entry;
+};
+
+/** Snapshot of the failure alerting counters (safe to serialize). */
+export const getFailureAlertMetrics = () => ({
+  outcomes: { ...failureAlertMetrics.outcomes },
+  dedupeUnavailable: failureAlertMetrics.dedupeUnavailable,
+  byEventType: Object.fromEntries(
+    [...failureAlertMetrics.byEventType.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([type, counts]) => [type, { ...counts }]),
+  ),
+});
+
+/** Reset the failure alerting counters (tests, process-level rollover). */
+export const resetFailureAlertMetrics = () => {
+  failureAlertMetrics = emptyFailureAlertMetrics();
+};
+
 /**
  * Send the alert for a permanent failure at most once per failure key.
  *
@@ -162,6 +246,18 @@ export const sendPermanentFailureAlert = async ({ alertKey, originalJob, error, 
   const store = alertDedupeStore();
   const token = randomUUID();
 
+  const eventType = describeEventType(originalJob?.event);
+  let dedupe = 'ok';
+  const telemetry = (outcome) =>
+    recordFailureAlertTelemetry({
+      alertKey,
+      outcome,
+      eventType,
+      attemptsMade,
+      ledger: originalJob?.ledger,
+      dedupe,
+    });
+
   let claimed;
   try {
     claimed = await store.claim(alertKey, token, FAILURE_ALERT_LEASE_MS);
@@ -170,16 +266,18 @@ export const sendPermanentFailureAlert = async ({ alertKey, originalJob, error, 
     // over silently dropping a permanent failure.
     console.warn(`[DeadLetter] Alert dedupe store unavailable for ${alertKey}; sending without dedupe`);
     claimed = true;
+    dedupe = 'unavailable';
   }
   if (!claimed) {
     console.log(`[DeadLetter] Alert for ${alertKey} already sent or in flight; skipping`);
+    telemetry('duplicate');
     return 'duplicate';
   }
 
   const alert = {
     alertKey,
     ledger: originalJob?.ledger ?? null,
-    eventType: describeEventType(originalJob?.event),
+    eventType,
     attemptsMade: attemptsMade ?? null,
     error: safeErrorMessage(error),
   };
@@ -188,11 +286,13 @@ export const sendPermanentFailureAlert = async ({ alertKey, originalJob, error, 
     await failureAlerting.sender(alert);
   } catch (sendError) {
     await store.release(alertKey, token).catch(() => {});
+    telemetry('delivery_failed');
     throw sendError;
   }
   await store.markSent(alertKey, FAILURE_ALERT_TTL_MS).catch(() => {
     console.warn(`[DeadLetter] Could not record alert ${alertKey} as sent`);
   });
+  telemetry('sent');
   return 'sent';
 };
 
