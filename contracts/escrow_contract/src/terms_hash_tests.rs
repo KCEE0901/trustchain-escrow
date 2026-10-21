@@ -8,17 +8,15 @@
 #[allow(clippy::module_inception)]
 mod terms_hash_tests {
     use crate::terms_hash::{
-        check_terms_accepted, record_terms_acceptance, validate_terms_hash, get_dex_config,
-        load_dex_swap, record_dex_swap, set_dex_config,
+        check_terms_accepted, get_dex_config, load_dex_swap, record_dex_swap,
+        record_terms_acceptance, set_dex_config, validate_terms_hash,
     };
     use crate::{
         DexConfig, DexSwapRecord, EscrowContract, EscrowContractClient, EscrowError,
         MultisigConfig, TermsAcceptance,
     };
 
-    use soroban_sdk::{
-        testutils::Address as _, token, Address, BytesN, Env, Vec as SorobanVec,
-    };
+    use soroban_sdk::{testutils::Address as _, token, Address, BytesN, Env, Vec as SorobanVec};
 
     fn setup() -> (
         Env,
@@ -41,12 +39,7 @@ mod terms_hash_tests {
         (env, admin, client, freelancer, contract)
     }
 
-    fn register_token(
-        env: &Env,
-        admin: &Address,
-        recipient: &Address,
-        amount: i128,
-    ) -> Address {
+    fn register_token(env: &Env, admin: &Address, recipient: &Address, amount: i128) -> Address {
         let token_id = env.register_stellar_asset_contract_v2(admin.clone());
         let sac = token::StellarAssetClient::new(env, &token_id.address());
         sac.mint(recipient, &amount);
@@ -109,7 +102,10 @@ mod terms_hash_tests {
         assert!(escrow_id.is_ok());
 
         let accepted = contract.check_terms_accepted(escrow_id.unwrap());
-        assert!(matches!(accepted, Err(Ok(EscrowError::ClientHasNotAcceptedTerms))));
+        assert!(matches!(
+            accepted,
+            Err(Ok(EscrowError::ClientHasNotAcceptedTerms))
+        ));
 
         let accept_result = contract.accept_terms(&client, escrow_id.unwrap());
         assert!(accept_result.is_ok());
@@ -140,7 +136,10 @@ mod terms_hash_tests {
 
         let _ = contract.accept_terms(&client, escrow_id.unwrap());
         let second = contract.accept_terms(&client, escrow_id.unwrap());
-        assert!(matches!(second, Err(Ok(EscrowError::ClientAlreadyAcceptedTerms))));
+        assert!(matches!(
+            second,
+            Err(Ok(EscrowError::ClientAlreadyAcceptedTerms))
+        ));
     }
 
     // ── DEX swap flow ────────────────────────────────────────────────────
@@ -169,10 +168,7 @@ mod terms_hash_tests {
             &env,
             &DexConfig {
                 dex_contract_id: Address::generate(&env),
-                supported_pairs: SorobanVec::from_array(
-                    &env,
-                    [(token.clone(), token_out.clone())],
-                ),
+                supported_pairs: SorobanVec::from_array(&env, [(token.clone(), token_out.clone())]),
             },
         );
 
@@ -218,10 +214,7 @@ mod terms_hash_tests {
             &env,
             &DexConfig {
                 dex_contract_id: Address::generate(&env),
-                supported_pairs: SorobanVec::from_array(
-                    &env,
-                    [(token.clone(), token_out.clone())],
-                ),
+                supported_pairs: SorobanVec::from_array(&env, [(token.clone(), token_out.clone())]),
             },
         );
 
@@ -233,7 +226,10 @@ mod terms_hash_tests {
             &5_000_i128,
             &4_000_i128,
         );
-        assert!(matches!(result, Err(Ok(EscrowError::InvalidSwapParameters))));
+        assert!(matches!(
+            result,
+            Err(Ok(EscrowError::InvalidSwapParameters))
+        ));
     }
 
     #[test]
@@ -260,10 +256,7 @@ mod terms_hash_tests {
             &env,
             &DexConfig {
                 dex_contract_id: Address::generate(&env),
-                supported_pairs: SorobanVec::from_array(
-                    &env,
-                    [(token.clone(), token_out.clone())],
-                ),
+                supported_pairs: SorobanVec::from_array(&env, [(token.clone(), token_out.clone())]),
             },
         );
 

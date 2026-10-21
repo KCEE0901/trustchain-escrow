@@ -711,7 +711,10 @@ impl InsuranceContract {
         })
     }
 
-    pub fn get_insurance_pool_balance(env: Env, token_addr: Address) -> Result<i128, InsuranceError> {
+    pub fn get_insurance_pool_balance(
+        env: Env,
+        token_addr: Address,
+    ) -> Result<i128, InsuranceError> {
         Storage::require_initialized(&env)?;
         Ok(token::Client::new(&env, &token_addr).balance(&env.current_contract_address()))
     }
