@@ -68,8 +68,8 @@ mod bridge;
 mod bridge_tests;
 mod contract_version_tests;
 mod creation_validation_tests;
-mod deadline_auto_cancellation_tests;
 mod deadline_auth_boundary_tests;
+mod deadline_auto_cancellation_tests;
 mod deadline_storage_growth_tests;
 mod deployment_tests;
 mod dispute_evidence;
@@ -3591,7 +3591,9 @@ impl EscrowContract {
             ContractStorage::check_lock_time_expired(&env, escrow_id, meta.lock_time)?;
 
             if let Some(ref _th) = meta.terms_hash {
-                let acceptance = env.storage().persistent()
+                let acceptance = env
+                    .storage()
+                    .persistent()
                     .get(&DataKey::TermsAcceptance(escrow_id))
                     .ok_or(EscrowError::ClientHasNotAcceptedTerms)?;
                 if !acceptance.accepted {
@@ -3707,11 +3709,7 @@ impl EscrowContract {
     /// - Escrow is Active
     /// - Terms hash was set during creation
     /// - Client has not already accepted
-    pub fn accept_terms(
-        env: Env,
-        caller: Address,
-        escrow_id: u64,
-    ) -> Result<(), EscrowError> {
+    pub fn accept_terms(env: Env, caller: Address, escrow_id: u64) -> Result<(), EscrowError> {
         ContractStorage::require_initialized(&env)?;
         caller.require_auth();
         ContractStorage::require_not_paused(&env)?;
@@ -3726,17 +3724,17 @@ impl EscrowContract {
         let terms_hash = meta.terms_hash.ok_or(EscrowError::TermsHashEmpty)?;
 
         let key = DataKey::TermsAcceptance(escrow_id);
-        let mut acceptance: TermsAcceptance = env
-            .storage()
-            .persistent()
-            .get(&key)
-            .unwrap_or(TermsAcceptance {
-                escrow_id,
-                client: meta.client.clone(),
-                terms_hash,
-                accepted: false,
-                accepted_at: None,
-            });
+        let mut acceptance: TermsAcceptance =
+            env.storage()
+                .persistent()
+                .get(&key)
+                .unwrap_or(TermsAcceptance {
+                    escrow_id,
+                    client: meta.client.clone(),
+                    terms_hash,
+                    accepted: false,
+                    accepted_at: None,
+                });
         if acceptance.accepted {
             return Err(EscrowError::ClientAlreadyAcceptedTerms);
         }
@@ -3804,9 +3802,10 @@ impl EscrowContract {
             .get(&DataKey::DexConfig)
             .ok_or(EscrowError::DexNotConfigured)?;
 
-        let pair_found = dex_config.supported_pairs.iter().any(|(a, b)| {
-            *a == token_in && *b == token_out
-        });
+        let pair_found = dex_config
+            .supported_pairs
+            .iter()
+            .any(|(a, b)| *a == token_in && *b == token_out);
         if !pair_found {
             return Err(EscrowError::InvalidSwapParameters);
         }
@@ -5589,7 +5588,10 @@ impl EscrowContract {
             return 0;
         };
 
-        if matches!(meta.status, EscrowStatus::Completed | EscrowStatus::Cancelled) {
+        if matches!(
+            meta.status,
+            EscrowStatus::Completed | EscrowStatus::Cancelled
+        ) {
             return 0;
         }
 

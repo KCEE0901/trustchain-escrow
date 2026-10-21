@@ -1,9 +1,7 @@
 #![allow(dead_code)]
 #![cfg(test)]
 
-use soroban_sdk::{
-    testutils::Address as _, token, Address, BytesN, Env, Vec as SorobanVec,
-};
+use soroban_sdk::{testutils::Address as _, token, Address, BytesN, Env, Vec as SorobanVec};
 
 use crate::{EscrowContract, EscrowContractClient, EscrowError, MultisigConfig};
 
