@@ -8,6 +8,7 @@
  */
 
 import express from 'express';
+import { Counter, Histogram, register } from 'prom-client';
 import { parsePagination } from '../../lib/pagination.js';
 import {
   stellarEventsQueue,
@@ -18,33 +19,95 @@ import {
 
 const router = express.Router();
 
+// Only bounded, low-cardinality telemetry is retained. No job payloads, Redis
+// error messages, auth headers, or arbitrary request identifiers are metrics.
+const queueHealthCounters = { attempts: 0, ok: 0, errors: 0, retries: 0, timeouts: 0, invalidResponses: 0 };
+const queueHealthResultsMetric = register.getSingleMetric('trustchain_queue_health_results_total') ||
+  new Counter({ name: 'trustchain_queue_health_results_total',
+    help: 'Queue health requests by bounded outcome and reason', labelNames: ['outcome', 'reason'] });
+const queueHealthDurationMetric = register.getSingleMetric('trustchain_queue_health_duration_seconds') ||
+  new Histogram({ name: 'trustchain_queue_health_duration_seconds',
+    help: 'Queue health request duration', labelNames: ['outcome'],
+    buckets: [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30] });
+export function queueHealthTelemetry() { return { ...queueHealthCounters }; }
+function timeoutMs() {
+  const raw = process.env.QUEUE_HEALTH_TIMEOUT_MS;
+  const value = raw === undefined ? 2000 : Number(raw);
+  return Number.isInteger(value) && value >= 50 && value <= 30000 ? value : 2000;
+}
+function healthError(kind, retryable = false) {
+  return Object.assign(new Error('Queue health probe failed'), { kind, retryable });
+}
+async function boundedRead(fn) {
+  let timer;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(fn),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(healthError('timeout', true)), timeoutMs());
+        timer.unref?.();
+      }),
+    ]);
+  } finally { clearTimeout(timer); }
+}
+function redisInfoFields(info) {
+  if (typeof info !== 'string') throw healthError('invalid_response');
+  const result = Object.fromEntries(info.split(/\r?\n/)
+    .filter((line) => line && !line.startsWith('#') && line.includes(':'))
+    .map((line) => [line.slice(0, line.indexOf(':')), line.slice(line.indexOf(':') + 1)]));
+  if (!result.redis_version || !result.used_memory_human || !result.connected_clients) {
+    throw healthError('invalid_response');
+  }
+  return result;
+}
+async function readHealthSnapshot() {
+  const [mainCounts, deadCounts, waiting, active, completed, failed, deadWaiting, deadActive, info] =
+    await boundedRead(() => Promise.all([
+      stellarEventsQueue.getJobCounts(), deadLetterQueue.getJobCounts(),
+      stellarEventsQueue.getWaiting(), stellarEventsQueue.getActive(),
+      stellarEventsQueue.getCompleted(), stellarEventsQueue.getFailed(),
+      deadLetterQueue.getWaiting(), deadLetterQueue.getActive(), connection.info(),
+    ]));
+  if ([mainCounts, deadCounts].some((item) => !item || typeof item !== 'object' || Array.isArray(item)) ||
+    [waiting, active, completed, failed, deadWaiting, deadActive].some((item) => !Array.isArray(item))) {
+    throw healthError('invalid_response');
+  }
+  return { mainCounts, deadCounts, waiting, active, completed, failed, deadWaiting,
+    deadActive, redisInfo: redisInfoFields(info) };
+}
+async function readHealthWithRetry() {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try { return await readHealthSnapshot(); }
+    catch (error) {
+      const transient = error?.retryable || ['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN'].includes(error?.code);
+      if (!transient || attempt === 1) throw error;
+      queueHealthCounters.retries += 1;
+    }
+  }
+  throw healthError('service_error');
+}
+function recordHealthResult(req, start, outcome, kind) {
+  const correlationHeader = req.headers['x-correlation-id'];
+  const correlationId = typeof correlationHeader === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(correlationHeader)
+    ? correlationHeader : 'unprovided';
+  queueHealthResultsMetric.labels(outcome, kind).inc();
+  queueHealthDurationMetric.labels(outcome).observe(Math.min(30, Math.max(0, Date.now() - start) / 1000));
+  console.info(JSON.stringify({ event: 'queue_health_report', outcome, reason: kind,
+    correlationId, durationMs: Math.min(30000, Math.max(0, Date.now() - start)) }));
+}
+
+
 /**
  * Get comprehensive queue statistics
  */
 router.get('/stats', async (req, res) => {
+  const started = Date.now();
+  queueHealthCounters.attempts += 1;
   try {
-    const [
-      mainQueueCounts,
-      deadLetterCounts,
-      mainQueueWaiting,
-      mainQueueActive,
-      mainQueueCompleted,
-      mainQueueFailed,
-      deadLetterWaiting,
-      deadLetterActive,
-      redisInfo,
-    ] = await Promise.all([
-      stellarEventsQueue.getJobCounts(),
-      deadLetterQueue.getJobCounts(),
-      stellarEventsQueue.getWaiting(),
-      stellarEventsQueue.getActive(),
-      stellarEventsQueue.getCompleted(),
-      stellarEventsQueue.getFailed(),
-      deadLetterQueue.getWaiting(),
-      deadLetterQueue.getActive(),
-      connection.info(),
-    ]);
-
+    const {
+      mainCounts, deadCounts, waiting, active, completed, failed,
+      deadWaiting, deadActive, redisInfo,
+    } = await readHealthWithRetry();
     const stats = {
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
@@ -58,35 +121,27 @@ router.get('/stats', async (req, res) => {
         successRate: queueMetrics.getSuccessRate(),
         processingTime: queueMetrics.getProcessingTime(),
       },
-      mainQueue: {
-        ...mainQueueCounts,
-        waitingJobs: mainQueueWaiting.length,
-        activeJobs: mainQueueActive.length,
-        recentCompleted: mainQueueCompleted.slice(-10),
-        recentFailed: mainQueueFailed.slice(-10),
-      },
-      deadLetterQueue: {
-        ...deadLetterCounts,
-        waitingJobs: deadLetterWaiting.length,
-        activeJobs: deadLetterActive.length,
-      },
-      redis: {
-        connected: connection.status === 'ready',
-        version: redisInfo.redis_version,
-        usedMemory: redisInfo.used_memory_human,
-        connectedClients: redisInfo.connected_clients,
-      },
-      alerts: {
-        highFailureRate: queueMetrics.getFailureRate() > 5,
-        redisConnected: connection.status === 'ready',
-        queueProcessingActive: mainQueueActive.length > 0,
-      },
+      mainQueue: { ...mainCounts, waitingJobs: waiting.length, activeJobs: active.length,
+        recentCompleted: completed.slice(-10), recentFailed: failed.slice(-10) },
+      deadLetterQueue: { ...deadCounts, waitingJobs: deadWaiting.length,
+        activeJobs: deadActive.length },
+      redis: { connected: connection.status === 'ready',
+        version: redisInfo.redis_version, usedMemory: redisInfo.used_memory_human,
+        connectedClients: redisInfo.connected_clients },
+      alerts: { highFailureRate: queueMetrics.getFailureRate() > 5,
+        redisConnected: connection.status === 'ready', queueProcessingActive: active.length > 0 },
     };
-
-    res.json(stats);
+    queueHealthCounters.ok += 1;
+    recordHealthResult(req, started, 'ok', 'none');
+    return res.json(stats);
   } catch (error) {
-    console.error('[Dashboard] Error fetching queue stats:', error);
-    res.status(500).json({ error: 'Failed to fetch queue statistics' });
+    queueHealthCounters.errors += 1;
+    const kind = ['timeout', 'invalid_response'].includes(error?.kind)
+      ? error.kind : 'service_error';
+    if (kind === 'timeout') queueHealthCounters.timeouts += 1;
+    if (kind === 'invalid_response') queueHealthCounters.invalidResponses += 1;
+    recordHealthResult(req, started, 'error', kind);
+    return res.status(503).json({ error: 'Failed to fetch queue statistics', code: 'QUEUE_HEALTH_UNAVAILABLE' });
   }
 });
 
