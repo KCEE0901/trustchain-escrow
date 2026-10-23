@@ -37,24 +37,96 @@
  *   CACHE_TTL_DETAIL=30
  *   CACHE_TTL_LEADERBOARD=300
  *   CACHE_TTL_EVENTS=15
+ *   CACHE_TTL_REPUTATION=60
+ *   CACHE_TTL_STATIC=600
+ *
+ * Each must be a whole number of seconds in [1, MAX_TTL_SECONDS]; invalid
+ * values (and invalid middleware options) throw at startup.
  *
  * @module middleware/cache
  */
 
 import { createHash } from 'crypto';
 import cache from '../../lib/cache.js';
+import { createSingleFlight, gracefullyDegrade } from '../../lib/operationalControls.js';
+import { createModuleLogger } from '../../config/logger.js';
+
+const log = createModuleLogger('middleware.cache');
+
+/** Returned in place of a cache read when the cache backend is unavailable. */
+const BYPASS = Symbol('cache.bypass');
+
+/**
+ * Logs a cache backend failure without keys, values, tenant data or error text
+ * (driver errors can echo keys), so log lines stay deterministic.
+ */
+function degraded(operation, fallback) {
+  return () => {
+    log.warn({ message: 'cache_backend_unavailable', operation });
+    return fallback;
+  };
+}
+
+// ── Configuration validation ──────────────────────────────────────────────────
+
+/** Upper bound for any cache TTL (seconds). */
+export const MAX_TTL_SECONDS = 86400;
+
+const TTL_SETTINGS = {
+  DEFAULT: ['CACHE_TTL_DEFAULT', 60],
+  LIST: ['CACHE_TTL_LIST', 15],
+  DETAIL: ['CACHE_TTL_DETAIL', 30],
+  LEADERBOARD: ['CACHE_TTL_LEADERBOARD', 300],
+  EVENTS: ['CACHE_TTL_EVENTS', 15],
+  REPUTATION: ['CACHE_TTL_REPUTATION', 60],
+  STATIC: ['CACHE_TTL_STATIC', 600],
+};
+
+/** Messages name the offending setting but never echo its value. */
+function configError(message) {
+  const err = new Error(`Invalid cache configuration: ${message}`);
+  err.code = 'CACHE_CONFIG_INVALID';
+  return err;
+}
+
+function isValidTtl(value) {
+  return Number.isInteger(value) && value >= 1 && value <= MAX_TTL_SECONDS;
+}
+
+/**
+ * Parses and validates the CACHE_TTL_* settings, failing fast on bad input.
+ *
+ * @param {Record<string, string|undefined>} [env]
+ * @returns {Record<keyof typeof TTL_SETTINGS, number>}
+ */
+export function validateCacheConfig(env = process.env) {
+  const ttl = {};
+  for (const [name, [setting, fallback]] of Object.entries(TTL_SETTINGS)) {
+    const raw = env[setting]?.trim();
+    if (!raw) {
+      ttl[name] = fallback;
+      continue;
+    }
+    const value = /^\d+$/.test(raw) ? Number(raw) : NaN;
+    if (!isValidTtl(value)) {
+      throw configError(
+        `${setting} must be a whole number of seconds between 1 and ${MAX_TTL_SECONDS}`,
+      );
+    }
+    ttl[name] = value;
+  }
+  return Object.freeze(ttl);
+}
+
+function assertListOption(fn, name, value) {
+  if (!Array.isArray(value) && typeof value !== 'function') {
+    throw configError(`${fn} option "${name}" must be an array or a function`);
+  }
+}
 
 // ── TTL presets (overridable via env) ─────────────────────────────────────────
 
-export const TTL = {
-  DEFAULT: parseInt(process.env.CACHE_TTL_DEFAULT || '60', 10),
-  LIST: parseInt(process.env.CACHE_TTL_LIST || '15', 10),
-  DETAIL: parseInt(process.env.CACHE_TTL_DETAIL || '30', 10),
-  LEADERBOARD: parseInt(process.env.CACHE_TTL_LEADERBOARD || '300', 10),
-  EVENTS: parseInt(process.env.CACHE_TTL_EVENTS || '15', 10),
-  REPUTATION: parseInt(process.env.CACHE_TTL_REPUTATION || '60', 10),
-  STATIC: parseInt(process.env.CACHE_TTL_STATIC || '600', 10),
-};
+export const TTL = validateCacheConfig();
 
 // ── Key builder ───────────────────────────────────────────────────────────────
 
@@ -100,6 +172,9 @@ function tenantTag(tag, req) {
 
 // ── Cache response middleware ─────────────────────────────────────────────────
 
+/** Coalesces concurrent misses per tenant-scoped cache key. */
+const inflightMisses = createSingleFlight();
+
 /**
  * @typedef {Object} CacheOptions
  * @property {number}                          [ttl]    — TTL in seconds (default: TTL.DEFAULT)
@@ -117,6 +192,16 @@ function tenantTag(tag, req) {
  */
 export function cacheResponse(options = {}) {
   const { ttl = TTL.DEFAULT, tags = [], keyFn = buildCacheKey, skip } = options;
+  if (!isValidTtl(ttl)) {
+    throw configError(
+      `cacheResponse option "ttl" must be a whole number of seconds between 1 and ${MAX_TTL_SECONDS}`,
+    );
+  }
+  assertListOption('cacheResponse', 'tags', tags);
+  if (typeof keyFn !== 'function') throw configError('cacheResponse option "keyFn" must be a function');
+  if (skip !== undefined && typeof skip !== 'function') {
+    throw configError('cacheResponse option "skip" must be a function');
+  }
 
   return async (req, res, next) => {
     // Only cache GET / HEAD requests
@@ -128,31 +213,70 @@ export function cacheResponse(options = {}) {
     const key = keyFn(req);
 
     // ── Cache hit ─────────────────────────────────────────────────────────────
-    const cached = await cache.get(key);
-    if (cached !== null) {
-      res.setHeader('X-Cache', 'HIT');
+    const cached = await gracefullyDegrade(() => cache.get(key), degraded('get', BYPASS));
+
+    // ── Backend unavailable: pass straight through to the handler ─────────────
+    // Nothing is served from or written to the cache, so a failed read can
+    // never fall back to another tenant's entry.
+    if (cached === BYPASS) {
+      res.setHeader('X-Cache', 'BYPASS');
+      return next();
+    }
+    if (cached !== null) return sendHit(res, key, cached);
+
+    // ── Concurrent miss for the same tenant-scoped key ────────────────────────
+    // Another request is already producing this entry: reuse its result rather
+    // than running the handler and cache write a second time.
+    if (inflightMisses.has(key)) {
+      const shared = await inflightMisses(key, () => undefined);
+      if (shared !== undefined) return sendHit(res, key, shared);
+      res.setHeader('X-Cache', 'MISS');
       res.setHeader('X-Cache-Key', key);
-      return res.json(cached);
+      return next();
     }
 
     res.setHeader('X-Cache', 'MISS');
     res.setHeader('X-Cache-Key', key);
 
-    // ── Intercept res.json to store the response ──────────────────────────────
+    // Leader: followers receive the cached body, or undefined when the handler
+    // did not produce a cacheable response (they then run the handler themselves).
+    let settle;
+    const outcome = new Promise((resolve) => {
+      settle = resolve;
+    });
+    inflightMisses(key, () => outcome);
+    res.on('finish', () => settle(undefined));
+    res.on('close', () => settle(undefined));
+
+    // ── Intercept res.json to store the response (at most once) ───────────────
     const originalJson = res.json.bind(res);
+    let handled = false;
     res.json = async (body) => {
-      // Only cache successful responses
-      if (res.statusCode >= 200 && res.statusCode < 300) {
-        const resolvedTags = (typeof tags === 'function' ? tags(req) : tags).map((t) =>
-          tenantTag(t, req),
-        );
-        await cache.setWithTags(key, body, ttl, resolvedTags);
+      if (!handled) {
+        handled = true;
+        const ok = res.statusCode >= 200 && res.statusCode < 300;
+        if (ok) {
+          const resolvedTags = (typeof tags === 'function' ? tags(req) : tags).map((t) =>
+            tenantTag(t, req),
+          );
+          await gracefullyDegrade(
+            () => cache.setWithTags(key, body, ttl, resolvedTags),
+            degraded('set'),
+          );
+        }
+        settle(ok ? body : undefined);
       }
       return originalJson(body);
     };
 
     next();
   };
+}
+
+function sendHit(res, key, body) {
+  res.setHeader('X-Cache', 'HIT');
+  res.setHeader('X-Cache-Key', key);
+  return res.json(body);
 }
 
 // ── Invalidation middleware ───────────────────────────────────────────────────
@@ -173,13 +297,20 @@ export function cacheResponse(options = {}) {
  */
 export function invalidateOn(options = {}) {
   const { tags = [], keys = [], prefixes = [], when = 'after' } = options;
+  if (when !== 'before' && when !== 'after') {
+    throw configError('invalidateOn option "when" must be "before" or "after"');
+  }
+  assertListOption('invalidateOn', 'tags', tags);
+  assertListOption('invalidateOn', 'keys', keys);
+  assertListOption('invalidateOn', 'prefixes', prefixes);
 
   const doInvalidate = async (req) => {
-    const resolvedTags = (typeof tags === 'function' ? tags(req) : tags).map((t) =>
+    // Deduplicate so a repeated tag/key/prefix is only invalidated once per request.
+    const resolvedTags = unique((typeof tags === 'function' ? tags(req) : tags).map((t) =>
       tenantTag(t, req),
-    );
-    const resolvedKeys = typeof keys === 'function' ? keys(req) : keys;
-    const resolvedPrefixes = typeof prefixes === 'function' ? prefixes(req) : prefixes;
+    ));
+    const resolvedKeys = unique(typeof keys === 'function' ? keys(req) : keys);
+    const resolvedPrefixes = unique(typeof prefixes === 'function' ? prefixes(req) : prefixes);
 
     await Promise.all([
       resolvedTags.length ? cache.invalidateTags(resolvedTags) : Promise.resolve(),
@@ -190,22 +321,26 @@ export function invalidateOn(options = {}) {
 
   if (when === 'before') {
     return async (req, _res, next) => {
-      await doInvalidate(req);
+      await gracefullyDegrade(() => doInvalidate(req), degraded('invalidate'));
       next();
     };
   }
 
-  // 'after' — invalidate once the response has been sent
+  // 'after' — invalidate once the response has been sent (once per request)
   return (req, res, next) => {
+    let invalidated = false;
     res.on('finish', () => {
-      if (res.statusCode >= 200 && res.statusCode < 300) {
-        doInvalidate(req).catch((err) =>
-          console.error('[Cache] Post-response invalidation failed:', err.message),
-        );
+      if (!invalidated && res.statusCode >= 200 && res.statusCode < 300) {
+        invalidated = true;
+        gracefullyDegrade(() => doInvalidate(req), degraded('invalidate'));
       }
     });
     next();
   };
+}
+
+function unique(values) {
+  return [...new Set(values)];
 }
 
 // ── Convenience factories ─────────────────────────────────────────────────────

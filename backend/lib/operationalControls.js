@@ -16,12 +16,14 @@ export class BoundedRetentionStore {
 
 export function createSingleFlight() {
   const pending = new Map();
-  return async (key, work) => {
+  const run = async (key, work) => {
     if (pending.has(key)) return pending.get(key);
     const promise = Promise.resolve().then(work).finally(() => pending.delete(key));
     pending.set(key, promise);
     return promise;
   };
+  run.has = (key) => pending.has(key);
+  return run;
 }
 
 export async function gracefullyDegrade(work, fallback) {
