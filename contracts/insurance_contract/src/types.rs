@@ -159,3 +159,38 @@ pub struct SlashProposal {
     pub status: SlashStatus,
     pub created_at: u64,
 }
+
+#[cfg(test)]
+mod stakerecord_roundtrip_tests {
+    use super::*;
+    use soroban_sdk::{Env, IntoVal, TryFromVal, Val};
+    #[test]
+    fn stakerecord_scval_roundtrip() {
+        let env = Env::default();
+        let staker = soroban_sdk::Address::generate(&env);
+        let zero = StakeRecord { staker: staker.clone(), amount: 0, reward_debt: 0 };
+        let back = StakeRecord::try_from_val(&env, &zero.clone().into_val(&env)).unwrap();
+        assert_eq!(back.amount, 0);
+        let nz = StakeRecord { staker, amount: 50, reward_debt: 5 };
+        let back2 = StakeRecord::try_from_val(&env, &nz.clone().into_val(&env)).unwrap();
+        assert_eq!(back2.reward_debt, 5);
+
+    }
+}
+
+#[cfg(test)]
+mod fundstats_roundtrip_tests {
+    use super::*;
+    use soroban_sdk::{Env, IntoVal, TryFromVal, Val};
+    #[test]
+    fn fundstats_scval_roundtrip() {
+        let env = Env::default();
+        let zero = FundStats { total_contributed: 0, total_paid_out: 0, total_claims: 0, paid_claims: 0, governor_count: 0 };
+        let back = FundStats::try_from_val(&env, &zero.clone().into_val(&env)).unwrap();
+        assert_eq!(back.governor_count, 0);
+        let nz = FundStats { total_contributed: 1, total_paid_out: 2, total_claims: 3, paid_claims: 4, governor_count: 5 };
+        let back2 = FundStats::try_from_val(&env, &nz.clone().into_val(&env)).unwrap();
+        assert_eq!(back2.paid_claims, 4);
+
+    }
+}
