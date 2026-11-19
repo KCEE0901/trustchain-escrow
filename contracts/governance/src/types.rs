@@ -209,3 +209,41 @@ pub enum DataKey {
     JuryVote(u64, Address),
     JuryVoterStake(u64, Address),
 }
+
+#[cfg(test)]
+mod jurypool_roundtrip_tests {
+    use super::*;
+    use soroban_sdk::{Env, IntoVal, TryFromVal, Val};
+    #[test]
+    fn jurypool_scval_roundtrip() {
+        let env = Env::default();
+        let zero = JuryPool {
+            pool_id: 0,
+            escrow_id: 0,
+            milestone_id: 0,
+            created_at: 0,
+            voting_end: 0,
+            resolved: false,
+            weight_for_client: 0,
+            weight_for_freelancer: 0,
+            total_locked: 0,
+        };
+        let back = JuryPool::try_from_val(&env, &zero.clone().into_val(&env)).unwrap();
+        assert_eq!(back.pool_id, 0);
+        assert_eq!(back.resolved, false);
+        let nz = JuryPool {
+            pool_id: 1,
+            escrow_id: 2,
+            milestone_id: 3,
+            created_at: 4,
+            voting_end: 5,
+            resolved: true,
+            weight_for_client: 10,
+            weight_for_freelancer: 20,
+            total_locked: 30,
+        };
+        let back2 = JuryPool::try_from_val(&env, &nz.clone().into_val(&env)).unwrap();
+        assert_eq!(back2.total_locked, 30);
+
+    }
+}
