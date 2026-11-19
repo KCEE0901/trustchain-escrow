@@ -102,3 +102,24 @@ pub enum DataKey {
     /// Storage version for migration.
     StorageVersion,
 }
+
+#[cfg(test)]
+mod pendingupgrade_roundtrip_tests {
+    use super::*;
+    use soroban_sdk::{Env, IntoVal, TryFromVal, Val};
+    #[test]
+    fn pendingupgrade_scval_roundtrip() {
+        use soroban_sdk::BytesN;
+        let env = Env::default();
+        let q = soroban_sdk::Address::generate(&env);
+        let h0 = BytesN::from_array(&env, &[0u8; 32]);
+        let h1 = BytesN::from_array(&env, &[1u8; 32]);
+        let zero = PendingUpgrade { new_wasm_hash: h0, queued_at: 0, executable_after: 0, queued_by: q.clone() };
+        let back = PendingUpgrade::try_from_val(&env, &zero.clone().into_val(&env)).unwrap();
+        assert_eq!(back.queued_at, 0);
+        let nz = PendingUpgrade { new_wasm_hash: h1, queued_at: 1, executable_after: 2, queued_by: q };
+        let back2 = PendingUpgrade::try_from_val(&env, &nz.clone().into_val(&env)).unwrap();
+        assert_eq!(back2.executable_after, 2);
+
+    }
+}
