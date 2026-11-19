@@ -582,6 +582,52 @@ mod tests {
         );
     }
 
+    // ── Issue #699: get_pending_upgrade validation helper ─────────────────────
+
+    /// The extracted validation helper must reject a non-admin caller with the
+    /// typed `AdminOnly` error without touching token balances or storage.
+    #[test]
+    fn test_validate_get_pending_upgrade_rejects_non_admin() {
+        let s = setup_with_fee(0);
+        let non_admin = soroban_sdk::Address::generate(&s.env);
+
+        let result = s.env.as_contract(&s.contract_id, || {
+            crate::EscrowExtensions::validate_get_pending_upgrade(&s.env, &non_admin)
+        });
+        assert_eq!(result.unwrap_err(), ExtError::AdminOnly);
+
+        // No token transfer should have occurred.
+        let token_client = token::Client::new(&s.env, &s.token_id);
+        assert_eq!(token_client.balance(&s.contract_id), 0);
+        assert_eq!(token_client.balance(&non_admin), 0);
+    }
+
+    /// The extracted validation helper must accept the admin caller.
+    #[test]
+    fn test_validate_get_pending_upgrade_accepts_admin() {
+        let s = setup_with_fee(0);
+
+        let result = s.env.as_contract(&s.contract_id, || {
+            crate::EscrowExtensions::validate_get_pending_upgrade(&s.env, &s.admin)
+        });
+        assert!(result.is_ok());
+    }
+
+    /// Success path: after queueing, `get_pending_upgrade` returns the pending
+    /// entry unchanged by the refactor.
+    #[test]
+    fn test_get_pending_upgrade_success_path() {
+        let s = setup_with_fee(0);
+        let hash = BytesN::from_array(&s.env, &[0x44; 32]);
+
+        assert!(s.client.get_pending_upgrade().is_none());
+
+        let executable_after = s.client.queue_upgrade(&s.admin, &hash);
+        let pending = s.client.get_pending_upgrade().unwrap();
+        assert_eq!(pending.new_wasm_hash, hash);
+        assert_eq!(pending.executable_after, executable_after);
+    }
+
     // ── Arithmetic overflow hardening ─────────────────────────────────────────
 
     /// `resolve_dispute` must reject an overflowing weight calculation with
