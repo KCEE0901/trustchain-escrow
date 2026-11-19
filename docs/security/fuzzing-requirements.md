@@ -195,6 +195,7 @@ Apply the same pattern to every other `#[contracttype]` struct in the contract (
 
 - `BatchEscrowParams`
 - `ParameterPayload`
+- `Vote`
 
 ---
 
