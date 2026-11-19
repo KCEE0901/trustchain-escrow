@@ -662,3 +662,21 @@ mod arb_tests {
         });
     }
 }
+
+#[cfg(test)]
+mod panelslot_roundtrip_tests {
+    use super::*;
+    use soroban_sdk::{Env, IntoVal, TryFromVal, Val};
+    #[test]
+    fn panelslot_scval_roundtrip() {
+        let env = Env::default();
+        let arb = soroban_sdk::Address::generate(&env);
+        let zero = PanelSlot { arbitrator: arb.clone(), status: SlotStatus::Pending, deadline: 0 };
+        let back = PanelSlot::try_from_val(&env, &zero.clone().into_val(&env)).unwrap();
+        assert_eq!(back.deadline, 0);
+        let nz = PanelSlot { arbitrator: arb, status: SlotStatus::Accepted, deadline: 123 };
+        let back2 = PanelSlot::try_from_val(&env, &nz.clone().into_val(&env)).unwrap();
+        assert_eq!(back2.deadline, 123);
+
+    }
+}
