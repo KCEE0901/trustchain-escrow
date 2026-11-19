@@ -17,11 +17,25 @@
 /* Custom base styles */
 @layer base {
   :root {
-    /* TODO (contributor — easy, Issue #31): define a full design token system */
     --color-accent: #6366f1; /* indigo-500 */
     --color-success: #10b981; /* emerald-500 */
     --color-warning: #f59e0b; /* amber-500 */
     --color-danger: #ef4444; /* red-500 */
+    --color-surface: #ffffff;
+    --color-surface-muted: #f3f4f6;
+    --color-text: #111827;
+    --color-text-muted: #6b7280;
+    --color-border: #e5e7eb;
+    --color-focus: #6366f1;
+  }
+
+  .dark {
+    --color-surface: #030712;
+    --color-surface-muted: #111827;
+    --color-text: #f9fafb;
+    --color-text-muted: #9ca3af;
+    --color-border: #1f2937;
+    --color-focus: #818cf8;
   }
 
   /* Smooth theme transitions */
@@ -50,7 +64,9 @@
   }
 
   body {
-    @apply antialiased bg-white text-gray-900 dark:bg-gray-950 dark:text-gray-100;
+  @apply antialiased;
+    background-color: var(--color-surface);
+    color: var(--color-text);
   }
 
   /* RTL support */
@@ -86,11 +102,14 @@
 @layer components {
   /* Reusable card style */
   .card {
-    @apply bg-gray-100 border border-gray-200 rounded-xl p-6 dark:bg-gray-900 dark:border-gray-800
+    background-color: var(--color-surface-muted);
+    border: 1px solid var(--color-border);
+    @apply rounded-xl p-6
            transition-[transform,box-shadow] duration-200 ease-out
            hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/20
-           focus-within:ring-2 focus-within:ring-indigo-500 focus-within:ring-offset-2
-           focus-within:ring-offset-white dark:focus-within:ring-offset-gray-950;
+           focus-within:ring-2 focus-within:ring-offset-2;
+    --tw-ring-color: var(--color-focus);
+    --tw-ring-offset-color: var(--color-surface);
   }
 
   /*

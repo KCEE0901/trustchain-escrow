@@ -209,3 +209,37 @@ pub enum DataKey {
     JuryVote(u64, Address),
     JuryVoterStake(u64, Address),
 }
+
+#[cfg(test)]
+mod govconfig_roundtrip_tests {
+    use super::*;
+    use soroban_sdk::{Env, IntoVal, TryFromVal, Val};
+    #[test]
+    fn govconfig_scval_roundtrip() {
+        let env = Env::default();
+        let token = soroban_sdk::Address::generate(&env);
+        let zero = GovConfig {
+            token: token.clone(),
+            proposal_threshold: 0,
+            voting_period: 0,
+            voting_delay: 0,
+            timelock_delay: 0,
+            quorum_bps: 0,
+            approval_threshold_bps: 0,
+        };
+        let back = GovConfig::try_from_val(&env, &zero.clone().into_val(&env)).unwrap();
+        assert_eq!(back.quorum_bps, 0);
+        let nz = GovConfig {
+            token,
+            proposal_threshold: 100,
+            voting_period: 1,
+            voting_delay: 2,
+            timelock_delay: 3,
+            quorum_bps: 400,
+            approval_threshold_bps: 5100,
+        };
+        let back2 = GovConfig::try_from_val(&env, &nz.clone().into_val(&env)).unwrap();
+        assert_eq!(back2.approval_threshold_bps, 5100);
+
+    }
+}
