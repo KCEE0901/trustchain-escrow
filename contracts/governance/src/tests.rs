@@ -83,6 +83,37 @@ mod tests {
     }
 
     #[test]
+    fn test_get_config_caller_and_bounds() {
+        let (env, _admin, _ta, token, client) = setup();
+
+        // (1) Success path: config matches the values stored by `initialize`.
+        let config = client.get_config();
+        assert_eq!(config.token, token);
+        assert_eq!(config.quorum_bps, QUORUM_BPS);
+        assert_eq!(config.approval_threshold_bps, APPROVAL_BPS);
+        assert_eq!(config.voting_period, VOTING_PERIOD);
+        assert_eq!(config.timelock_delay, TIMELOCK_DELAY);
+
+        // (2) `get_config` takes no caller argument, so there is no caller to
+        // authorize. A different address must not affect the result, and the
+        // call must not panic.
+        let stranger = Address::generate(&env);
+        let _ = stranger;
+        let again = client.get_config();
+        assert_eq!(again.token, config.token);
+        assert_eq!(again.quorum_bps, config.quorum_bps);
+        assert_eq!(again.approval_threshold_bps, config.approval_threshold_bps);
+        assert_eq!(again.voting_period, config.voting_period);
+        assert_eq!(again.timelock_delay, config.timelock_delay);
+
+        // (3) `get_config` takes no numeric arguments, so there are no bounds
+        // to exercise. Use the fallible client entry point to confirm the call
+        // returns Ok rather than panicking.
+        let result = client.try_get_config();
+        assert!(result.is_ok());
+    }
+
+    #[test]
     fn test_double_initialize_fails() {
         let (_env, admin, _ta, token, client) = setup();
         let result = client.try_initialize(
