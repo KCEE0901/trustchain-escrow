@@ -72,12 +72,21 @@ function isPositiveAmount(value) {
   return value !== '' && !Number.isNaN(n) && n > 0;
 }
 
+/** SHA-256 hex digest for the escrow brief (32-byte hash expected by stellar.js). */
+async function hashBrief(text) {
+  const data = new TextEncoder().encode(String(text || ''));
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
 export default function CreateEscrowPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const templateLibrary = templatesData.templates || [];
 
-  const { address, isConnected, signTx } = useWallet();
+  const { address, isConnected, network, connect, signTx } = useWallet();
   const [currentStep, setCurrentStep] = useState(1);
   const [formData, setFormData] = useState({
     freelancerAddress: '',
@@ -96,6 +105,7 @@ export default function CreateEscrowPage() {
   const [touched, setTouched] = useState({ totalAmount: false, briefDescription: false });
 
   const { showToast } = useToast();
+  const expectedNetwork = process.env.NEXT_PUBLIC_STELLAR_NETWORK || 'testnet';
 
   useEffect(() => {
     const templateId = searchParams.get('template');
@@ -120,15 +130,59 @@ export default function CreateEscrowPage() {
     setTemplateNotice(`Applied template: ${template.name}`);
   };
 
-  // TODO (contributor — Issue #33): implement form submission
   const handleSubmit = async () => {
     setIsSubmitting(true);
     setError(null);
     try {
-      throw new Error('Not implemented — see Issue #33');
+      if (!isConnected || !address) {
+        await connect();
+      }
+      if (network && network !== expectedNetwork) {
+        throw new Error(
+          `Wrong network: wallet is on ${network}, expected ${expectedNetwork}. Switch network in Freighter and retry.`,
+        );
+      }
+      if (!isValidStellarAddress(formData.freelancerAddress)) {
+        throw new Error('Enter a valid freelancer Stellar address before submitting.');
+      }
+      if (!isPositiveAmount(formData.totalAmount)) {
+        throw new Error('Total amount must be a positive number.');
+      }
+
+      const tokenContract =
+        formData.tokenAddress === 'usdc' || !isValidStellarAddress(formData.tokenAddress)
+          ? process.env.NEXT_PUBLIC_USDC_SAC ||
+            'GA7YNBW5CBTJZ3ZZOWX3ZNBKD6OE7A7IHUQVWMY62W2ZBG2SGZVOOPVH'
+          : formData.tokenAddress;
+
+      const amountStroops = Math.round(Number(formData.totalAmount) * 10_000_000);
+      const briefHash = await hashBrief(formData.briefDescription || formData.freelancerAddress);
+      const deadlineSecs = formData.deadline
+        ? Math.floor(new Date(formData.deadline).getTime() / 1000)
+        : null;
+
+      const unsignedXdr = await buildCreateEscrowTx({
+        sourceAddress: address,
+        freelancerAddress: formData.freelancerAddress,
+        tokenAddress: tokenContract,
+        amount: String(amountStroops),
+        briefHash,
+        deadline: deadlineSecs,
+      });
+
+      const signedXdr = await signTx(unsignedXdr);
+      const result = await broadcastTransaction(signedXdr);
+      const escrowId = result?.escrowId || result?.id || result?.hash;
+      if (!escrowId) {
+        throw new Error('Broadcast succeeded but no escrow id was returned.');
+      }
+
+      showToast?.('Escrow created successfully.', 'success');
+      router.push(`/escrow/${escrowId}`);
     } catch (err) {
-      const message = err.message || 'Failed to create escrow';
+      const message = err?.message || 'Failed to create escrow';
       setError(message);
+      showToast?.(message, 'error');
     } finally {
       setIsSubmitting(false);
     }
@@ -468,7 +522,6 @@ function StepReview({ formData }) {
 
 /**
  * Step 4: Sign with Freighter.
- * TODO (contributor — Issue #33): build and sign the Soroban transaction
  */
 function StepSign({ error }) {
   return (
@@ -479,13 +532,13 @@ function StepSign({ error }) {
         funds will be locked on-chain once confirmed.
       </p>
       {error && (
-        <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-red-400 text-sm">
+        <div
+          role="alert"
+          className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-red-400 text-sm"
+        >
           {error}
         </div>
       )}
-      <p className="text-xs text-amber-400">
-        🚧 Freighter integration is not yet implemented — see Issue #33
-      </p>
     </div>
   );
 }

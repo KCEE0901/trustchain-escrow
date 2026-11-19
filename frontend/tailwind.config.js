@@ -4,7 +4,6 @@ export default {
   darkMode: 'class',
   theme: {
     extend: {
-      // TODO (contributor — easy, Issue #31): extend with brand colours
       colors: {
         brand: {
           50: '#eef2ff',
@@ -12,6 +11,11 @@ export default {
           600: '#4f46e5',
           900: '#1e1b4b',
         },
+        // Brand tokens from globals.css — keep defaults; do not replace indigo-*.
+        accent: 'var(--color-accent)',
+        success: 'var(--color-success)',
+        warning: 'var(--color-warning)',
+        danger: 'var(--color-danger)',
       },
       fontFamily: {
         sans: ['var(--font-inter)', 'Inter', 'system-ui', 'sans-serif'],
