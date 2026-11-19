@@ -102,3 +102,26 @@ pub enum DataKey {
     /// Storage version for migration.
     StorageVersion,
 }
+
+#[cfg(test)]
+mod batchescrowparams_roundtrip_tests {
+    use super::*;
+    use soroban_sdk::{Env, IntoVal, TryFromVal, Val};
+    #[test]
+    fn batchescrowparams_scval_roundtrip() {
+        use soroban_sdk::BytesN;
+        let env = Env::default();
+        let freelancer = soroban_sdk::Address::generate(&env);
+        let token = soroban_sdk::Address::generate(&env);
+        let hash0 = BytesN::from_array(&env, &[0u8; 32]);
+        let zero = BatchEscrowParams { freelancer: freelancer.clone(), token: token.clone(), total_amount: 0, brief_hash: hash0, arbiter: None, deadline: None };
+        let back = BatchEscrowParams::try_from_val(&env, &zero.clone().into_val(&env)).unwrap();
+        assert_eq!(back.total_amount, 0);
+        let hash1 = BytesN::from_array(&env, &[9u8; 32]);
+        let arb = soroban_sdk::Address::generate(&env);
+        let nz = BatchEscrowParams { freelancer, token, total_amount: 100, brief_hash: hash1, arbiter: Some(arb), deadline: Some(99) };
+        let back2 = BatchEscrowParams::try_from_val(&env, &nz.clone().into_val(&env)).unwrap();
+        assert_eq!(back2.total_amount, 100);
+
+    }
+}
