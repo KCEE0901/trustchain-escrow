@@ -124,6 +124,5 @@ pub enum EcErr {
     ArbiterFeeBpsInvalid = 98,
 }
 
-/// Backward-compatible alias — existing code imports `EscrowError`; the oracle
-/// refactor renamed the enum to `EcErr` without updating call sites.
+/// Public error type surfaced to callers and documented in `docs/error-codes.md`.
 pub type EscrowError = EcErr;

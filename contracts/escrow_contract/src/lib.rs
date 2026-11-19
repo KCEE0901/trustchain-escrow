@@ -2282,9 +2282,7 @@ impl EscrowContract {
                 .get(&DataKey::MinArbiterReputation)
                 .unwrap_or(MIN_ARBITER_REPUTATION_SCORE);
             let arbiter_reputation = ContractStorage::load_reputation(&env, arbiter_addr);
-            if (arbiter_reputation.completed_escrows > 0 || arbiter_reputation.total_score > 0)
-                && arbiter_reputation.total_score < min_reputation
-            {
+            if arbiter_reputation.total_score < min_reputation {
                 return Err(EscrowError::E3);
             }
         }
