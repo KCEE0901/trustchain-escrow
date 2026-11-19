@@ -158,6 +158,8 @@ pub fn assign_arbiter(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::Env;
 
     #[test]
     fn test_role_enum_equality() {
@@ -165,5 +167,114 @@ mod tests {
         assert_ne!(Role::Admin, Role::Client);
         assert_ne!(Role::Client, Role::Freelancer);
         assert_ne!(Role::Freelancer, Role::Arbiter);
+    }
+
+    /// Build a test environment with an escrow containing a client,
+    /// freelancer, and arbiter, plus a separate admin.
+    fn setup_escrow(
+        env: &Env,
+        escrow_id: u64,
+    ) -> (Address, Address, Address, Address) {
+        let admin = Address::generate(env);
+        let client = Address::generate(env);
+        let freelancer = Address::generate(env);
+        let arbiter = Address::generate(env);
+
+        env.storage().instance().set(&DataKey::Admin, &admin);
+
+        let meta = crate::types::EscrowMeta {
+            client: client.clone(),
+            freelancer: freelancer.clone(),
+            arbiter: Some(arbiter.clone()),
+            ..Default::default()
+        };
+        ContractStorage::save_escrow_meta(env, &meta);
+
+        (admin, client, freelancer, arbiter)
+    }
+
+    #[test]
+    fn test_require_participant_accepts_participants() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_admin, client, freelancer, arbiter) = setup_escrow(&env, 1);
+
+        assert_eq!(require_participant(&env, &client, 1), Ok(()));
+        assert_eq!(require_participant(&env, &freelancer, 1), Ok(()));
+        assert_eq!(require_participant(&env, &arbiter, 1), Ok(()));
+    }
+
+    #[test]
+    fn test_require_participant_rejects_non_participant() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_admin, _client, _freelancer, _arbiter) = setup_escrow(&env, 1);
+        let outsider = Address::generate(&env);
+
+        assert_eq!(
+            require_participant(&env, &outsider, 1),
+            Err(EscrowError::E3)
+        );
+    }
+
+    #[test]
+    fn test_require_participant_bounds_escrow_id() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_admin, client, _freelancer, _arbiter) = setup_escrow(&env, 0);
+
+        // escrow_id at zero: participant succeeds, outsider rejected.
+        assert_eq!(require_participant(&env, &client, 0), Ok(()));
+        let outsider = Address::generate(&env);
+        assert_eq!(
+            require_participant(&env, &outsider, 0),
+            Err(EscrowError::E3)
+        );
+
+        // escrow_id at u64::MAX: missing escrow returns typed error, no panic.
+        let result = require_participant(&env, &client, u64::MAX);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_assign_arbiter_admin_and_client_succeed() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (admin, client, _freelancer, _arbiter) = setup_escrow(&env, 1);
+
+        let new_arbiter = Address::generate(&env);
+        assert_eq!(assign_arbiter(&env, &admin, 1, &new_arbiter), Ok(()));
+
+        let new_arbiter2 = Address::generate(&env);
+        assert_eq!(assign_arbiter(&env, &client, 1, &new_arbiter2), Ok(()));
+    }
+
+    #[test]
+    fn test_assign_arbiter_rejects_unauthorized_caller() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_admin, _client, freelancer, _arbiter) = setup_escrow(&env, 1);
+
+        let new_arbiter = Address::generate(&env);
+        assert_eq!(
+            assign_arbiter(&env, &freelancer, 1, &new_arbiter),
+            Err(EscrowError::E3)
+        );
+    }
+
+    #[test]
+    fn test_assign_arbiter_bounds_escrow_id() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (admin, _client, _freelancer, _arbiter) = setup_escrow(&env, 0);
+
+        // escrow_id at zero: admin succeeds.
+        let new_arbiter = Address::generate(&env);
+        assert_eq!(assign_arbiter(&env, &admin, 0, &new_arbiter), Ok(()));
+
+        // escrow_id at u64::MAX: missing escrow returns typed error, no panic.
+        let new_arbiter2 = Address::generate(&env);
+        let result = assign_arbiter(&env, &admin, u64::MAX, &new_arbiter2);
+        assert!(result.is_err());
     }
 }
