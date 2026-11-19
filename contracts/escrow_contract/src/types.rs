@@ -378,8 +378,11 @@ pub struct EscrowState {
     /// Current escrow status.
     pub status: EscrowStatus,
 
-    /// Ordered list of milestones.
-    /// TODO (contributor): consider using a map keyed by milestone_id for O(1) lookup
+    /// Ordered list of milestones for list/view responses.
+    ///
+    /// Persistence source of truth is `PackedDataKey::Milestone(escrow_id, milestone_id)`
+    /// (O(1) load). This `Vec` is assembled as a derived index when building an
+    /// `EscrowState` view — single-milestone reads must not scan it.
     pub milestones: soroban_sdk::Vec<Milestone>,
 
     /// Optional trusted arbiter selected for dispute resolution.
