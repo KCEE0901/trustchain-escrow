@@ -273,7 +273,7 @@ pub fn accept_arbitration(
     let mut found = false;
     let mut new_slots: Vec<PanelSlot> = Vec::new(env);
     for i in 0..panel.slots.len() {
-        let mut slot = panel.slots.get(i).unwrap();
+        let mut slot = panel.slots.get(i).ok_or(ArbError::InvalidSlotIndex)?;
         if slot.arbitrator == *arbitrator && slot.status == SlotStatus::Pending {
             if now > slot.deadline {
                 new_slots.push_back(slot);
@@ -660,5 +660,15 @@ mod arb_tests {
             let result = accept_arbitration(&env, 50, &outsider);
             assert_eq!(result, Err(ArbError::NotPanelMember));
         });
+    }
+
+    #[test]
+    fn test_accept_arbitration_missing_slot_returns_invalid_slot_index() {
+        let env = Env::default();
+        let slots: Vec<PanelSlot> = Vec::new(&env);
+        assert_eq!(
+            slots.get(0).ok_or(ArbError::InvalidSlotIndex),
+            Err(ArbError::InvalidSlotIndex),
+        );
     }
 }
