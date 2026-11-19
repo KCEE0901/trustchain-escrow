@@ -24,6 +24,7 @@ import { useState } from 'react';
 import { useWallet } from '../../hooks/useWallet';
 import { useToast } from '../../contexts/ToastContext';
 import { buildRaiseDisputeTx, broadcastTransaction } from '../../lib/stellar';
+import { uploadDisputeReason } from '../../lib/uploadEvidence';
 import Modal from '../ui/Modal';
 
 export default function DisputeModal({ isOpen, onClose, escrowId, onSuccess }) {
@@ -39,13 +40,16 @@ export default function DisputeModal({ isOpen, onClose, escrowId, onSuccess }) {
     setError(null);
     try {
       if (!address) throw new Error('Please connect your wallet first');
+      if (!reason.trim()) {
+        throw new Error('Please enter a reason before raising a dispute.');
+      }
 
-      // TODO: Upload reason to IPFS and get hash for better on-chain tracking
-      // For now, we'll pass null/empty
+      const reasonHash = await uploadDisputeReason(escrowId, reason);
 
       const unsignedXdr = await buildRaiseDisputeTx({
         sourceAddress: address,
         escrowId: BigInt(escrowId).toString(),
+        reasonHash,
       });
 
       const signedXdr = await signTx(unsignedXdr);
