@@ -475,6 +475,27 @@ mod arb_tests {
         assert_eq!(seed_index(42, 7), seed_index(42, 7));
     }
 
+    /// `seed_index` is a pure function with no caller, so no authorization
+    /// check applies. This test exercises boundary inputs (zero and the
+    /// maximum value of `u64`) and asserts none of them panic.
+    #[test]
+    fn test_seed_index_caller_and_bounds() {
+        // Zero-length guard returns 0 rather than panicking.
+        assert_eq!(seed_index(0, 0), 0);
+
+        // Maximum seed and maximum length must not panic and stay in range.
+        let max_result = seed_index(u64::MAX, u64::MAX);
+        assert!(max_result < u64::MAX);
+
+        // Zero seed with maximum length stays in range and is deterministic.
+        let zero_seed = seed_index(0, u64::MAX);
+        assert!(zero_seed < u64::MAX);
+        assert_eq!(zero_seed, seed_index(0, u64::MAX));
+
+        // Maximum seed with length 1 always maps to index 0.
+        assert_eq!(seed_index(u64::MAX, 1), 0);
+    }
+
     // ── Registry tests ────────────────────────────────────────────────────────
 
     #[test]
