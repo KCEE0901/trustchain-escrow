@@ -19,6 +19,7 @@ import {
   nativeToScVal,
   Address,
   StrKey,
+  Memo,
 } from '@stellar/stellar-sdk';
 
 const _NETWORK = process.env.NEXT_PUBLIC_STELLAR_NETWORK || 'testnet';
@@ -266,7 +267,12 @@ export async function buildSubmitMilestoneTx({
  *
  * TODO (contributor — Issue #35)
  */
-export async function buildRaiseDisputeTx({ sourceAddress, escrowId, milestoneId = null }) {
+export async function buildRaiseDisputeTx({
+  sourceAddress,
+  escrowId,
+  milestoneId = null,
+  reasonHash = null,
+}) {
   _validateInputs({ sourceAddress, escrowId });
 
   const server = new SorobanRpc.Server(_SOROBAN_RPC_URL);
@@ -289,6 +295,11 @@ export async function buildRaiseDisputeTx({ sourceAddress, escrowId, milestoneId
         : xdr.ScVal.scvTypeOption(),
     ),
   );
+
+  if (reasonHash) {
+    const memo = `dispute-reason:${String(reasonHash).slice(0, 24)}`;
+    txBuilder.addMemo(Memo.text(memo));
+  }
 
   txBuilder.setTimeout(300);
   const tx = txBuilder.build();
