@@ -3,7 +3,21 @@
 import useSWR from 'swr';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
-const fetcher = (url) => fetch(url).then((r) => r.json());
+const fetcher = async (url) => {
+  const response = await fetch(url);
+  if (!response.ok) {
+    const err = new Error(
+      response.status === 404 ? 'Escrow not found' : `Request failed (${response.status})`,
+    );
+    err.status = response.status;
+    throw err;
+  }
+  const body = await response.json();
+  if (body?.error) {
+    throw new Error(body.error);
+  }
+  return body;
+};
 
 /**
  * Fetch a single escrow by ID.
