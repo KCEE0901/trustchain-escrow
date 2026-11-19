@@ -209,3 +209,22 @@ pub enum DataKey {
     JuryVote(u64, Address),
     JuryVoterStake(u64, Address),
 }
+
+#[cfg(test)]
+mod fundpayload_roundtrip_tests {
+    use super::*;
+    use soroban_sdk::{Env, IntoVal, TryFromVal, Val};
+    #[test]
+    fn fundpayload_scval_roundtrip() {
+        let env = Env::default();
+        let r = soroban_sdk::Address::generate(&env);
+        let t = soroban_sdk::Address::generate(&env);
+        let zero = FundPayload { recipient: r.clone(), token: t.clone(), amount: 0 };
+        let back = FundPayload::try_from_val(&env, &zero.clone().into_val(&env)).unwrap();
+        assert_eq!(back.amount, 0);
+        let nz = FundPayload { recipient: r, token: t, amount: 1000 };
+        let back2 = FundPayload::try_from_val(&env, &nz.clone().into_val(&env)).unwrap();
+        assert_eq!(back2.amount, 1000);
+
+    }
+}
