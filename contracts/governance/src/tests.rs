@@ -1107,6 +1107,32 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    // ── Issue #721: get_pool_balance caller and bound checks ──────────────────
+
+    #[test]
+    fn test_get_pool_balance_caller_and_bounds() {
+        let (env, _admin, _ta, _token, client) = setup();
+
+        // Success path: the required caller reads the current pool balance.
+        let balance = client.get_pool_balance();
+        assert_eq!(balance, 0);
+
+        // Rejected caller: a different address must not be able to read the
+        // balance when authorization is enforced. The contract returns its
+        // existing error instead of panicking.
+        let stranger = Address::generate(&env);
+        let result = client.try_get_pool_balance(&stranger);
+        assert!(result.is_err());
+
+        // Numeric bounds: zero and the maximum value of the argument type are
+        // both rejected without panicking.
+        let zero_result = client.try_get_pool_balance(&0i128);
+        assert!(zero_result.is_err());
+
+        let max_result = client.try_get_pool_balance(&i128::MAX);
+        assert!(max_result.is_err());
+    }
+
     #[test]
     fn test_ve_token_double_vote_prevention() {
         let (env, _admin, ta, token, client) = setup();
