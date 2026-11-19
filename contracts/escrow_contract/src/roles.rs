@@ -158,6 +158,7 @@ pub fn assign_arbiter(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use soroban_sdk::testutils::Address as _;
 
     #[test]
     fn test_role_enum_equality() {
@@ -165,5 +166,60 @@ mod tests {
         assert_ne!(Role::Admin, Role::Client);
         assert_ne!(Role::Client, Role::Freelancer);
         assert_ne!(Role::Freelancer, Role::Arbiter);
+    }
+
+    #[test]
+    fn test_get_role_caller_and_bounds() {
+        let env = Env::default();
+
+        let admin = Address::generate(&env);
+        let client = Address::generate(&env);
+        let freelancer = Address::generate(&env);
+        let arbiter = Address::generate(&env);
+        let stranger = Address::generate(&env);
+
+        env.storage().instance().set(&DataKey::Admin, &admin);
+
+        let escrow_id: u64 = 1;
+        let meta = crate::types::EscrowMeta {
+            client: client.clone(),
+            freelancer: freelancer.clone(),
+            arbiter: Some(arbiter.clone()),
+            ..Default::default()
+        };
+        ContractStorage::save_escrow_meta(&env, &meta);
+
+        // Known roles resolve to the highest applicable role.
+        assert_eq!(
+            get_role(&env, &admin, escrow_id),
+            Ok(Some(Role::Admin))
+        );
+        assert_eq!(
+            get_role(&env, &client, escrow_id),
+            Ok(Some(Role::Client))
+        );
+        assert_eq!(
+            get_role(&env, &freelancer, escrow_id),
+            Ok(Some(Role::Freelancer))
+        );
+        assert_eq!(
+            get_role(&env, &arbiter, escrow_id),
+            Ok(Some(Role::Arbiter))
+        );
+        assert_eq!(get_role(&env, &stranger, escrow_id), Ok(None));
+
+        // Numeric bounds: zero and max must not panic.
+        let zero_result = get_role(&env, &stranger, 0u64);
+        assert!(zero_result.is_ok() || zero_result.is_err());
+
+        let max_result = get_role(&env, &stranger, u64::MAX);
+        assert!(max_result.is_ok() || max_result.is_err());
+
+        // Non-existent escrow returns the crate error instead of panicking.
+        assert_eq!(get_role(&env, &stranger, 0u64), Err(EscrowError::E1));
+        assert_eq!(
+            get_role(&env, &stranger, u64::MAX),
+            Err(EscrowError::E1)
+        );
     }
 }
