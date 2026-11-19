@@ -159,3 +159,42 @@ pub struct SlashProposal {
     pub status: SlashStatus,
     pub created_at: u64,
 }
+
+#[cfg(test)]
+mod claim_roundtrip_tests {
+    use super::*;
+    use soroban_sdk::{Env, IntoVal, TryFromVal, Val};
+    #[test]
+    fn claim_scval_roundtrip() {
+        use soroban_sdk::String;
+        let env = Env::default();
+        let claimant = soroban_sdk::Address::generate(&env);
+        let zero = Claim {
+            id: 0,
+            claimant: claimant.clone(),
+            description: String::from_str(&env, ""),
+            amount: 0,
+            status: ClaimStatus::Pending,
+            submitted_at: 0,
+            expires_at: 0,
+            votes_for: 0,
+            votes_against: 0,
+        };
+        let back = Claim::try_from_val(&env, &zero.clone().into_val(&env)).unwrap();
+        assert_eq!(back.amount, 0);
+        let nz = Claim {
+            id: 1,
+            claimant,
+            description: String::from_str(&env, "evidence"),
+            amount: 500,
+            status: ClaimStatus::Approved,
+            submitted_at: 1,
+            expires_at: 2,
+            votes_for: 2,
+            votes_against: 1,
+        };
+        let back2 = Claim::try_from_val(&env, &nz.clone().into_val(&env)).unwrap();
+        assert_eq!(back2.amount, 500);
+
+    }
+}
