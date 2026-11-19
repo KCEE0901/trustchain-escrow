@@ -46,6 +46,10 @@ pub enum ExtensionError {
     InsufficientIncentivesPool,
     /// Amount must be > 0
     InvalidAmount,
+    /// Caller is not authorized to perform this action
+    Unauthorized,
+    /// Numeric argument is out of the accepted range
+    OutOfRange,
 }
 
 // ── Pure computation ──────────────────────────────────────────────────────────
@@ -80,7 +84,16 @@ pub fn compute_bonus_tokens(locked_amount: i128, multiplier: u64) -> i128 {
 
 /// Deposit tokens into the platform incentives pool (admin action — caller
 /// must have already transferred tokens to the contract before calling this).
-pub fn deposit_to_pool(env: &Env, amount: i128) -> Result<(), ExtensionError> {
+///
+/// The `admin` must authorize the call. `amount` must be strictly positive and
+/// must not overflow the current pool balance.
+pub fn deposit_to_pool(
+    env: &Env,
+    admin: &Address,
+    amount: i128,
+) -> Result<(), ExtensionError> {
+    admin.require_auth();
+
     if amount <= 0 {
         return Err(ExtensionError::InvalidAmount);
     }
@@ -89,9 +102,13 @@ pub fn deposit_to_pool(env: &Env, amount: i128) -> Result<(), ExtensionError> {
         .instance()
         .get(&IncentivesKey::IncentivesPool)
         .unwrap_or(0);
+    let new_balance = match current.checked_add(amount) {
+        Some(v) => v,
+        None => return Err(ExtensionError::InvalidAmount),
+    };
     env.storage()
         .instance()
-        .set(&IncentivesKey::IncentivesPool, &(current + amount));
+        .set(&IncentivesKey::IncentivesPool, &new_balance);
     Ok(())
 }
 
@@ -124,11 +141,20 @@ pub fn apply_lock_extension_bonus(
     new_lock_end: u64,
     locked_amount: i128,
 ) -> Result<i128, ExtensionError> {
+    staker.require_auth();
+
+    if locked_amount <= 0 {
+        return Err(ExtensionError::InvalidAmount);
+    }
+
     if new_lock_end <= current_lock_end {
         return Err(ExtensionError::InvalidExtension);
     }
 
-    let extension_duration = new_lock_end - current_lock_end;
+    let extension_duration = match new_lock_end.checked_sub(current_lock_end) {
+        Some(v) => v,
+        None => return Err(ExtensionError::OutOfRange),
+    };
     if extension_duration < ONE_YEAR_SECS {
         return Ok(0);
     }
@@ -261,6 +287,7 @@ mod incentive_tests {
     #[test]
     fn test_apply_bonus_below_one_year_returns_zero() {
         let (env, id) = mk_env();
+        env.mock_all_auths();
         env.as_contract(&id, || {
             let staker = Address::generate(&env);
             let bonus =
@@ -272,9 +299,11 @@ mod incentive_tests {
     #[test]
     fn test_apply_bonus_exactly_one_year() {
         let (env, id) = mk_env();
+        env.mock_all_auths();
         env.as_contract(&id, || {
+            let admin = Address::generate(&env);
             let staker = Address::generate(&env);
-            deposit_to_pool(&env, 50_000).unwrap();
+            deposit_to_pool(&env, &admin, 50_000).unwrap();
 
             let bonus =
                 apply_lock_extension_bonus(&env, &staker, 0, ONE_YEAR_SECS, 100_000).unwrap();
@@ -291,6 +320,7 @@ mod incentive_tests {
     #[test]
     fn test_apply_bonus_insufficient_pool_fails() {
         let (env, id) = mk_env();
+        env.mock_all_auths();
         env.as_contract(&id, || {
             let staker = Address::generate(&env);
             let result = apply_lock_extension_bonus(&env, &staker, 0, ONE_YEAR_SECS, 100_000);
@@ -301,6 +331,7 @@ mod incentive_tests {
     #[test]
     fn test_apply_bonus_invalid_extension_fails() {
         let (env, id) = mk_env();
+        env.mock_all_auths();
         env.as_contract(&id, || {
             let staker = Address::generate(&env);
             let result = apply_lock_extension_bonus(&env, &staker, 1_000, 500, 10_000);
@@ -311,9 +342,11 @@ mod incentive_tests {
     #[test]
     fn test_multiple_milestone_extensions() {
         let (env, id) = mk_env();
+        env.mock_all_auths();
         env.as_contract(&id, || {
+            let admin = Address::generate(&env);
             let staker = Address::generate(&env);
-            deposit_to_pool(&env, 200_000).unwrap();
+            deposit_to_pool(&env, &admin, 200_000).unwrap();
 
             let b1 = apply_lock_extension_bonus(&env, &staker, 0, ONE_YEAR_SECS, 100_000).unwrap();
             let b2 = apply_lock_extension_bonus(
@@ -344,10 +377,12 @@ mod incentive_tests {
     #[test]
     fn test_reward_yield_scales_with_locked_amount() {
         let (env, id) = mk_env();
+        env.mock_all_auths();
         env.as_contract(&id, || {
+            let admin = Address::generate(&env);
             let s1 = Address::generate(&env);
             let s2 = Address::generate(&env);
-            deposit_to_pool(&env, 1_000_000).unwrap();
+            deposit_to_pool(&env, &admin, 1_000_000).unwrap();
 
             let b1 = apply_lock_extension_bonus(&env, &s1, 0, ONE_YEAR_SECS, 100_000).unwrap();
             let b2 = apply_lock_extension_bonus(&env, &s2, 0, ONE_YEAR_SECS, 200_000).unwrap();
@@ -360,20 +395,178 @@ mod incentive_tests {
     #[test]
     fn test_deposit_to_pool_increases_balance() {
         let (env, id) = mk_env();
+        env.mock_all_auths();
         env.as_contract(&id, || {
+            let admin = Address::generate(&env);
             assert_eq!(get_pool_balance(&env), 0);
-            deposit_to_pool(&env, 5_000).unwrap();
+            deposit_to_pool(&env, &admin, 5_000).unwrap();
             assert_eq!(get_pool_balance(&env), 5_000);
-            deposit_to_pool(&env, 3_000).unwrap();
+            deposit_to_pool(&env, &admin, 3_000).unwrap();
             assert_eq!(get_pool_balance(&env), 8_000);
         });
     }
 
     #[test]
-    fn test_deposit_zero_fails() {
+    fn test_deposit_to_pool_zero_fails() {
+        let (env, id) = mk_env();
+        env.mock_all_auths();
+        env.as_contract(&id, || {
+            let admin = Address::generate(&env);
+            assert_eq!(
+                deposit_to_pool(&env, &admin, 0),
+                Err(ExtensionError::InvalidAmount)
+            );
+        });
+    }
+
+    // ── Caller / bound checks (issues #720, #723) ─────────────────────────────
+
+    #[test]
+    fn test_deposit_to_pool_requires_admin_auth() {
         let (env, id) = mk_env();
         env.as_contract(&id, || {
-            assert_eq!(deposit_to_pool(&env, 0), Err(ExtensionError::InvalidAmount));
+            let admin = Address::generate(&env);
+            let other = Address::generate(&env);
+
+            // Authorized caller succeeds.
+            env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+                address: &admin,
+                invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                    contract: &id,
+                    fn_name: "deposit_to_pool",
+                    args: (admin.clone(), 1_000_i128).into_val(&env),
+                    sub_invokes: &[],
+                },
+            }]);
+            assert_eq!(deposit_to_pool(&env, &admin, 1_000), Ok(()));
+            assert_eq!(get_pool_balance(&env), 1_000);
+
+            // A different address must not be able to authorize on behalf of admin.
+            env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+                address: &other,
+                invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                    contract: &id,
+                    fn_name: "deposit_to_pool",
+                    args: (admin.clone(), 1_000_i128).into_val(&env),
+                    sub_invokes: &[],
+                },
+            }]);
+            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                deposit_to_pool(&env, &admin, 1_000)
+            }));
+            assert!(res.is_err() || res.unwrap().is_err());
+        });
+    }
+
+    #[test]
+    fn test_deposit_to_pool_bounds() {
+        let (env, id) = mk_env();
+        env.mock_all_auths();
+        env.as_contract(&id, || {
+            let admin = Address::generate(&env);
+
+            // Zero and negative are rejected with the crate error, not a panic.
+            assert_eq!(
+                deposit_to_pool(&env, &admin, 0),
+                Err(ExtensionError::InvalidAmount)
+            );
+            assert_eq!(
+                deposit_to_pool(&env, &admin, -1),
+                Err(ExtensionError::InvalidAmount)
+            );
+
+            // i128::MAX is accepted when the pool is empty.
+            assert_eq!(deposit_to_pool(&env, &admin, i128::MAX), Ok(()));
+            assert_eq!(get_pool_balance(&env), i128::MAX);
+
+            // Any further deposit would overflow and must be rejected.
+            assert_eq!(
+                deposit_to_pool(&env, &admin, 1),
+                Err(ExtensionError::InvalidAmount)
+            );
+            assert_eq!(
+                deposit_to_pool(&env, &admin, i128::MAX),
+                Err(ExtensionError::InvalidAmount)
+            );
+        });
+    }
+
+    #[test]
+    fn test_apply_lock_extension_bonus_requires_staker_auth() {
+        let (env, id) = mk_env();
+        env.mock_all_auths();
+        env.as_contract(&id, || {
+            let admin = Address::generate(&env);
+            deposit_to_pool(&env, &admin, 50_000).unwrap();
+
+            let staker = Address::generate(&env);
+            let other = Address::generate(&env);
+
+            // Authorized staker succeeds.
+            env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+                address: &staker,
+                invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                    contract: &id,
+                    fn_name: "apply_lock_extension_bonus",
+                    args: (staker.clone(), 0_u64, ONE_YEAR_SECS, 100_000_i128).into_val(&env),
+                    sub_invokes: &[],
+                },
+            }]);
+            let bonus =
+                apply_lock_extension_bonus(&env, &staker, 0, ONE_YEAR_SECS, 100_000).unwrap();
+            assert_eq!(bonus, 25_000);
+
+            // A different address must not authorize on behalf of the staker.
+            let staker2 = Address::generate(&env);
+            env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+                address: &other,
+                invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                    contract: &id,
+                    fn_name: "apply_lock_extension_bonus",
+                    args: (staker2.clone(), 0_u64, ONE_YEAR_SECS, 100_000_i128).into_val(&env),
+                    sub_invokes: &[],
+                },
+            }]);
+            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                apply_lock_extension_bonus(&env, &staker2, 0, ONE_YEAR_SECS, 100_000)
+            }));
+            assert!(res.is_err() || res.unwrap().is_err());
+        });
+    }
+
+    #[test]
+    fn test_apply_lock_extension_bonus_bounds() {
+        let (env, id) = mk_env();
+        env.mock_all_auths();
+        env.as_contract(&id, || {
+            let admin = Address::generate(&env);
+            deposit_to_pool(&env, &admin, 1_000_000).unwrap();
+            let staker = Address::generate(&env);
+
+            // locked_amount == 0 is rejected with the crate error.
+            assert_eq!(
+                apply_lock_extension_bonus(&env, &staker, 0, ONE_YEAR_SECS, 0),
+                Err(ExtensionError::InvalidAmount)
+            );
+            // Negative locked_amount is rejected.
+            assert_eq!(
+                apply_lock_extension_bonus(&env, &staker, 0, ONE_YEAR_SECS, -1),
+                Err(ExtensionError::InvalidAmount)
+            );
+
+            // u64::MAX as new_lock_end must not panic.
+            let res = apply_lock_extension_bonus(&env, &staker, 0, u64::MAX, 100_000);
+            assert!(res.is_ok() || res.is_err());
+
+            // current_lock_end == u64::MAX with new_lock_end == 0 is an invalid extension.
+            assert_eq!(
+                apply_lock_extension_bonus(&env, &staker, u64::MAX, 0, 100_000),
+                Err(ExtensionError::InvalidExtension)
+            );
+
+            // i128::MAX locked_amount must not panic (saturating math).
+            let res = apply_lock_extension_bonus(&env, &staker, 0, ONE_YEAR_SECS, i128::MAX);
+            assert!(res.is_ok() || res.is_err());
         });
     }
 }
