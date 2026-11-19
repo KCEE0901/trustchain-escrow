@@ -227,3 +227,38 @@ mod parameterpayload_roundtrip_tests {
 
     }
 }
+
+#[cfg(test)]
+mod vote_roundtrip_tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, Address, Env, IntoVal, TryFromVal};
+
+    #[test]
+    fn vote_scval_roundtrip() {
+        let env = Env::default();
+        let voter = Address::generate(&env);
+        let zero = Vote {
+            voter: voter.clone(),
+            support: false,
+            power: 0,
+            cast_at: 0,
+        };
+        let back = Vote::try_from_val(&env, &zero.clone().into_val(&env)).unwrap();
+        assert_eq!(back.voter, zero.voter);
+        assert_eq!(back.support, false);
+        assert_eq!(back.power, 0);
+        assert_eq!(back.cast_at, 0);
+
+        let nz = Vote {
+            voter,
+            support: true,
+            power: 1_000_000,
+            cast_at: 1_700_000_000,
+        };
+        let back2 = Vote::try_from_val(&env, &nz.clone().into_val(&env)).unwrap();
+        assert_eq!(back2.voter, nz.voter);
+        assert_eq!(back2.support, true);
+        assert_eq!(back2.power, 1_000_000);
+        assert_eq!(back2.cast_at, 1_700_000_000);
+    }
+}
