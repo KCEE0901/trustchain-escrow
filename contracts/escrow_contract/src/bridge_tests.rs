@@ -341,4 +341,75 @@ mod bridge_tests {
         client.register_wrapped_token(&admin, &make_wrapped_token_info(&env, token.clone(), true));
         assert!(client.get_wrapped_token_info(&token).unwrap().is_approved);
     }
+
+    // ── require_bridge_finalized: caller and bound checks ────────────────────
+
+    #[test]
+    fn test_require_bridge_finalized_caller_and_bounds() {
+        let (env, _, client) = setup();
+
+        // NOTE: `require_bridge_finalized` takes no caller parameter, so there is
+        // no authorization check to exercise. We only validate the numeric
+        // confirmation bounds and the success/error results.
+
+        // Success path: a finalized confirmation returns Ok.
+        let finalized_token = Address::generate(&env);
+        client.update_bridge_confirmation(
+            &finalized_token,
+            &BridgeProtocol::Wormhole,
+            &MIN_BRIDGE_CONFIRMATIONS,
+        );
+        assert!(client.require_bridge_finalized(&finalized_token).is_ok());
+
+        // No confirmation recorded: must return E54, not panic.
+        let unknown_token = Address::generate(&env);
+        let result = client.try_require_bridge_finalized(&unknown_token);
+        assert!(matches!(result, Err(Ok(EscrowError::E54))));
+
+        // Below-threshold confirmation: must return E54, not panic.
+        let below_token = Address::generate(&env);
+        client.update_bridge_confirmation(
+            &below_token,
+            &BridgeProtocol::Wormhole,
+            &(MIN_BRIDGE_CONFIRMATIONS - 1),
+        );
+        let result = client.try_require_bridge_finalized(&below_token);
+        assert!(matches!(result, Err(Ok(EscrowError::E54))));
+
+        // Numeric boundary: zero confirmations must not panic.
+        let zero_token = Address::generate(&env);
+        client.update_bridge_confirmation(&zero_token, &BridgeProtocol::Wormhole, &0);
+        let result = client.try_require_bridge_finalized(&zero_token);
+        assert!(matches!(result, Err(Ok(EscrowError::E54))));
+
+        // Numeric boundary: u32::MAX confirmations must not panic and is finalized.
+        let max_token = Address::generate(&env);
+        client.update_bridge_confirmation(&max_token, &BridgeProtocol::Wormhole, &u32::MAX);
+        assert!(client.require_bridge_finalized(&max_token).is_ok());
+    }
+
+    // ── set_wormhole_bridge: caller and bound checks ─────────────────────────
+
+    #[test]
+    fn test_set_wormhole_bridge_caller_and_bounds() {
+        let (env, admin, client) = setup();
+
+        // NOTE: `set_wormhole_bridge` takes no numeric argument, so no zero/max
+        // bound applies. We only validate caller authorization.
+
+        // Authorized admin caller stores the bridge address.
+        let bridge = Address::generate(&env);
+        client.set_wormhole_bridge(&admin, &bridge);
+        assert_eq!(client.get_wormhole_bridge().unwrap(), bridge);
+
+        // Unauthorized caller must be rejected with the crate's existing error
+        // rather than panicking.
+        let unauthorized = Address::generate(&env);
+        let other_bridge = Address::generate(&env);
+        let result = client.try_set_wormhole_bridge(&unauthorized, &other_bridge);
+        assert!(matches!(result, Err(Ok(EscrowError::E1))));
+
+        // The stored bridge address is unchanged after the rejected call.
+        assert_eq!(client.get_wormhole_bridge().unwrap(), bridge);
+    }
 }
