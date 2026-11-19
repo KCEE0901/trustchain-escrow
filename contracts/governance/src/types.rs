@@ -209,3 +209,57 @@ pub enum DataKey {
     JuryVote(u64, Address),
     JuryVoterStake(u64, Address),
 }
+
+#[cfg(test)]
+mod juryvote_roundtrip_tests {
+    use super::*;
+    use soroban_sdk::{Env, IntoVal, TryFromVal, Val};
+    #[test]
+    fn juryvote_scval_roundtrip() {
+        let env = Env::default();
+        let voter = soroban_sdk::Address::generate(&env);
+        let zero = JuryVote { voter: voter.clone(), locked_tokens: 0, for_client: false };
+        let back = JuryVote::try_from_val(&env, &zero.clone().into_val(&env)).unwrap();
+        assert_eq!(back.locked_tokens, 0);
+        assert_eq!(back.for_client, false);
+        let nz = JuryVote { voter, locked_tokens: 99, for_client: true };
+        let back2 = JuryVote::try_from_val(&env, &nz.clone().into_val(&env)).unwrap();
+        assert_eq!(back2.locked_tokens, 99);
+        assert_eq!(back2.for_client, true);
+
+    }
+}
+
+#[cfg(test)]
+mod proposal_roundtrip_tests {
+    use super::*;
+    use soroban_sdk::{Env, IntoVal, TryFromVal, Val};
+    #[test]
+    fn proposal_scval_roundtrip() {
+        use soroban_sdk::String;
+        let env = Env::default();
+        let proposer = soroban_sdk::Address::generate(&env);
+        let original = Proposal {
+            id: 1,
+            proposal_type: ProposalType::TextProposal,
+            proposer: proposer.clone(),
+            title: String::from_str(&env, "t"),
+            description: String::from_str(&env, "d"),
+            payload: ProposalPayload::Text,
+            status: ProposalStatus::Active,
+            vote_start: 0,
+            vote_end: 1,
+            executable_at: 2,
+            votes_for: 0,
+            votes_against: 0,
+            total_supply_snapshot: 0,
+            created_at: 0,
+            executed_at: None,
+        };
+        let back = Proposal::try_from_val(&env, &original.clone().into_val(&env)).unwrap();
+        assert_eq!(back.id, original.id);
+        assert_eq!(back.proposal_type, original.proposal_type);
+        assert_eq!(back.title, original.title);
+
+    }
+}
