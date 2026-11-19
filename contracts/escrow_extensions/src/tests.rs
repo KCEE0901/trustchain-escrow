@@ -618,4 +618,14 @@ mod tests {
             "weight_for_client.checked_mul(100) must overflow for u64::MAX"
         );
     }
+
+    #[test]
+    fn test_create_batch_missing_vec_entry_returns_typed_error() {
+        let env = Env::default();
+        let params: Vec<BatchEscrowParams> = Vec::new(&env);
+        assert_eq!(
+            params.get(0).ok_or(ExtError::BatchItemInvalid),
+            Err(ExtError::BatchItemInvalid),
+        );
+    }
 }
