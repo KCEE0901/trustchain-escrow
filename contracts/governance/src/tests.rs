@@ -1138,4 +1138,210 @@ mod tests {
         let result = client.try_cast_vote(&voter, &id, &true);
         assert!(result.is_err(), "Expected AlreadyVoted error");
     }
+
+    // ── Arbitrator caller and bound checks (#734–#737) ────────────────────────
+
+    mod arbitrator_checks {
+        use super::*;
+
+        use crate::GovError;
+        use soroban_sdk::testutils::{MockAuth, MockAuthInvoke};
+        use soroban_sdk::IntoVal;
+
+        const MIN_STAKE: i128 = 1_000;
+
+        /// #734: `stake_arbitrator` requires the caller's auth; 0, negative and
+        /// below-minimum amounts and an overflowing total return errors.
+        #[test]
+        fn test_stake_arbitrator_caller_and_bounds() {
+            let (env, _admin, ta, token, client) = setup();
+            let arb = Address::generate(&env);
+
+            assert_eq!(
+                client.try_stake_arbitrator(&arb, &0),
+                Err(Ok(GovError::InsufficientStake))
+            );
+            assert_eq!(
+                client.try_stake_arbitrator(&arb, &i128::MIN),
+                Err(Ok(GovError::InsufficientStake))
+            );
+            assert_eq!(
+                client.try_stake_arbitrator(&arb, &(MIN_STAKE - 1)),
+                Err(Ok(GovError::InsufficientStake))
+            );
+            assert!(!client.is_arbitrator(&arb));
+
+            mint(&env, &ta, &token, &arb, i128::MAX);
+            client.stake_arbitrator(&arb, &i128::MAX);
+            assert!(client.is_arbitrator(&arb));
+
+            // A further stake would overflow the recorded total.
+            assert_eq!(
+                client.try_stake_arbitrator(&arb, &MIN_STAKE),
+                Err(Ok(GovError::ArithmeticOverflow))
+            );
+        }
+
+        /// #734: another address cannot authorize a stake for `caller`.
+        #[test]
+        fn test_stake_arbitrator_rejects_other_signer() {
+            let (env, _admin, ta, token, client) = setup();
+            let arb = Address::generate(&env);
+            let stranger = Address::generate(&env);
+            mint(&env, &ta, &token, &arb, MIN_STAKE);
+
+            env.mock_auths(&[MockAuth {
+                address: &stranger,
+                invoke: &MockAuthInvoke {
+                    contract: &client.address,
+                    fn_name: "stake_arbitrator",
+                    args: (arb.clone(), MIN_STAKE).into_val(&env),
+                    sub_invokes: &[],
+                },
+            }]);
+            assert!(client.try_stake_arbitrator(&arb, &MIN_STAKE).is_err());
+            assert!(!client.is_arbitrator(&arb));
+        }
+
+        /// #735: `withdraw_stake` returns errors (never panics) with no stake,
+        /// during the cooldown, and when the ledger clock is at `u64::MAX`.
+        #[test]
+        fn test_withdraw_stake_caller_and_bounds() {
+            let (env, _admin, ta, token, client) = setup();
+            let arb = Address::generate(&env);
+
+            assert_eq!(
+                client.try_withdraw_stake(&arb),
+                Err(Ok(GovError::NoStakeToWithdraw))
+            );
+
+            mint(&env, &ta, &token, &arb, MIN_STAKE);
+            client.stake_arbitrator(&arb, &MIN_STAKE);
+            assert_eq!(
+                client.try_withdraw_stake(&arb),
+                Err(Ok(GovError::StakeCooldownActive))
+            );
+
+            env.ledger().with_mut(|l| l.timestamp = u64::MAX);
+            assert_eq!(
+                client.try_withdraw_stake(&arb),
+                Err(Ok(GovError::ArithmeticOverflow))
+            );
+            assert!(client.is_arbitrator(&arb));
+        }
+
+        /// #735: another address cannot withdraw on behalf of `caller`.
+        #[test]
+        fn test_withdraw_stake_rejects_other_signer() {
+            let (env, _admin, ta, token, client) = setup();
+            let arb = Address::generate(&env);
+            let stranger = Address::generate(&env);
+            mint(&env, &ta, &token, &arb, MIN_STAKE);
+            client.stake_arbitrator(&arb, &MIN_STAKE);
+
+            env.mock_auths(&[MockAuth {
+                address: &stranger,
+                invoke: &MockAuthInvoke {
+                    contract: &client.address,
+                    fn_name: "withdraw_stake",
+                    args: (arb.clone(),).into_val(&env),
+                    sub_invokes: &[],
+                },
+            }]);
+            assert!(client.try_withdraw_stake(&arb).is_err());
+            assert!(client.is_arbitrator(&arb));
+        }
+
+        /// #736: `slash_arbitrator` requires the admin; a missing stake and an
+        /// overflowing slash return errors instead of panicking.
+        #[test]
+        fn test_slash_arbitrator_caller_and_bounds() {
+            let (env, admin, ta, token, client) = setup();
+            let arb = Address::generate(&env);
+            let whale = Address::generate(&env);
+            let recipient = Address::generate(&env);
+            let stranger = Address::generate(&env);
+            let reason = str(&env, "ipfs://evidence");
+
+            assert_eq!(
+                client.try_slash_arbitrator(&admin, &arb, &recipient, &reason),
+                Err(Ok(GovError::NotArbitrator))
+            );
+
+            mint(&env, &ta, &token, &arb, MIN_STAKE);
+            client.stake_arbitrator(&arb, &MIN_STAKE);
+            assert_eq!(
+                client.try_slash_arbitrator(&stranger, &arb, &recipient, &reason),
+                Err(Ok(GovError::AdminOnly))
+            );
+
+            // Minimum stake: 10% is slashed and the remainder drops below the minimum.
+            assert_eq!(
+                client.slash_arbitrator(&admin, &arb, &recipient, &reason),
+                MIN_STAKE / 10
+            );
+            assert!(!client.is_arbitrator(&arb));
+            let tok = token::Client::new(&env, &token);
+            assert_eq!(tok.balance(&recipient), MIN_STAKE / 10);
+
+            // Maximum stake: computing the slash overflows and is rejected cleanly.
+            mint(&env, &ta, &token, &whale, i128::MAX);
+            client.stake_arbitrator(&whale, &i128::MAX);
+            assert_eq!(
+                client.try_slash_arbitrator(&admin, &whale, &recipient, &reason),
+                Err(Ok(GovError::ArithmeticOverflow))
+            );
+            assert!(client.is_arbitrator(&whale));
+        }
+
+        /// #736: another address cannot authorize a slash as the admin.
+        #[test]
+        fn test_slash_arbitrator_rejects_other_signer() {
+            let (env, admin, ta, token, client) = setup();
+            let arb = Address::generate(&env);
+            let recipient = Address::generate(&env);
+            let stranger = Address::generate(&env);
+            let reason = str(&env, "r");
+            mint(&env, &ta, &token, &arb, MIN_STAKE);
+            client.stake_arbitrator(&arb, &MIN_STAKE);
+
+            env.mock_auths(&[MockAuth {
+                address: &stranger,
+                invoke: &MockAuthInvoke {
+                    contract: &client.address,
+                    fn_name: "slash_arbitrator",
+                    args: (admin.clone(), arb.clone(), recipient.clone(), reason.clone())
+                        .into_val(&env),
+                    sub_invokes: &[],
+                },
+            }]);
+            assert!(client
+                .try_slash_arbitrator(&admin, &arb, &recipient, &reason)
+                .is_err());
+            assert!(client.is_arbitrator(&arb));
+        }
+
+        /// #737: `is_arbitrator` takes no caller and needs no auth; it reports
+        /// false for unknown addresses and on an uninitialized contract.
+        #[test]
+        fn test_is_arbitrator_caller_and_bounds() {
+            let (env, _admin, ta, token, client) = setup();
+            let arb = Address::generate(&env);
+            let other = Address::generate(&env);
+
+            assert!(!client.is_arbitrator(&arb));
+            mint(&env, &ta, &token, &arb, MIN_STAKE);
+            client.stake_arbitrator(&arb, &MIN_STAKE);
+
+            env.set_auths(&[]);
+            assert!(client.is_arbitrator(&arb));
+            assert!(!client.is_arbitrator(&other));
+
+            let uninit = GovernanceContractClient::new(
+                &env,
+                &env.register_contract(None, GovernanceContract),
+            );
+            assert!(!uninit.is_arbitrator(&arb));
+        }
+    }
 }
