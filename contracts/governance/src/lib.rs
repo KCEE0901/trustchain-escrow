@@ -767,20 +767,22 @@ impl GovernanceContract {
             return Err(GovError::InsufficientStake);
         }
 
+        // Accumulate stake; reject an overflowing total before moving tokens.
+        let prev_stake: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ArbitratorStake(caller.clone()))
+            .unwrap_or(0);
+        let new_stake = prev_stake
+            .checked_add(amount)
+            .ok_or(GovError::ArithmeticOverflow)?;
+
         let config = Storage::config(&env)?;
         token::Client::new(&env, &config.token).transfer(
             &caller,
             &env.current_contract_address(),
             &amount,
         );
-
-        // Accumulate stake
-        let prev_stake: i128 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::ArbitratorStake(caller.clone()))
-            .unwrap_or(0);
-        let new_stake = prev_stake + amount;
         env.storage()
             .persistent()
             .set(&DataKey::ArbitratorStake(caller.clone()), &new_stake);
@@ -825,7 +827,9 @@ impl GovernanceContract {
         {
             None => {
                 // First call — start cooldown
-                let expires = now + Self::WITHDRAW_COOLDOWN;
+                let expires = now
+                    .checked_add(Self::WITHDRAW_COOLDOWN)
+                    .ok_or(GovError::ArithmeticOverflow)?;
                 env.storage().persistent().set(&cooldown_key, &expires);
                 Storage::bump_persistent(&env, &cooldown_key);
                 return Err(GovError::StakeCooldownActive);
