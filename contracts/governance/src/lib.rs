@@ -708,6 +708,12 @@ impl GovernanceContract {
         if caller != admin {
             return Err(GovError::AdminOnly);
         }
+        // Reject a deposit that would overflow the pool instead of panicking.
+        if amount > 0 {
+            incentives::get_pool_balance(&env)
+                .checked_add(amount)
+                .ok_or(GovError::ArithmeticOverflow)?;
+        }
         incentives::deposit_to_pool(&env, amount).map_err(|_| GovError::InvalidParameter)
     }
 
