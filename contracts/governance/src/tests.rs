@@ -1138,4 +1138,235 @@ mod tests {
         let result = client.try_cast_vote(&voter, &id, &true);
         assert!(result.is_err(), "Expected AlreadyVoted error");
     }
+
+    // ── ve-lock caller and bound checks (#738–#741) ───────────────────────────
+
+    mod ve_lock_checks {
+        use super::*;
+
+        use crate::GovError;
+        use soroban_sdk::testutils::{MockAuth, MockAuthInvoke};
+        use soroban_sdk::IntoVal;
+
+        const MIN_LOCK: u64 = 604_800;
+        const MAX_LOCK: u64 = 126_230_400;
+
+        /// #738: `create_lock` rejects 0 / negative amounts and out-of-range
+        /// durations, and an overflowing unlock time, with the crate's errors.
+        #[test]
+        fn test_create_lock_caller_and_bounds() {
+            let (env, _admin, ta, token, client) = setup();
+            let user = Address::generate(&env);
+
+            assert_eq!(
+                client.try_create_lock(&user, &0, &MIN_LOCK),
+                Err(Ok(GovError::ZeroLockAmount))
+            );
+            assert_eq!(
+                client.try_create_lock(&user, &i128::MIN, &MIN_LOCK),
+                Err(Ok(GovError::ZeroLockAmount))
+            );
+            assert_eq!(
+                client.try_create_lock(&user, &1, &0),
+                Err(Ok(GovError::LockDurationTooShort))
+            );
+            assert_eq!(
+                client.try_create_lock(&user, &1, &u64::MAX),
+                Err(Ok(GovError::LockDurationTooLong))
+            );
+
+            // Clock near u64::MAX: the unlock time would overflow.
+            env.ledger().with_mut(|l| l.timestamp = u64::MAX - 1);
+            mint(&env, &ta, &token, &user, 1);
+            assert_eq!(
+                client.try_create_lock(&user, &1, &MIN_LOCK),
+                Err(Ok(GovError::ArithmeticOverflow))
+            );
+            env.ledger().with_mut(|l| l.timestamp = 0);
+
+            mint(&env, &ta, &token, &user, i128::MAX - 1);
+            let lock = client.create_lock(&user, &i128::MAX, &MAX_LOCK);
+            assert_eq!(lock.amount, i128::MAX);
+            assert_eq!(lock.unlock_time, MAX_LOCK);
+            assert_eq!(
+                client.try_create_lock(&user, &1, &MIN_LOCK),
+                Err(Ok(GovError::LockAlreadyExists))
+            );
+        }
+
+        /// #738: another address cannot authorize a lock for `caller`.
+        #[test]
+        fn test_create_lock_rejects_other_signer() {
+            let (env, _admin, ta, token, client) = setup();
+            let user = Address::generate(&env);
+            let stranger = Address::generate(&env);
+            mint(&env, &ta, &token, &user, 1_000);
+
+            env.mock_auths(&[MockAuth {
+                address: &stranger,
+                invoke: &MockAuthInvoke {
+                    contract: &client.address,
+                    fn_name: "create_lock",
+                    args: (user.clone(), 1_000i128, MIN_LOCK).into_val(&env),
+                    sub_invokes: &[],
+                },
+            }]);
+            assert!(client.try_create_lock(&user, &1_000, &MIN_LOCK).is_err());
+            assert_eq!(client.ve_voting_power(&user), 0);
+        }
+
+        /// #739: `extend_lock` with 0 / max unlock times and amounts returns
+        /// a lock or the crate's error, never a panic.
+        #[test]
+        fn test_extend_lock_caller_and_bounds() {
+            let (env, _admin, ta, token, client) = setup();
+            let user = Address::generate(&env);
+
+            assert_eq!(
+                client.try_extend_lock(&user, &0, &0),
+                Err(Ok(GovError::NoLockFound))
+            );
+
+            mint(&env, &ta, &token, &user, 1_000);
+            let lock = client.create_lock(&user, &1_000, &MIN_LOCK);
+
+            // 0 / 0 leaves amount and unlock time unchanged.
+            let same = client.extend_lock(&user, &0, &0);
+            assert_eq!(same.amount, 1_000);
+            assert_eq!(same.unlock_time, lock.unlock_time);
+            // Negative amounts are ignored rather than subtracted.
+            assert_eq!(client.extend_lock(&user, &i128::MIN, &0).amount, 1_000);
+
+            assert_eq!(
+                client.try_extend_lock(&user, &0, &(lock.unlock_time - 1)),
+                Err(Ok(GovError::NewUnlockTimeTooEarly))
+            );
+            assert_eq!(
+                client.try_extend_lock(&user, &0, &u64::MAX),
+                Err(Ok(GovError::LockDurationTooLong))
+            );
+            assert_eq!(
+                client.try_extend_lock(&user, &i128::MAX, &0),
+                Err(Ok(GovError::ArithmeticOverflow))
+            );
+            assert_eq!(client.extend_lock(&user, &0, &MAX_LOCK).unlock_time, MAX_LOCK);
+
+            // Clock at u64::MAX: the maximum unlock time saturates instead of
+            // overflowing.
+            env.ledger().with_mut(|l| l.timestamp = u64::MAX);
+            assert_eq!(
+                client.extend_lock(&user, &0, &u64::MAX).unlock_time,
+                u64::MAX
+            );
+        }
+
+        /// #739: another address cannot extend `caller`'s lock.
+        #[test]
+        fn test_extend_lock_rejects_other_signer() {
+            let (env, _admin, ta, token, client) = setup();
+            let user = Address::generate(&env);
+            let stranger = Address::generate(&env);
+            mint(&env, &ta, &token, &user, 1_000);
+            let lock = client.create_lock(&user, &1_000, &MIN_LOCK);
+
+            env.mock_auths(&[MockAuth {
+                address: &stranger,
+                invoke: &MockAuthInvoke {
+                    contract: &client.address,
+                    fn_name: "extend_lock",
+                    args: (user.clone(), 0i128, MAX_LOCK).into_val(&env),
+                    sub_invokes: &[],
+                },
+            }]);
+            assert!(client.try_extend_lock(&user, &0, &MAX_LOCK).is_err());
+            env.mock_all_auths();
+            assert_eq!(
+                client.extend_lock(&user, &0, &0).unlock_time,
+                lock.unlock_time
+            );
+        }
+
+        /// #740: `withdraw_lock` returns errors without a lock or before
+        /// expiry, and the full amount once expired.
+        #[test]
+        fn test_withdraw_lock_caller_and_bounds() {
+            let (env, _admin, ta, token, client) = setup();
+            let user = Address::generate(&env);
+
+            assert_eq!(
+                client.try_withdraw_lock(&user),
+                Err(Ok(GovError::NoLockFound))
+            );
+
+            mint(&env, &ta, &token, &user, 1_000);
+            client.create_lock(&user, &1_000, &MIN_LOCK);
+            assert_eq!(
+                client.try_withdraw_lock(&user),
+                Err(Ok(GovError::LockNotExpired))
+            );
+
+            env.ledger().with_mut(|l| l.timestamp = u64::MAX);
+            assert_eq!(client.withdraw_lock(&user), 1_000);
+            assert_eq!(token::Client::new(&env, &token).balance(&user), 1_000);
+            assert_eq!(
+                client.try_withdraw_lock(&user),
+                Err(Ok(GovError::NoLockFound))
+            );
+        }
+
+        /// #740: another address cannot withdraw `caller`'s lock.
+        #[test]
+        fn test_withdraw_lock_rejects_other_signer() {
+            let (env, _admin, ta, token, client) = setup();
+            let user = Address::generate(&env);
+            let stranger = Address::generate(&env);
+            mint(&env, &ta, &token, &user, 1_000);
+            client.create_lock(&user, &1_000, &MIN_LOCK);
+            env.ledger().with_mut(|l| l.timestamp = MIN_LOCK);
+
+            env.mock_auths(&[MockAuth {
+                address: &stranger,
+                invoke: &MockAuthInvoke {
+                    contract: &client.address,
+                    fn_name: "withdraw_lock",
+                    args: (user.clone(),).into_val(&env),
+                    sub_invokes: &[],
+                },
+            }]);
+            assert!(client.try_withdraw_lock(&user).is_err());
+            assert_eq!(token::Client::new(&env, &token).balance(&user), 0);
+        }
+
+        /// #741: `ve_voting_power` takes no caller; it returns 0 without a
+        /// lock, after expiry and on an uninitialized contract, and does not
+        /// overflow for an `i128::MAX` lock.
+        #[test]
+        fn test_ve_voting_power_caller_and_bounds() {
+            let (env, _admin, ta, token, client) = setup();
+            let user = Address::generate(&env);
+            let other = Address::generate(&env);
+
+            assert_eq!(client.ve_voting_power(&user), 0);
+
+            mint(&env, &ta, &token, &user, i128::MAX);
+            client.create_lock(&user, &i128::MAX, &MAX_LOCK);
+            env.set_auths(&[]);
+            // Full remaining duration: power equals the locked amount.
+            assert_eq!(client.ve_voting_power(&user), i128::MAX);
+            assert_eq!(client.ve_voting_power(&other), 0);
+
+            env.ledger().with_mut(|l| l.timestamp = MAX_LOCK / 2);
+            let half = client.ve_voting_power(&user);
+            assert!(half > 0 && half < i128::MAX);
+
+            env.ledger().with_mut(|l| l.timestamp = u64::MAX);
+            assert_eq!(client.ve_voting_power(&user), 0);
+
+            let uninit = GovernanceContractClient::new(
+                &env,
+                &env.register_contract(None, GovernanceContract),
+            );
+            assert_eq!(uninit.ve_voting_power(&user), 0);
+        }
+    }
 }
