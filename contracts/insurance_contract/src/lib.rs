@@ -685,6 +685,16 @@ impl InsuranceContract {
     }
 
     /// Admin removes a governor.
+    ///
+    /// # Arguments
+    /// * `caller`   - Must `require_auth()` and be the registered admin.
+    /// * `governor` - Must be a currently registered governor.
+    ///
+    /// # Errors
+    /// * `AdminOnly`         - `caller` is not the admin.
+    /// * `GovernorNotFound`  - `governor` is not registered.
+    /// * `InvalidAmount`     - Removing would leave the governor count out of
+    ///   range (i.e. the stored count is already zero).
     pub fn remove_governor(
         env: Env,
         caller: Address,
@@ -697,10 +707,14 @@ impl InsuranceContract {
             return Err(InsuranceError::GovernorNotFound);
         }
 
+        let mut stats = Storage::load_stats(&env);
+        if stats.governor_count == 0 {
+            return Err(InsuranceError::InvalidAmount);
+        }
+
         Storage::remove_governor(&env, &governor);
 
-        let mut stats = Storage::load_stats(&env);
-        stats.governor_count = stats.governor_count.saturating_sub(1);
+        stats.governor_count -= 1;
         Storage::save_stats(&env, &stats);
 
         events::emit_governor_removed(&env, &governor);
