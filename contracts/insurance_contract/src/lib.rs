@@ -711,7 +711,10 @@ impl InsuranceContract {
         })
     }
 
-    pub fn get_insurance_pool_balance(env: Env, token_addr: Address) -> Result<i128, InsuranceError> {
+    pub fn get_insurance_pool_balance(
+        env: Env,
+        token_addr: Address,
+    ) -> Result<i128, InsuranceError> {
         Storage::require_initialized(&env)?;
         Ok(token::Client::new(&env, &token_addr).balance(&env.current_contract_address()))
     }
@@ -1714,5 +1717,28 @@ mod tests {
         // Claimant received exactly one payout.
         let token_client = token::Client::new(&s.env, &s.token_id);
         assert_eq!(token_client.balance(&claimant), 1_000_i128);
+    }
+
+    #[test]
+    fn test_unstake_caller_and_bound_checks() {
+        let s = setup();
+        let staker = Address::generate(&s.env);
+        let other = Address::generate(&s.env);
+        mint(&s.env, &s.admin, &s.token_id, &staker, 500);
+        s.client.stake(&staker, &500_i128);
+
+        assert_eq!(
+            s.client.try_unstake(&other, &100_i128),
+            Err(Ok(InsuranceError::NoStakeFound))
+        );
+        assert_eq!(
+            s.client.try_unstake(&staker, &0_i128),
+            Err(Ok(InsuranceError::InsufficientStake))
+        );
+        assert_eq!(
+            s.client.try_unstake(&staker, &i128::MAX),
+            Err(Ok(InsuranceError::InsufficientStake))
+        );
+        assert_eq!(s.client.unstake(&staker, &500_i128), 500);
     }
 }
