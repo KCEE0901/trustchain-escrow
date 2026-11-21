@@ -424,11 +424,11 @@ impl InsuranceContract {
             return Err(InsuranceError::BelowMinimum);
         }
 
-        token::Client::new(&env, &Storage::get_token(&env)).transfer(
-            &contributor,
-            &env.current_contract_address(),
-            &amount,
-        );
+        let token_client = token::Client::new(&env, &Storage::get_token(&env));
+        if token_client.balance(&contributor) < amount {
+            return Err(InsuranceError::InsufficientFunds);
+        }
+        token_client.transfer(&contributor, &env.current_contract_address(), &amount);
 
         Storage::add_contribution(&env, &contributor, amount);
 
@@ -711,7 +711,10 @@ impl InsuranceContract {
         })
     }
 
-    pub fn get_insurance_pool_balance(env: Env, token_addr: Address) -> Result<i128, InsuranceError> {
+    pub fn get_insurance_pool_balance(
+        env: Env,
+        token_addr: Address,
+    ) -> Result<i128, InsuranceError> {
         Storage::require_initialized(&env)?;
         Ok(token::Client::new(&env, &token_addr).balance(&env.current_contract_address()))
     }
@@ -1714,5 +1717,46 @@ mod tests {
         // Claimant received exactly one payout.
         let token_client = token::Client::new(&s.env, &s.token_id);
         assert_eq!(token_client.balance(&claimant), 1_000_i128);
+    }
+
+    #[test]
+    fn test_contribute_caller_and_bound_checks() {
+        let s = setup();
+        let contributor = Address::generate(&s.env);
+        let other = Address::generate(&s.env);
+        mint(&s.env, &s.admin, &s.token_id, &contributor, 500);
+
+        assert_eq!(
+            s.client.try_contribute(&other, &100_i128),
+            Err(Ok(InsuranceError::InsufficientFunds))
+        );
+        assert_eq!(
+            s.client.try_contribute(&contributor, &0_i128),
+            Err(Ok(InsuranceError::BelowMinimum))
+        );
+        assert_eq!(
+            s.client.try_contribute(&contributor, &i128::MAX),
+            Err(Ok(InsuranceError::InsufficientFunds))
+        );
+        s.client.contribute(&contributor, &500_i128);
+        assert_eq!(s.client.get_fund_info().total_contributed, 500);
+    }
+
+    #[test]
+    fn test_submit_claim_caller_and_bound_checks() {
+        let s = setup();
+        let claimant = Address::generate(&s.env);
+        let desc = String::from_str(&s.env, "loss");
+
+        assert_eq!(
+            s.client.try_submit_claim(&claimant, &desc, &0_i128),
+            Err(Ok(InsuranceError::InvalidClaimAmount))
+        );
+        assert_eq!(
+            s.client.try_submit_claim(&claimant, &desc, &i128::MAX),
+            Err(Ok(InsuranceError::ClaimExceedsCap))
+        );
+        let id = s.client.submit_claim(&claimant, &desc, &1_000_i128);
+        assert_eq!(s.client.submit_claim(&claimant, &desc, &1_000_i128), id + 1);
     }
 }
