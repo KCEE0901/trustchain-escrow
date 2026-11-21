@@ -47,6 +47,8 @@ const INSTANCE_TTL_THRESHOLD: u32 = 5_000;
 const INSTANCE_TTL_EXTEND_TO: u32 = 50_000;
 const PERSISTENT_TTL_THRESHOLD: u32 = 5_000;
 const PERSISTENT_TTL_EXTEND_TO: u32 = 50_000;
+/// Upper bound on the number of registered governors.
+const MAX_GOVERNORS: u32 = 32;
 
 /// Default claim expiry window in ledgers (~7 days at 5 s/ledger).
 const DEFAULT_CLAIM_EXPIRY_LEDGERS: u64 = 120_960;
@@ -652,6 +654,10 @@ impl InsuranceContract {
     // ── Governance management ─────────────────────────────────────────────────
 
     /// Admin registers a new governor.
+    ///
+    /// Rejects callers that are not the admin (`AdminOnly`) and rejects
+    /// registration once `MAX_GOVERNORS` governors are registered
+    /// (`InvalidAmount`).
     pub fn add_governor(
         env: Env,
         caller: Address,
@@ -664,9 +670,13 @@ impl InsuranceContract {
             return Err(InsuranceError::GovernorAlreadyExists);
         }
 
+        let mut stats = Storage::load_stats(&env);
+        if stats.governor_count >= MAX_GOVERNORS {
+            return Err(InsuranceError::InvalidAmount);
+        }
+
         Storage::add_governor(&env, &governor);
 
-        let mut stats = Storage::load_stats(&env);
         stats.governor_count += 1;
         Storage::save_stats(&env, &stats);
 
@@ -1284,6 +1294,31 @@ mod tests {
 
         s.client.remove_governor(&s.admin, &gov);
         assert!(!s.client.is_governor(&gov));
+    }
+
+    #[test]
+    fn test_add_governor_rejects_unauthorized_caller_and_bound() {
+        let s = setup();
+        let stranger = Address::generate(&s.env);
+        let gov = Address::generate(&s.env);
+
+        // Non-admin caller is rejected with the crate error, not a panic.
+        let result = s.client.try_add_governor(&stranger, &gov);
+        assert_eq!(result, Err(Ok(InsuranceError::AdminOnly)));
+        assert!(!s.client.is_governor(&gov));
+
+        // Fill the governor set up to the bound.
+        for _ in 0..MAX_GOVERNORS {
+            let g = Address::generate(&s.env);
+            s.client.add_governor(&s.admin, &g);
+        }
+        assert_eq!(s.client.get_fund_info().governor_count, MAX_GOVERNORS);
+
+        // One more governor is out of range and rejected without panicking.
+        let extra = Address::generate(&s.env);
+        let result = s.client.try_add_governor(&s.admin, &extra);
+        assert_eq!(result, Err(Ok(InsuranceError::InvalidAmount)));
+        assert!(!s.client.is_governor(&extra));
     }
 
     #[test]
