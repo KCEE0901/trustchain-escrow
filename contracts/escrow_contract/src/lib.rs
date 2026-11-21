@@ -57,7 +57,10 @@ mod amount_limits_tests;
 mod arbiter_allowlist;
 mod formal_verification;
 mod arbiter_allowlist_tests;
+mod arbiter_lifecycle_event_tests;
+mod arbiter_lifecycle_tests;
 mod arbiter_reputation_tests;
+mod arbiter_storage_growth_tests;
 mod arbiter_validation_tests;
 mod auto_expiry;
 mod auto_expiry_tests;
@@ -67,6 +70,9 @@ mod bridge;
 mod bridge_tests;
 mod contract_version_tests;
 mod creation_validation_tests;
+mod deadline_auto_cancellation_tests;
+mod deadline_auth_boundary_tests;
+mod deadline_storage_growth_tests;
 mod deployment_tests;
 mod dispute_evidence;
 mod dispute_evidence_tests;
@@ -75,11 +81,14 @@ mod escrow_template_tests;
 mod event_names;
 mod event_tests;
 mod events;
+mod expiry_event_tests;
 mod extension;
 mod governance_escalation_tests;
 mod lock_time_enforcement_tests;
 mod max_escrow_amount_tests;
 mod meta_snapshot_tests;
+mod milestone_auth_boundary_tests;
+mod milestone_storage_growth_tests;
 mod module_registration_tests;
 mod multi_asset_fee_tests;
 mod multisig_lifecycle_tests;
@@ -99,21 +108,23 @@ mod fuzz_tests;
 mod gas_profiling;
 mod property_invariant_tests;
 mod reentrancy_guard_tests;
+mod reputation_auth_tests;
 mod self_escrow_tests;
+mod simulation;
+mod simulation_tests;
 mod slippage_tests;
 mod split_escrow_tests;
 mod state_history;
 mod state_history_tests;
 mod storage;
+mod terms_hash;
+mod terms_hash_tests;
 mod timelock_enforcement_tests;
 mod token_whitelist_tests;
 mod transfer_client_tests;
 mod types;
-mod simulation;
-mod simulation_tests;
-mod terms_hash;
-mod terms_hash_tests;
 mod upgrade_tests;
+mod wrapped_token_auth_tests;
 
 pub use errors::EscrowError;
 use storage::StorageManager;
@@ -125,7 +136,7 @@ pub use types::{
     StateHistoryEntry, Timelock, TermsAcceptance, DexConfig, DexSwapRecord, MS_APPROVED, MS_DISPUTED, MS_PENDING, MS_REJECTED, MS_RELEASED,
     MS_SUBMITTED,
 };
-use types::{CancellationRequest, RecurringPaymentConfig, SlashRecord};
+use types::{ArbiterUpdatedEvent, CancellationRequest, RecurringPaymentConfig, SlashRecord};
 use types::{FundPayload, ProposalPayload, ProposalType};
 
 use soroban_sdk::{
@@ -5068,12 +5079,15 @@ impl EscrowContract {
 
     /// Updates on-chain reputation for a user.
     ///
+    /// Admin only: requires the *current* admin's authorization for these
+    /// exact arguments, so a former admin, a pending admin, the subject
+    /// address or anyone else is rejected.
+    ///
     /// Scoring:
     /// - Completed escrow: +10 base + 1 per 1000 units volume (capped at +20)
     /// - Disputed escrow:  -5 score, increment disputed_count
-    /// Contract entry point: `update_reputation`.
     ///
-    /// See the function name for the public contract operation.
+    /// `volume` must be non-negative (`E17`).
     pub fn update_reputation(
         env: Env,
         address: Address,
@@ -5082,6 +5096,16 @@ impl EscrowContract {
         volume: i128,
     ) -> Result<(), EscrowError> {
         ContractStorage::require_not_paused(&env)?;
+        ContractStorage::require_initialized(&env)?;
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(EscrowError::E2)?;
+        admin.require_auth();
+        if volume < 0 {
+            return Err(EscrowError::E17);
+        }
         Self::_update_reputation_internal(&env, &address, completed, disputed, volume);
         Ok(())
     }
@@ -5750,18 +5774,21 @@ impl EscrowContract {
 
     // ── View Functions ────────────────────────────────────────────────────────
 
-    /// Contract entry point: `get_escrow`.
-    ///
-    /// See the function name for the public contract operation.
+    #[must_use]
     pub fn get_escrow(env: Env, escrow_id: u64) -> Result<EscrowState, EscrowError> {
         ContractStorage::load_escrow(&env, escrow_id)
     }
 
+    pub fn escrow_exists(env: Env, escrow_id: u64) -> bool {
+        env.storage()
+            .persistent()
+            .has(&PackedDataKey::EscrowMeta(escrow_id))
+            || env.storage().persistent().has(&DataKey::Escrow(escrow_id))
+    }
+
     /// O(1) lightweight view — returns only the escrow header without loading milestones.
     /// Suitable for monitoring dashboards that only need status, balances, and party info.
-    /// Contract entry point: `get_escrow_meta`.
-    ///
-    /// See the function name for the public contract operation.
+    #[must_use]
     pub fn get_escrow_meta(env: Env, escrow_id: u64) -> Result<EscrowMeta, EscrowError> {
         let mut meta = ContractStorage::load_escrow_meta(&env, escrow_id)?;
         ContractStorage::settle_rent_for_access(&env, &mut meta)?;
@@ -5851,16 +5878,12 @@ impl EscrowContract {
         })
     }
 
-    /// Contract entry point: `escrow_count`.
-    ///
-    /// See the function name for the public contract operation.
+    #[must_use]
     pub fn escrow_count(env: Env) -> u64 {
         ContractStorage::escrow_count(&env)
     }
 
-    /// Contract entry point: `get_milestone`.
-    ///
-    /// See the function name for the public contract operation.
+    #[must_use]
     pub fn get_milestone(
         env: Env,
         escrow_id: u64,
@@ -5870,12 +5893,23 @@ impl EscrowContract {
         ContractStorage::load_milestone(&env, escrow_id, milestone_id)
     }
 
+    #[must_use]
+    pub fn get_milestone_by_index(
+        env: Env,
+        escrow_id: u64,
+        index: u32,
+    ) -> Result<Milestone, EscrowError> {
+        let meta = ContractStorage::load_escrow_meta_with_rent(&env, escrow_id)?;
+        if index >= meta.milestone_count {
+            return Err(EscrowError::E13);
+        }
+        ContractStorage::load_milestone(&env, escrow_id, index)
+    }
+
     /// Returns the approvals list for a given milestone.
     /// Useful for frontends displaying multisig approval progress (e.g. "2 of 3 signers approved").
     /// Returns `EscrowError::E13` if the milestone does not exist.
-    /// Contract entry point: `get_milestone_approvals`.
-    ///
-    /// See the function name for the public contract operation.
+    #[must_use]
     pub fn get_milestone_approvals(
         env: Env,
         escrow_id: u64,
@@ -5886,9 +5920,31 @@ impl EscrowContract {
         Ok(milestone.approvals)
     }
 
-    /// Contract entry point: `get_cancellation_request`.
-    ///
-    /// See the function name for the public contract operation.
+    /// Returns the number of milestones still awaiting completion.
+    /// This includes milestones that are either pending or already submitted for review.
+    /// Completed, cancelled, and other terminal states are excluded.
+    pub fn get_pending_milestones_count(env: Env, escrow_id: u64) -> u32 {
+        let Ok(meta) = ContractStorage::load_escrow_meta(&env, escrow_id) else {
+            return 0;
+        };
+
+        if matches!(meta.status, EscrowStatus::Completed | EscrowStatus::Cancelled) {
+            return 0;
+        }
+
+        let mut count = 0_u32;
+        for milestone_id in 0..meta.milestone_count {
+            let Ok(milestone) = ContractStorage::load_milestone(&env, escrow_id, milestone_id)
+            else {
+                continue;
+            };
+            if milestone.status == MS_PENDING || milestone.status == MS_SUBMITTED {
+                count = count.saturating_add(1);
+            }
+        }
+        count
+    }
+
     pub fn get_cancellation_request(
         env: Env,
         escrow_id: u64,
@@ -6019,9 +6075,19 @@ impl EscrowContract {
             }
         }
 
+        let previous_arbiter = meta.arbiter.clone();
         meta.arbiter = new_arbiter.clone();
         ContractStorage::save_escrow_meta(&env, &meta);
-        events::emit_arbiter_updated(&env, escrow_id, &new_arbiter);
+        events::emit_arbiter_updated(
+            &env,
+            &ArbiterUpdatedEvent {
+                escrow_id,
+                previous_arbiter,
+                new_arbiter,
+                updated_at: env.ledger().timestamp(),
+                ledger: env.ledger().sequence(),
+            },
+        );
         Ok(())
     }
 
@@ -6456,16 +6522,17 @@ impl EscrowContract {
         let now = env.ledger().timestamp();
 
         if completed {
-            // +10 base + 1 per 1000 volume units, capped at +20 total
-            let volume_bonus = (volume / 1_000).min(10) as u64;
+            // +10 base + 1 per 1000 volume units, capped at +20 total.
+            // Clamped at 0 so a negative volume can never wrap to a huge u64.
+            let volume_bonus = (volume / 1_000).clamp(0, 10) as u64;
             record.total_score = record.total_score.saturating_add(10 + volume_bonus);
-            record.completed_escrows += 1;
+            record.completed_escrows = record.completed_escrows.saturating_add(1);
             record.total_volume = record.total_volume.saturating_add(volume);
         }
 
         if disputed {
             record.total_score = record.total_score.saturating_sub(5);
-            record.disputed_escrows += 1;
+            record.disputed_escrows = record.disputed_escrows.saturating_add(1);
         }
 
         record.last_updated = now;
@@ -7425,7 +7492,9 @@ mod tests {
         );
 
         let milestone = client.get_milestone(&escrow_id, &milestone_id);
+        let indexed_milestone = client.get_milestone_by_index(&escrow_id, &0u32);
         assert_eq!(milestone.id, milestone_id);
+        assert_eq!(indexed_milestone.id, milestone_id);
         assert_eq!(milestone.amount, 300_i128);
 
         env.as_contract(&contract_id, || {

@@ -1,9 +1,20 @@
-# CODEOWNERS
-#
-# This file makes you a required reviewer on every PR automatically.
-# Combined with branch protection rules, nothing reaches `main` without
-# your explicit approval — and contributors cannot push to main at all.
-#
-# Replace @your-github-username with your actual GitHub handle.
+# CODEOWNERS for failure notification routing (issue #591)
+# Owners listed here receive actionable failure notifications for the
+# main and develop branch parity workflows. Keep this file aligned with
+# the notification routing in .github/workflows so alerts reach the
+# correct owner without duplication.
 
-* @your-github-username
+# Default owners for the repository
+* @handsoff/maintainers
+
+# CI / workflow definitions and failure routing
+/.github/workflows/ @handsoff/ci-owners
+/.github/CODEOWNERS @handsoff/ci-owners
+
+# Branch parity failure routing: main and develop share the same owner
+# so a single notification per failure event is delivered.
+
+# Pull-request merge regression detection (issue #594): the CI workflow
+# routes regression failures to this owner. A single owner is listed so
+# each regression event produces exactly one notification (no duplication).
+/.github/workflows/ci.yml @handsoff/ci-owners

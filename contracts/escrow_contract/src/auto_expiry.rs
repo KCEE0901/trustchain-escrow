@@ -11,7 +11,7 @@ use soroban_sdk::{token, Address, Env};
 
 use crate::errors::EscrowError;
 use crate::events;
-use crate::types::EscrowStatus;
+use crate::types::{EscrowExpiredEvent, EscrowStatus};
 use crate::ContractStorage;
 
 /// Trigger auto-expiry on an escrow whose deadline has passed.
@@ -57,6 +57,18 @@ pub fn trigger_expiry(env: &Env, caller: &Address, escrow_id: u64) -> Result<i12
         ContractStorage::save_escrow_meta(env, &meta);
 
         events::emit_escrow_cancelled(env, escrow_id, refund_amount);
+        events::emit_escrow_expired(
+            env,
+            &EscrowExpiredEvent {
+                escrow_id,
+                triggered_by: caller.clone(),
+                refunded_to: meta.client.clone(),
+                token: meta.token.clone(),
+                refunded_amount: refund_amount,
+                deadline,
+                expired_at: now,
+            },
+        );
 
         Ok(refund_amount)
     })

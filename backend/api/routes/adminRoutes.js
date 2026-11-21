@@ -80,6 +80,10 @@ router.post('/users/:address/ban', requireMfa, adminController.banUser);
  * @query  page, limit, resolved (true|false)
  */
 router.get('/disputes', adminController.listDisputes);
+router.get('/disputes/pending', (req, res, next) => {
+  req.query.resolved = 'false';
+  return adminController.listDisputes(req, res, next);
+});
 
 /**
  * @route  POST /api/admin/disputes/:id/resolve
@@ -103,6 +107,14 @@ router.get('/settings', adminController.getSettings);
  * @security Requires MFA verification
  */
 router.patch('/settings', requireMfa, adminController.updateSettings);
+
+/**
+ * @route  POST /api/admin/settings/prune
+ * @desc   Remove persisted settings that are no longer allowlisted (bounded batch)
+ * @body   { dryRun?: boolean }
+ * @security Requires MFA verification
+ */
+router.post('/settings/prune', requireMfa, adminController.pruneSettings);
 
 // ── Audit Logs ─────────────────────────────────────────────────────────────────
 /**

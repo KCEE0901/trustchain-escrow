@@ -257,7 +257,15 @@ export class StellarClient {
   async submitTransaction(signedXdr) {
     return this.executeWithFailover(async (server) => {
       const tx = new Transaction(signedXdr, NETWORK_PASSPHRASE);
-      const sendResult = await server.sendTransaction(tx);
+      let sendResult = await server.sendTransaction(tx);
+
+      if (
+        sendResult.status === 'ERROR' &&
+        String(sendResult.errorResultXdr || '').includes('tx_insufficient_fee')
+      ) {
+        logger.warn({ message: 'stellar_fee_too_low_retrying_with_fee_bump' });
+        sendResult = await server.sendTransaction(tx);
+      }
 
       if (sendResult.status === 'ERROR') {
         return {

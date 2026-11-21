@@ -7,6 +7,7 @@
  * @module eventWorker
  */
 
+import { createHash, randomUUID } from 'node:crypto';
 import { Worker } from 'bullmq';
 import {
   connection,
@@ -14,6 +15,295 @@ import {
   deadLetterQueue,
   queueMetrics,
 } from '../lib/queueConfig.js';
+import { sendAlert, ALERT_SEVERITY, ALERT_TYPES } from './alertService.js';
+
+// ── Failure alerting idempotency ───────────────────────────────────────────────
+//
+// A permanently failed event must produce exactly one dead-letter job and one
+// alert, even when BullMQ re-emits `failed`, a dead-letter job is retried, or
+// two workers handle the same failure concurrently. Every failure gets a
+// deterministic key derived from the event itself (not from job ids, which
+// change when the same event is re-enqueued):
+//
+//  1. the dead-letter job is added with `jobId` derived from that key, so
+//     BullMQ ignores duplicate adds while the job exists, and
+//  2. the alert is sent only after atomically claiming the key in a dedupe
+//     store (Redis `SET NX` in production). A claim is a short lease while the
+//     alert is in flight and becomes a long-lived "sent" marker on success; a
+//     failed send releases it so a retry can alert.
+
+/** How long a "sent" marker suppresses repeat alerts for the same failure. */
+export const FAILURE_ALERT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** How long an in-flight claim blocks other workers before it can be retaken. */
+export const FAILURE_ALERT_LEASE_MS = 60 * 1000;
+const FAILURE_ALERT_KEY_PREFIX = 'trustchain:alerts:event-failure:';
+const MAX_ALERT_ERROR_LENGTH = 300;
+
+/** JSON with recursively sorted keys, so equal payloads hash identically. */
+const stableStringify = (value) => {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+};
+
+/**
+ * Deterministic identity of a permanent failure: a hash of the original job
+ * payload (event + ledger). The same event always maps to the same key.
+ * Contains only hex characters, so it is also a valid BullMQ custom job id.
+ * @param {Object} originalJobData - `job.data` of the failed stellar-events job
+ * @returns {string}
+ */
+export const failureAlertKey = (originalJobData) =>
+  createHash('sha256')
+    .update(stableStringify(originalJobData ?? null))
+    .digest('hex')
+    .slice(0, 32);
+
+/** BullMQ job id for the dead-letter entry of a failure (no `:` allowed). */
+export const deadLetterJobId = (alertKey) => `dlq-${alertKey}`;
+
+/** First line of the error message, truncated; never the stack or payload. */
+const safeErrorMessage = (error) => {
+  const message = typeof error?.message === 'string' ? error.message : String(error ?? 'unknown');
+  const firstLine = message.split('\n')[0];
+  return firstLine.length > MAX_ALERT_ERROR_LENGTH
+    ? `${firstLine.slice(0, MAX_ALERT_ERROR_LENGTH)}…`
+    : firstLine;
+};
+
+/** Process-local dedupe store; used when no Redis client is available. */
+export const createMemoryAlertDedupeStore = (now = () => Date.now()) => {
+  const entries = new Map();
+  const live = (key) => {
+    const entry = entries.get(key);
+    if (entry && entry.expiresAt <= now()) {
+      entries.delete(key);
+      return undefined;
+    }
+    return entry;
+  };
+  return {
+    async claim(key, token, leaseMs) {
+      if (live(key)) return false;
+      entries.set(key, { value: `pending:${token}`, expiresAt: now() + leaseMs });
+      return true;
+    },
+    async markSent(key, ttlMs) {
+      entries.set(key, { value: 'sent', expiresAt: now() + ttlMs });
+    },
+    async release(key, token) {
+      if (live(key)?.value === `pending:${token}`) entries.delete(key);
+    },
+  };
+};
+
+// Deletes the key only if it still holds this worker's claim token.
+const RELEASE_IF_OWNER_SCRIPT =
+  "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) end return 0";
+
+/** Cross-process dedupe store backed by an ioredis client. */
+export const createRedisAlertDedupeStore = (redis) => ({
+  async claim(key, token, leaseMs) {
+    const result = await redis.set(FAILURE_ALERT_KEY_PREFIX + key, `pending:${token}`, 'PX', leaseMs, 'NX');
+    return result === 'OK';
+  },
+  async markSent(key, ttlMs) {
+    await redis.set(FAILURE_ALERT_KEY_PREFIX + key, 'sent', 'PX', ttlMs);
+  },
+  async release(key, token) {
+    await redis.eval(RELEASE_IF_OWNER_SCRIPT, 1, FAILURE_ALERT_KEY_PREFIX + key, `pending:${token}`);
+  },
+});
+
+const defaultAlertDedupeStore = () =>
+  connection && typeof connection.set === 'function' && typeof connection.eval === 'function'
+    ? createRedisAlertDedupeStore(connection)
+    : createMemoryAlertDedupeStore();
+
+/** Default sender: routes through alertService, keyed per failure (not per type). */
+const defaultFailureAlertSender = async (alert) => {
+  const outcome = await sendAlert({
+    type: ALERT_TYPES.PERMANENT_EVENT_FAILURE,
+    severity: ALERT_SEVERITY.CRITICAL,
+    message: `Stellar event permanently failed after ${alert.attemptsMade} attempts`,
+    metadata: alert,
+    dedupeKey: `${ALERT_TYPES.PERMANENT_EVENT_FAILURE}:${alert.alertKey}`,
+  });
+  if (outcome === 'failed') throw new Error('alert delivery failed');
+};
+
+let failureAlerting = { store: undefined, sender: defaultFailureAlertSender };
+
+/**
+ * Override the dedupe store and/or alert sender (tests, custom channels).
+ * Call with no arguments to restore the defaults.
+ */
+export const configureFailureAlerting = ({ store, sender } = {}) => {
+  failureAlerting = { store, sender: sender ?? defaultFailureAlertSender };
+};
+
+const alertDedupeStore = () => {
+  if (!failureAlerting.store) failureAlerting.store = defaultAlertDedupeStore();
+  return failureAlerting.store;
+};
+
+// ── Failure alerting telemetry ─────────────────────────────────────────────────
+//
+// Every alert attempt is counted by outcome and logged as one structured line
+// correlated by `alertKey` (a payload hash, never the payload itself). Labels
+// come from fixed sets so metric cardinality stays bounded, and error text,
+// stacks and event payloads are never recorded: they may carry secrets.
+
+/** Outcomes of one `sendPermanentFailureAlert` call. */
+export const FAILURE_ALERT_OUTCOMES = Object.freeze(['sent', 'duplicate', 'delivery_failed']);
+/** Distinct event-type labels tracked before new types fold into `other`. */
+export const MAX_TELEMETRY_EVENT_TYPES = 32;
+const TELEMETRY_EVENT_TYPE_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+
+const emptyFailureAlertMetrics = () => ({
+  outcomes: Object.fromEntries(FAILURE_ALERT_OUTCOMES.map((outcome) => [outcome, 0])),
+  dedupeUnavailable: 0,
+  byEventType: new Map(),
+});
+
+let failureAlertMetrics = emptyFailureAlertMetrics();
+
+/** Bounded event-type label: malformed values are `Unknown`, overflow is `other`. */
+const telemetryEventType = (eventType) => {
+  if (typeof eventType !== 'string' || !TELEMETRY_EVENT_TYPE_PATTERN.test(eventType)) {
+    return 'Unknown';
+  }
+  const { byEventType } = failureAlertMetrics;
+  if (byEventType.has(eventType) || byEventType.size < MAX_TELEMETRY_EVENT_TYPES) return eventType;
+  return 'other';
+};
+
+/**
+ * Record one alert attempt and log it as a single structured line.
+ * @returns {Object} the logged telemetry entry
+ */
+export const recordFailureAlertTelemetry = ({
+  alertKey,
+  outcome,
+  eventType,
+  attemptsMade,
+  ledger,
+  dedupe = 'ok',
+}) => {
+  if (!FAILURE_ALERT_OUTCOMES.includes(outcome)) {
+    throw new Error(`unknown failure alert outcome: ${outcome}`);
+  }
+  const label = telemetryEventType(eventType);
+  failureAlertMetrics.outcomes[outcome] += 1;
+  if (dedupe === 'unavailable') failureAlertMetrics.dedupeUnavailable += 1;
+  const counts =
+    failureAlertMetrics.byEventType.get(label) ??
+    Object.fromEntries(FAILURE_ALERT_OUTCOMES.map((o) => [o, 0]));
+  counts[outcome] += 1;
+  failureAlertMetrics.byEventType.set(label, counts);
+
+  const entry = {
+    type: 'event_failure_alert',
+    alertKey: typeof alertKey === 'string' ? alertKey : null,
+    outcome,
+    eventType: label,
+    attemptsMade: Number.isInteger(attemptsMade) ? attemptsMade : null,
+    ledger: Number.isInteger(ledger) ? ledger : null,
+    dedupe: dedupe === 'unavailable' ? 'unavailable' : 'ok',
+  };
+  console.log(`[AlertTelemetry] ${JSON.stringify(entry)}`);
+  return entry;
+};
+
+/** Snapshot of the failure alerting counters (safe to serialize). */
+export const getFailureAlertMetrics = () => ({
+  outcomes: { ...failureAlertMetrics.outcomes },
+  dedupeUnavailable: failureAlertMetrics.dedupeUnavailable,
+  byEventType: Object.fromEntries(
+    [...failureAlertMetrics.byEventType.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([type, counts]) => [type, { ...counts }]),
+  ),
+});
+
+/** Reset the failure alerting counters (tests, process-level rollover). */
+export const resetFailureAlertMetrics = () => {
+  failureAlertMetrics = emptyFailureAlertMetrics();
+};
+
+/**
+ * Send the alert for a permanent failure at most once per failure key.
+ *
+ * @returns {Promise<'sent'|'duplicate'>}
+ * @throws when delivery fails (after releasing the claim, so a retry can alert)
+ */
+export const sendPermanentFailureAlert = async ({ alertKey, originalJob, error, attemptsMade }) => {
+  const store = alertDedupeStore();
+  const token = randomUUID();
+
+  const eventType = describeEventType(originalJob?.event);
+  let dedupe = 'ok';
+  const telemetry = (outcome) =>
+    recordFailureAlertTelemetry({
+      alertKey,
+      outcome,
+      eventType,
+      attemptsMade,
+      ledger: originalJob?.ledger,
+      dedupe,
+    });
+
+  let claimed;
+  try {
+    claimed = await store.claim(alertKey, token, FAILURE_ALERT_LEASE_MS);
+  } catch {
+    // If dedupe storage itself is down, prefer a possible duplicate alert
+    // over silently dropping a permanent failure.
+    console.warn(`[DeadLetter] Alert dedupe store unavailable for ${alertKey}; sending without dedupe`);
+    claimed = true;
+    dedupe = 'unavailable';
+  }
+  if (!claimed) {
+    console.log(`[DeadLetter] Alert for ${alertKey} already sent or in flight; skipping`);
+    telemetry('duplicate');
+    return 'duplicate';
+  }
+
+  const alert = {
+    alertKey,
+    ledger: originalJob?.ledger ?? null,
+    eventType,
+    attemptsMade: attemptsMade ?? null,
+    error: safeErrorMessage(error),
+  };
+
+  try {
+    await failureAlerting.sender(alert);
+  } catch (sendError) {
+    await store.release(alertKey, token).catch(() => {});
+    telemetry('delivery_failed');
+    throw sendError;
+  }
+  await store.markSent(alertKey, FAILURE_ALERT_TTL_MS).catch(() => {
+    console.warn(`[DeadLetter] Could not record alert ${alertKey} as sent`);
+  });
+  telemetry('sent');
+  return 'sent';
+};
+
+/** Event type for alert metadata; never throws on malformed events. */
+const describeEventType = (event) => {
+  try {
+    return parseEventType(event);
+  } catch {
+    return 'Unknown';
+  }
+};
 
 /**
  * Processes a single Stellar event
@@ -158,26 +448,60 @@ const updateLastProcessedLedger = async (ledger) => {
  */
 const processDeadLetterEvent = async (job) => {
   const { originalJob, error, attemptsMade } = job.data;
+  const alertKey = job.data.alertKey ?? failureAlertKey(originalJob);
 
   console.error(
-    `[DeadLetter] Processing permanently failed job after ${attemptsMade} attempts:`,
-    error,
+    `[DeadLetter] Processing permanently failed job ${alertKey} after ${attemptsMade} attempts: ${safeErrorMessage(error)}`,
   );
 
   try {
     // Log the failure for manual investigation
     await logPermanentFailure(originalJob, error, attemptsMade);
 
-    // TODO: Send alert to monitoring system
-    // await alertService.sendAlert({
-    //   type: 'PERMANENT_EVENT_FAILURE',
-    //   data: { originalJob, error, attemptsMade }
-    // });
+    // Alert at most once per failure, across retries and concurrent workers.
+    const outcome = await sendPermanentFailureAlert({ alertKey, originalJob, error, attemptsMade });
 
-    console.log('[DeadLetter] Successfully logged permanent failure');
+    console.log(`[DeadLetter] Permanent failure ${alertKey} handled (alert ${outcome})`);
+    return outcome;
   } catch (logError) {
-    console.error('[DeadLetter] Error processing dead letter job:', logError);
+    console.error(`[DeadLetter] Error processing dead letter job ${alertKey}: ${safeErrorMessage(logError)}`);
     throw logError;
+  }
+};
+
+/**
+ * `failed` handler for the main worker: on the final attempt, enqueue exactly
+ * one dead-letter job per failure (deterministic `jobId`), so repeated
+ * `failed` emissions or re-enqueued events cannot create duplicates.
+ */
+const handleEventJobFailed = async (job, err) => {
+  if (!job) return undefined;
+  console.error(`[Worker] Job ${job.id} failed:`, err?.message);
+
+  // Move to dead letter queue after max attempts
+  if (!(job.attemptsMade >= job.opts?.attempts)) return undefined;
+
+  const alertKey = failureAlertKey(job.data);
+  try {
+    return await deadLetterQueue.add(
+      'dead-letter-event',
+      {
+        originalJob: job.data,
+        error: {
+          message: err?.message,
+          stack: err?.stack,
+        },
+        attemptsMade: job.attemptsMade,
+        originalJobId: job.id,
+        alertKey,
+      },
+      { jobId: deadLetterJobId(alertKey) },
+    );
+  } catch (enqueueError) {
+    console.error(
+      `[Worker] Could not move job ${job.id} to dead letter queue (${alertKey}): ${safeErrorMessage(enqueueError)}`,
+    );
+    return undefined;
   }
 };
 
@@ -225,19 +549,7 @@ export const createEventWorker = () => {
   });
 
   worker.on('failed', (job, err) => {
-    console.error(`[Worker] Job ${job.id} failed:`, err.message);
-
-    // Move to dead letter queue after max attempts
-    if (job.attemptsMade >= job.opts.attempts) {
-      deadLetterQueue.add('dead-letter-event', {
-        originalJob: job.data,
-        error: {
-          message: err.message,
-          stack: err.stack,
-        },
-        attemptsMade: job.attemptsMade,
-      });
-    }
+    void handleEventJobFailed(job, err);
   });
 
   worker.on('error', (err) => {
@@ -279,4 +591,5 @@ export {
   updateLastProcessedLedger,
   processDeadLetterEvent,
   logPermanentFailure,
+  handleEventJobFailed,
 };

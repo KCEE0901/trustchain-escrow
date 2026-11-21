@@ -14,12 +14,13 @@ Related reading:
 
 1. [Overview](#overview)
 2. [Tenant Model](#tenant-model)
-3. [Tenant Resolution](#tenant-resolution)
-4. [Data Isolation](#data-isolation)
-5. [Cache and Queue Isolation](#cache-and-queue-isolation)
-6. [Audit Chain Integrity](#audit-chain-integrity)
-7. [Tenant Lifecycle](#tenant-lifecycle)
-8. [Cross-References](#cross-references)
+3. [Self-Hosted Tenant Setup Walkthrough](#self-hosted-tenant-setup-walkthrough)
+4. [Tenant Resolution](#tenant-resolution)
+5. [Data Isolation](#data-isolation)
+6. [Cache and Queue Isolation](#cache-and-queue-isolation)
+7. [Audit Chain Integrity](#audit-chain-integrity)
+8. [Tenant Lifecycle](#tenant-lifecycle)
+9. [Cross-References](#cross-references)
 
 ---
 
@@ -78,6 +79,130 @@ model Tenant {
 | `branding` | Custom branding configuration (logo, colors, etc.) |
 | `configuration` | Per-tenant feature flags and runtime settings |
 | `metadata` | Arbitrary JSON metadata for integration partners |
+
+---
+
+## Self-Hosted Tenant Setup Walkthrough
+
+This section is for operators standing up a new tenant on a self-hosted deployment.
+All steps use the admin API (`backend/api/routes/adminRoutes.js`), which is
+protected by `adminAuth` — either the raw `x-admin-api-key` header or a short-lived
+bearer token obtained from `POST /api/admin/auth/login`. The examples below use the
+raw key for brevity.
+
+### 1. Create the tenant
+
+```bash
+curl -X POST http://localhost:4000/api/admin/tenants \
+  -H "x-admin-api-key: $ADMIN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "slug": "acme",
+        "name": "Acme Corp",
+        "domains": ["acme.trustchain.example"]
+      }'
+```
+
+Only `slug` and `name` are required — `status` defaults to `"active"`, and
+`domains`, `branding`, `configuration`, and `metadata` default to empty. `slug` is
+normalized server-side (lowercased, non-alphanumeric characters collapsed to `-`)
+before the uniqueness check, so pass a human-readable value and let the API derive
+the canonical form.
+
+Response `201 Created`:
+
+```json
+{
+  "tenant": {
+    "id": "clz9k1m4k0011qzrmvb2h7t3f",
+    "slug": "acme",
+    "name": "Acme Corp",
+    "status": "active",
+    "domains": ["acme.trustchain.example"],
+    "branding": {},
+    "configuration": {},
+    "metadata": {},
+    "createdAt": "2026-07-25T10:12:04.221Z",
+    "updatedAt": "2026-07-25T10:12:04.221Z"
+  }
+}
+```
+
+A `slug` that already exists returns `409 { "error": "Tenant already exists" }`.
+
+### 2. Set the tenant's custom domain
+
+`domains` is set at creation or updated later with `PATCH /api/admin/tenants/:tenantId`:
+
+```bash
+curl -X PATCH http://localhost:4000/api/admin/tenants/clz9k1m4k0011qzrmvb2h7t3f \
+  -H "x-admin-api-key: $ADMIN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"domains": ["acme.trustchain.example", "escrow.acme.com"]}'
+```
+
+Adding a domain here only affects **tenant resolution** (step 4 of
+[Tenant Resolution](#tenant-resolution) — matching `Host` / `X-Forwarded-Host`
+against `domains`). It does **not** configure CORS: the API's allowed browser
+origins are a single, deployment-wide list read from the `ALLOWED_ORIGINS`
+environment variable (`backend/server.js`), shared by every tenant on the
+instance. If a tenant's dashboard is served from a custom domain and calls the
+API directly from the browser, that origin must also be added to
+`ALLOWED_ORIGINS` and the backend restarted — updating `domains` alone will
+resolve the tenant correctly but the browser request will still fail CORS.
+
+### 3. Send the `X-Tenant-ID` header on API requests
+
+Once a tenant exists, scope any request to it explicitly rather than relying on
+host-based resolution — this is the highest-precedence resolution rule and is the
+most reliable option for server-to-server integrations that don't go through the
+tenant's custom domain:
+
+```bash
+curl http://localhost:4000/api/escrows \
+  -H "Authorization: Bearer $JWT" \
+  -H "X-Tenant-ID: clz9k1m4k0011qzrmvb2h7t3f"
+```
+
+`X-Tenant-Slug: acme` works the same way and is often easier to hardcode in
+integration config than the CUID. Every response also echoes `X-Tenant-Slug` so
+you can confirm which tenant a request was actually resolved against. Requests
+with no matching header or domain fall back to `DEFAULT_TENANT_SLUG` (see
+[Tenant Resolution](#tenant-resolution)), so a missing or misspelled header fails
+silently into the default tenant rather than erroring — always verify the
+response's `X-Tenant-Slug` when debugging.
+
+### 4. Isolation guarantees for a new tenant
+
+What is **isolated** per tenant, enforced by the mechanisms in
+[Data Isolation](#data-isolation) and [Cache and Queue Isolation](#cache-and-queue-isolation):
+
+- Database rows — every tenant-scoped Prisma model carries `tenantId` and every
+  query is filtered by it.
+- Redis cache keys and rate-limit counters — prefixed with the tenant slug via
+  `scopeCacheKey`.
+- Webhook subscriptions and deliveries, escrows, milestones, disputes, reputation
+  records, and audit log chains — each tenant has its own, and its own audit hash
+  chain (see [Audit Chain Integrity](#audit-chain-integrity)).
+
+What is **shared** across all tenants on a single self-hosted instance:
+
+- The Postgres database and Redis instance themselves — isolation is enforced in
+  application code (query filters and key prefixes), not by separate database
+  instances or Redis namespaces per tenant.
+- The `ADMIN_API_KEY` / `ADMIN_JWT_SECRET` credentials — admin API access is
+  instance-wide, not per-tenant; anyone with the admin key can read or modify
+  every tenant on the deployment, including creating and suspending tenants.
+- CORS configuration (`ALLOWED_ORIGINS`) and other process-level environment
+  variables — these apply to the whole backend process, not to one tenant.
+- Application and contract code, and the underlying Soroban contract deployment
+  the indexer polls (`ESCROW_CONTRACT_ID`) — all tenants on one instance share
+  the same indexer and the same on-chain contract unless you deploy a second
+  instance with its own contract.
+
+If tenants require hard isolation at the database or process level rather than
+row-level scoping, deploy separate instances instead of separate tenants on one
+instance.
 
 ---
 

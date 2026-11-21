@@ -454,7 +454,7 @@ mod upgrade_tests {
                 &None,
                 &None,
                 &no_multisig(&env),
-            &None,
+                &None,
             );
         }
         assert_eq!(contract.escrow_count(), 3u64);
@@ -474,5 +474,41 @@ mod upgrade_tests {
             assert_eq!(escrow.status, EscrowStatus::Active);
             assert_eq!(escrow.total_amount, 1_000_000);
         }
+    }
+
+    /// Arbiter selection state and its allowlist gate remain compatible across
+    /// a code upgrade, including subsequent writes through the same public API.
+    #[test]
+    fn test_upgrade_preserves_arbiter_selection_lifecycle() {
+        let (env, admin, client_addr, freelancer, contract) = setup_initialized();
+        let token = register_token(&env, &admin, &client_addr, 1_000_000);
+        let arbiter = Address::generate(&env);
+        contract.add_to_arbiter_allowlist(&admin, &arbiter);
+
+        let escrow_id = contract.create_escrow(
+            &client_addr,
+            &freelancer,
+            &token,
+            &500_000,
+            &hash32(&env, 77),
+            &Some(arbiter.clone()),
+            &None,
+            &None,
+            &None,
+            &no_multisig(&env),
+            &None,
+        );
+
+        contract.upgrade(&admin, &upload_dummy_wasm(&env));
+
+        assert!(contract.is_arbiter_allowed(&arbiter));
+        assert_eq!(
+            contract.get_escrow(&escrow_id).arbiter,
+            Some(arbiter.clone())
+        );
+
+        contract.remove_from_arbiter_allowlist(&admin, &arbiter);
+        assert!(!contract.is_arbiter_allowed(&arbiter));
+        assert_eq!(contract.get_escrow(&escrow_id).arbiter, Some(arbiter));
     }
 }
