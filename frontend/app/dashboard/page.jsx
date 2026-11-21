@@ -11,6 +11,7 @@ import PageTransition from '../../components/layout/PageTransition';
 import ErrorBoundary from '../../components/error/ErrorBoundary';
 import DashboardTour from '../../components/onboarding/DashboardTour';
 import { usePerformance } from '../../hooks/usePerformance';
+import { useErrorHandler } from '../../hooks/useErrorHandler';
 import { useI18n } from '../../i18n/index.jsx';
 import { useWalletStore } from '../../store/app-store';
 
@@ -49,6 +50,7 @@ export default function DashboardPage() {
   const [escrowsLoading, setEscrowsLoading] = useState(true);
   const [reputation, setReputation] = useState(null);
   const { measureAsync } = usePerformance('DashboardPage');
+  const handleError = useErrorHandler();
 
   useEffect(() => {
     if (!address) router.replace('/');
@@ -63,9 +65,12 @@ export default function DashboardPage() {
         .then((data) => {
           setEscrows(Array.isArray(data?.escrows) ? data.escrows : []);
         })
-        .catch(() => setEscrows([])),
+        .catch((err) => {
+          setEscrows([]);
+          handleError(err);
+        }),
     ).finally(() => setEscrowsLoading(false));
-  }, [measureAsync, address]);
+  }, [measureAsync, address, handleError]);
 
   useEffect(() => {
     if (!address) return;
@@ -74,8 +79,8 @@ export default function DashboardPage() {
       .then((data) => {
         if (!data?.error) setReputation(data);
       })
-      .catch(() => {});
-  }, [address]);
+      .catch(handleError);
+  }, [address, handleError]);
 
   if (!address) return null;
 

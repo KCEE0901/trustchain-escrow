@@ -382,6 +382,49 @@ Then run:
 npm run test:e2e -w frontend
 ```
 
+### Frontend Testing
+
+The frontend test pyramid is deliberately unit-heavy: prefer a fast, isolated unit
+test over an integration test, and an integration test over an end-to-end one.
+Test user-observable behavior (what renders, what a click does) rather than
+implementation details like internal state or prop names — that's what keeps
+tests passing across refactors. See
+[docs/frontend-testing.md](docs/frontend-testing.md) for the full strategy.
+
+Jest unit tests (components, hooks, utilities):
+
+```bash
+npm run test:unit -w frontend
+```
+
+Playwright end-to-end tests (navigation, visual regression, performance smoke):
+
+```bash
+cd frontend
+npx playwright install --with-deps chromium firefox   # once, before the first run
+cd ..
+npm run test:e2e -w frontend
+```
+
+Storybook, for visually reviewing components in isolation:
+
+```bash
+npm run storybook -w frontend
+```
+
+Updating Jest snapshots after an intentional UI change:
+
+```bash
+npm run test:unit -w frontend -- -u
+```
+
+Accessibility tests (`jest-axe` against reusable UI patterns) live in
+`frontend/tests/a11y/` and are excluded from `test:unit` — run them separately:
+
+```bash
+npm run test:a11y -w frontend
+```
+
 ### Helpful root shortcuts
 
 ```bash

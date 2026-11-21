@@ -9,17 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Storage-growth benchmark and regression budget for milestone lookup scalability: constant `EscrowMeta` size, bounded milestone entries, position-independent lookup cost (#505)
+- Authorization boundary tests for milestone paths: missing, stale and incorrect auth on add/batch/rename/cap changes, and auth-free lookups (#504)
+- Bounded, prunable sync-lag history in `alertService` with `calculateSyncLag` reporting only fresh samples (#498)
+- Permission-aware gating for reputation actions derived from the escrow record and state (#499)
 - Test coverage for governance quorum-not-reached scenario resulting in `Defeated` proposal status (#658)
 - Test coverage for `execute_proposal` rejection on `Defeated` proposals (#658)
 - Test coverage for `cast_vote` rejection after `cancel_proposal` (#659)
 - Test coverage for double-cancel rejection in governance (#659)
 - `ProposalAlreadyCancelled` error variant (code 21) in `GovError` (#659)
+- Deadline auto-cancellation: authorization boundary tests for `trigger_expiry` (missing, incorrect, stale and paused) and a storage-growth benchmark with budgets in `types.rs` (#510, #511)
+- Admin settings retention: `POST /api/admin/settings/prune` removes non-allowlisted `platform_settings` rows in bounded batches, with a dry-run mode (#520)
+- Event worker failure alerting telemetry: bounded per-outcome counters and one structured log line per alert, correlated by alert key and free of error text (#521)
 - Guard in `cancel_proposal` that returns `ProposalAlreadyCancelled` when the proposal is already in `Cancelled` state (#659)
 - Pause test coverage for `reject_milestone`, `release_funds`, `start_timelock`, `extend_lock_time`, and `process_recurring_payments` returning `ContractPaused` (#660)
 - Documentation: multi-tenant architecture and data isolation guarantees (#13)
 - Documentation: operational runbook for common tasks (#14)
 - Documentation: Stellar network integration and testnet setup (#15)
 - Documentation: changelog and versioning policy (#16)
+- `esc_exp` event on deadline auto-cancellation (`trigger_expiry`) carrying escrow id, caller, refund recipient, token, refunded amount, deadline and processing time, alongside the existing `esc_can` event (#512)
+- Admin settings persistence (`platform_settings` table) with a stable degraded response from `GET /api/admin/settings` and a 503 from `PATCH` when the store is unavailable (#519)
+- Idempotent permanent-failure alerting in the event worker: one dead-letter job and one alert per failed event across retries and concurrent workers (#522)
+- `arb_upd` event now carries an `ArbiterUpdatedEvent` payload (escrow id, previous and new arbiter, ledger timestamp and sequence) for deterministic indexing, with completeness tests (#509)
+- Storage-growth benchmark and budget for the arbiter selection lifecycle (#508)
+- Authorization boundary tests for the wrapped token registry: missing, stale and incorrect admin auth (#501)
+- Opt-in, privacy-safe telemetry for `useReputation` lookups that never records wallet addresses or payloads (#500)
+
+### Security
+
+- `update_reputation` now requires the current admin's authorization and rejects negative volume, which previously wrapped to a near-maximum score (#513)
 
 ## [2.0.0] - 2026-04-21
 

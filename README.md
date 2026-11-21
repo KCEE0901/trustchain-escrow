@@ -348,23 +348,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, the Soroban toolchain, h
 
 ## Handsoff notes
 
-<!-- handsoff-issue-341 -->
-- #341: Document ledger constraints for recurring payment schedule execution
+<!-- handsoff-issue-595 -->
+- #595: Add explicit error mapping for wrapped token registry enforcement
 
-<!-- handsoff-issue-342 -->
-- #342: Add fuzz coverage for recurring payment schedule execution
+<!-- handsoff-issue-596 -->
+- #596: Add authorization boundary coverage for buyer signer count validation
 
-<!-- handsoff-issue-343 -->
-- #343: Add event completeness checks for recurring payment schedule execution
-
-<!-- handsoff-issue-344 -->
-- #344: Add authorization boundary coverage for slashing evidence verification
-
-<!-- handsoff-issue-333 -->
-- #333: Add fuzz coverage for bridge settlement confirmation
-
-<!-- handsoff-issue-335 -->
-- #335: Document ledger constraints for insurance reserve solvency
-
-<!-- handsoff-issue-336 -->
-- #336: Add fuzz coverage for insurance reserve solvency
+<!-- handsoff-issue-598 -->
+- #598: Add fuzz coverage for buyer signer count validation

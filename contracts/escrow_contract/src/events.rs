@@ -15,6 +15,7 @@
 use soroban_sdk::{symbol_short, Address, Env};
 
 use crate::event_names as ev;
+use crate::types::{ArbiterUpdatedEvent, EscrowExpiredEvent};
 
 pub fn emit_escrow_created(
     env: &Env,
@@ -167,6 +168,13 @@ pub fn emit_recurring_schedule_cancelled(
 pub fn emit_escrow_cancelled(env: &Env, escrow_id: u64, returned_amount: i128) {
     env.events()
         .publish((ev::ESCROW_CANCELLED, escrow_id), returned_amount);
+}
+
+/// Deadline auto-cancellation: `("esc_exp", escrow_id)` with the full
+/// [`EscrowExpiredEvent`] payload.
+pub fn emit_escrow_expired(env: &Env, payload: &EscrowExpiredEvent) {
+    env.events()
+        .publish((ev::ESCROW_EXPIRED, payload.escrow_id), payload.clone());
 }
 
 pub fn emit_dispute_raised(env: &Env, escrow_id: u64, raised_by: &Address) {
@@ -370,9 +378,12 @@ pub fn emit_rent_withdrawn(env: &Env, escrow_id: u64, recipient: &Address, amoun
         .publish((ev::RENT_WITHDRAWN, escrow_id), (recipient.clone(), amount));
 }
 
-pub fn emit_arbiter_updated(env: &Env, escrow_id: u64, new_arbiter: &Option<Address>) {
+/// Emitted when the arbiter of an escrow is selected, replaced or removed.
+///
+/// Topics: `(arb_upd, escrow_id)`. Data: [`ArbiterUpdatedEvent`].
+pub fn emit_arbiter_updated(env: &Env, event: &ArbiterUpdatedEvent) {
     env.events()
-        .publish((ev::ARBITER_UPDATED, escrow_id), new_arbiter.clone());
+        .publish((ev::ARBITER_UPDATED, event.escrow_id), event.clone());
 }
 
 /// Emitted when an NFT-gated escrow is created.

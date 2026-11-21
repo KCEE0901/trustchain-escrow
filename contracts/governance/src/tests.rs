@@ -73,7 +73,9 @@ mod tests {
     fn test_initialize_stores_config() {
         let (_env, _admin, _ta, token, client) = setup();
         let config = client.get_config();
+        let params = client.get_governance_params();
         assert_eq!(config.token, token);
+        assert_eq!(params.token, token);
         assert_eq!(config.quorum_bps, QUORUM_BPS);
         assert_eq!(config.approval_threshold_bps, APPROVAL_BPS);
         assert_eq!(config.voting_period, VOTING_PERIOD);

@@ -151,4 +151,62 @@ mod meta_snapshot_tests {
             "remaining_balance should be 0 after cancel_escrow"
         );
     }
+
+    #[test]
+    fn test_get_pending_milestones_count() {
+        let (env, admin, _, client) = setup();
+        let client_addr = Address::generate(&env);
+        let freelancer = Address::generate(&env);
+        let token = register_token(&env, &admin, &client_addr, 1_500);
+
+        let escrow_id = client.create_escrow(
+            &client_addr,
+            &freelancer,
+            &token,
+            &1_000,
+            &hash(&env, 10),
+            &None,
+            &None,
+            &None,
+            &None,
+            &no_multisig(&env),
+            &None,
+        );
+
+        let first = client.add_milestone(
+            &client_addr,
+            &escrow_id,
+            &String::from_str(&env, "Milestone 1"),
+            &hash(&env, 11),
+            &300,
+        );
+        let second = client.add_milestone(
+            &client_addr,
+            &escrow_id,
+            &String::from_str(&env, "Milestone 2"),
+            &hash(&env, 12),
+            &400,
+        );
+        let third = client.add_milestone(
+            &client_addr,
+            &escrow_id,
+            &String::from_str(&env, "Milestone 3"),
+            &hash(&env, 13),
+            &500,
+        );
+
+        assert_eq!(client.get_pending_milestones_count(&escrow_id), 3);
+
+        client.submit_milestone(&freelancer, &escrow_id, &first);
+        client.submit_milestone(&freelancer, &escrow_id, &second);
+        client.submit_milestone(&freelancer, &escrow_id, &third);
+        assert_eq!(client.get_pending_milestones_count(&escrow_id), 3);
+
+        client.approve_milestone(&client_addr, &escrow_id, &first);
+        assert_eq!(client.get_pending_milestones_count(&escrow_id), 2);
+
+        client.approve_milestone(&client_addr, &escrow_id, &second);
+        client.approve_milestone(&client_addr, &escrow_id, &third);
+        assert_eq!(client.get_pending_milestones_count(&escrow_id), 0);
+    }
 }

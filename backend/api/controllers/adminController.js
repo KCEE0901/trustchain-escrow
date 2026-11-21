@@ -14,17 +14,6 @@ import { getUserUsage } from '../middleware/rateLimiter.js';
 
 const adminLog = getLogger();
 
-// JSON.stringify does not guarantee key order, so two objects with the same
-// contents but different insertion order produce different cache keys.
-// This sorted replacer ensures deterministic serialisation for cache keys.
-function stableStringify(obj) {
-  return JSON.stringify(obj, (_, v) =>
-    v && typeof v === 'object' && !Array.isArray(v)
-      ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b)))
-      : v,
-  );
-}
-
 // Mutable runtime overrides (resets on server restart)
 const runtimeTierLimits = { ...TIER_LIMITS };
 
@@ -450,20 +439,119 @@ const getAuditLogs = async (req, res) => {
 };
 
 // ── Fee Management ─────────────────────────────────────────────────────────────
+//
+// Settings are read from env/config and may be overridden by rows in the
+// `platform_settings` table. The table is optional infrastructure: if the
+// database is down, slow, or the Prisma client predates the model, reads fall
+// back to env defaults with a stable `persistence: { status: 'degraded' }`
+// marker instead of failing, and writes are refused with a 503 so a change is
+// never reported as saved when it was not.
+
+/** Keys that may be persisted. Anything else in a PATCH body is ignored. */
+const PERSISTED_SETTING_KEYS = ['platformFeePercent'];
+const DEFAULT_SETTINGS_STORE_TIMEOUT_MS = 2000;
+const SETTINGS_DEGRADED_REASON = 'settings_store_unavailable';
+const SETTINGS_STORE_UNAVAILABLE = 'SETTINGS_STORE_UNAVAILABLE';
+
+class SettingsStoreError extends Error {
+  constructor(reason) {
+    super(`settings store ${reason}`);
+    this.name = 'SettingsStoreError';
+    this.reason = reason;
+  }
+}
+
+function envSettings() {
+  return {
+    platformFeePercent: process.env.PLATFORM_FEE_PERCENT || '1.5',
+    stellarNetwork: process.env.STELLAR_NETWORK || 'testnet',
+    allowedOrigins: process.env.ALLOWED_ORIGINS || 'http://localhost:3000',
+  };
+}
+
+function settingsStoreTimeoutMs() {
+  const parsed = parseInt(process.env.ADMIN_SETTINGS_STORE_TIMEOUT_MS ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_SETTINGS_STORE_TIMEOUT_MS;
+}
+
+/** Returns the fee as a canonical string, or null when it is not a valid percentage. */
+function normalizeFeePercent(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const fee = Number(value);
+  if (!Number.isFinite(fee) || fee < 0 || fee > 100) return null;
+  return String(fee);
+}
+
+/**
+ * Runs `operation` against the settings delegate, failing fast (instead of
+ * hanging the request) when the store is missing or does not answer in time.
+ */
+async function withSettingsStore(operation) {
+  const store = prisma?.platformSetting;
+  if (!store) throw new SettingsStoreError('not_configured');
+
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new SettingsStoreError('timeout')), settingsStoreTimeoutMs());
+    timer.unref?.();
+  });
+  try {
+    return await Promise.race([operation(store), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Stable, secret-free classification of a store failure. Raw driver messages
+ * can contain connection strings or hostnames, so they are never logged.
+ */
+function settingsFailureReason(err) {
+  if (err instanceof SettingsStoreError) return err.reason;
+  if (typeof err?.code === 'string' && /^P\d{4}$/.test(err.code)) return `prisma_${err.code}`;
+  return 'unavailable';
+}
+
+function logSettingsDegraded(operation, err, req) {
+  adminLog.warn({
+    type: 'admin_settings_degraded',
+    operation,
+    reason: settingsFailureReason(err),
+    requestId: req?.id,
+  });
+}
 
 /**
  * GET /api/admin/settings
- * Returns platform settings (fee, etc.) from env/config.
- *
- * TODO (Issue #23): Persist settings to DB for dynamic configuration.
+ * Returns platform settings: env/config defaults overlaid with persisted
+ * overrides. Degrades to the defaults (HTTP 200) when the store is unavailable.
  */
 const getSettings = async (req, res) => {
+  const defaults = envSettings();
   try {
-    res.json({
-      platformFeePercent: process.env.PLATFORM_FEE_PERCENT || '1.5',
-      stellarNetwork: process.env.STELLAR_NETWORK || 'testnet',
-      allowedOrigins: process.env.ALLOWED_ORIGINS || 'http://localhost:3000',
-    });
+    let rows;
+    try {
+      rows = await withSettingsStore((store) =>
+        store.findMany({ where: { key: { in: PERSISTED_SETTING_KEYS } } }),
+      );
+    } catch (err) {
+      logSettingsDegraded('getSettings', err, req);
+      return res.json({
+        ...defaults,
+        persistence: { status: 'degraded', reason: SETTINGS_DEGRADED_REASON },
+      });
+    }
+
+    const overrides = {};
+    for (const row of Array.isArray(rows) ? rows : []) {
+      if (row?.key === 'platformFeePercent') {
+        // A corrupted row must not leak an invalid fee to clients.
+        const fee = normalizeFeePercent(row.value);
+        if (fee !== null) overrides.platformFeePercent = fee;
+      }
+    }
+
+    res.json({ ...defaults, ...overrides, persistence: { status: 'ok' } });
   } catch (err) {
     logControllerError('admin.getSettings', err, req);
     res.status(500).json({ error: err.message });
@@ -472,31 +560,164 @@ const getSettings = async (req, res) => {
 
 /**
  * PATCH /api/admin/settings
- * Updates platform settings.
- *
- * TODO (Issue #23): Persist to DB. Currently only validates input.
+ * Validates and persists platform settings. Only `PERSISTED_SETTING_KEYS` are
+ * stored; other fields are reported back under `ignored`. Returns 503 without
+ * applying anything when the settings store is unavailable.
  */
 const updateSettings = async (req, res) => {
   try {
-    const { platformFeePercent } = req.body;
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const { platformFeePercent } = body;
 
+    const updates = {};
     if (platformFeePercent !== undefined) {
-      const fee = parseFloat(platformFeePercent);
-      if (isNaN(fee) || fee < 0 || fee > 100) {
+      const fee = normalizeFeePercent(platformFeePercent);
+      if (fee === null) {
         return res
           .status(400)
           .json({ error: 'platformFeePercent must be a number between 0 and 100.' });
       }
+      updates.platformFeePercent = fee;
     }
 
-    // TODO: Persist to DB
+    const persistedKeys = Object.keys(updates).sort();
+    const ignored = Object.keys(body)
+      .filter((key) => !PERSISTED_SETTING_KEYS.includes(key))
+      .sort();
+
+    if (persistedKeys.length > 0) {
+      const updatedBy = req.user?.address ?? null;
+      try {
+        await withSettingsStore((store) =>
+          Promise.all(
+            persistedKeys.map((key) =>
+              store.upsert({
+                where: { key },
+                update: { value: updates[key], updatedBy },
+                create: { key, value: updates[key], updatedBy },
+              }),
+            ),
+          ),
+        );
+      } catch (err) {
+        logSettingsDegraded('updateSettings', err, req);
+        return res.status(503).json({
+          error: 'Settings store is unavailable; no changes were saved.',
+          code: SETTINGS_STORE_UNAVAILABLE,
+          persisted: [],
+        });
+      }
+
+      adminLog.warn({
+        type: 'admin_action',
+        action: 'UPDATE_SETTINGS',
+        updated: updates,
+        performedBy: updatedBy ?? 'unknown',
+        requestId: req.id,
+      });
+    }
+
     res.json({
-      message: 'Settings updated (note: changes are not persisted until DB support is added).',
+      message: persistedKeys.length > 0 ? 'Settings updated.' : 'No persistable settings provided.',
+      persisted: persistedKeys,
+      ignored,
+      settings: { ...envSettings(), ...updates },
       received: req.body,
     });
   } catch (err) {
     logControllerError('admin.updateSettings', err, req);
     res.status(500).json({ error: err.message });
+  }
+};
+
+// ── Settings retention ────────────────────────────────────────────────────────
+//
+// Only `PERSISTED_SETTING_KEYS` are ever read back, so any other row in
+// `platform_settings` (a key from an older release, a manual insert) is dead
+// data that grows without bound. `pruneSettings` removes those rows in bounded
+// batches. Allowlisted rows are never touched, and stale values are never
+// returned or logged: a removed row may hold anything.
+
+/** Most stale rows removed by one prune request. */
+export const SETTINGS_PRUNE_BATCH_LIMIT = 100;
+
+/** Stale (non-allowlisted) setting keys, oldest first, at most `limit` of them. */
+async function findStaleSettingKeys(limit) {
+  const rows = await withSettingsStore((store) =>
+    store.findMany({
+      where: { key: { notIn: PERSISTED_SETTING_KEYS } },
+      select: { key: true },
+      orderBy: [{ updatedAt: 'asc' }, { key: 'asc' }],
+      take: limit + 1,
+    }),
+  );
+  const keys = (Array.isArray(rows) ? rows : [])
+    .map((row) => row?.key)
+    .filter((key) => typeof key === 'string' && !PERSISTED_SETTING_KEYS.includes(key));
+  return { keys: keys.slice(0, limit), hasMore: keys.length > limit };
+}
+
+/**
+ * POST /api/admin/settings/prune
+ * Deletes persisted settings whose key is no longer allowlisted, at most
+ * `SETTINGS_PRUNE_BATCH_LIMIT` per call. `{ "dryRun": true }` reports what
+ * would be removed without deleting. Returns 503, deleting nothing, when the
+ * settings store is unavailable.
+ */
+const pruneSettings = async (req, res) => {
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    if (body.dryRun !== undefined && typeof body.dryRun !== 'boolean') {
+      return res.status(400).json({ error: 'dryRun must be a boolean.' });
+    }
+    const dryRun = body.dryRun === true;
+
+    let stale;
+    let removed = 0;
+    try {
+      stale = await findStaleSettingKeys(SETTINGS_PRUNE_BATCH_LIMIT);
+      if (!dryRun && stale.keys.length > 0) {
+        const result = await withSettingsStore((store) =>
+          store.deleteMany({
+            // Re-check the allowlist in the delete itself, so a key that was
+            // allowlisted in the meantime is never removed.
+            where: { key: { in: stale.keys, notIn: PERSISTED_SETTING_KEYS } },
+          }),
+        );
+        removed = Number.isInteger(result?.count) ? result.count : stale.keys.length;
+      }
+    } catch (err) {
+      logSettingsDegraded('pruneSettings', err, req);
+      return res.status(503).json({
+        error: 'Settings store is unavailable; nothing was pruned.',
+        code: SETTINGS_STORE_UNAVAILABLE,
+        removed: 0,
+      });
+    }
+
+    const keys = [...stale.keys].sort();
+    if (!dryRun && removed > 0) {
+      adminLog.warn({
+        type: 'admin_action',
+        action: 'PRUNE_SETTINGS',
+        removed,
+        keys,
+        performedBy: req.user?.address ?? 'unknown',
+        requestId: req.id,
+      });
+    }
+
+    res.json({
+      dryRun,
+      matched: keys.length,
+      removed,
+      keys,
+      hasMore: stale.hasMore,
+      limit: SETTINGS_PRUNE_BATCH_LIMIT,
+    });
+  } catch (err) {
+    logControllerError('admin.pruneSettings', err, req);
+    res.status(500).json({ error: 'Failed to prune settings.' });
   }
 };
 
@@ -511,6 +732,7 @@ export default {
   getAuditLogs,
   getSettings,
   updateSettings,
+  pruneSettings,
   getRateLimits,
   updateRateLimit,
   getUserRateLimitUsage,

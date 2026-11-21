@@ -57,7 +57,7 @@ Every state-changing function reverts with `ContractPaused (error 31)`:
 | `extend_lock_time`                                   | client                  |
 | `raise_dispute`                                      | client or freelancer    |
 | `resolve_dispute`                                    | arbiter or admin        |
-| `update_reputation`                                  | public                  |
+| `update_reputation`                                  | admin                   |
 | `process_recurring_payments`                         | public                  |
 | `pause_recurring_schedule`                           | client                  |
 | `resume_recurring_schedule`                          | client                  |
