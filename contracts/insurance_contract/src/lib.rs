@@ -499,6 +499,17 @@ impl InsuranceContract {
         caller.require_auth();
         Storage::require_initialized(&env)?;
 
+        // Bound check: claim ids are assigned sequentially from 0, so any id at
+        // or beyond the counter cannot exist. Reject before touching storage.
+        let next_id: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::ClaimCounter)
+            .unwrap_or(0_u32);
+        if claim_id >= next_id {
+            return Err(InsuranceError::ClaimNotFound);
+        }
+
         let mut claim = Storage::load_claim(&env, claim_id)?;
         if claim.claimant != caller {
             return Err(InsuranceError::Unauthorized);
@@ -1219,6 +1230,26 @@ mod tests {
 
         let claim = s.client.get_claim(&id);
         assert_eq!(claim.status, ClaimStatus::Withdrawn);
+    }
+
+    #[test]
+    fn test_withdraw_claim_rejects_unauthorized_caller_and_out_of_range_id() {
+        let s = setup();
+        let claimant = Address::generate(&s.env);
+        let other = Address::generate(&s.env);
+        let desc = String::from_str(&s.env, "Claim");
+        let id = s.client.submit_claim(&claimant, &desc, &100_i128);
+
+        // Rejected caller: must return an error, never panic.
+        let unauthorized = s.client.try_withdraw_claim(&other, &id);
+        assert_eq!(unauthorized, Err(Ok(InsuranceError::Unauthorized)));
+
+        // Out-of-range claim id: must return an error, never panic.
+        let out_of_range = s.client.try_withdraw_claim(&claimant, &u32::MAX);
+        assert_eq!(out_of_range, Err(Ok(InsuranceError::ClaimNotFound)));
+
+        // Claim is untouched by the rejected attempts.
+        assert_eq!(s.client.get_claim(&id).status, ClaimStatus::Pending);
     }
 
     // ── Governance ────────────────────────────────────────────────────────────
