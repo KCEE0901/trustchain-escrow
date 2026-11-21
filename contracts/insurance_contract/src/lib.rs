@@ -596,13 +596,23 @@ impl InsuranceContract {
 
     /// Execute the payout for an approved claim.
     ///
-    /// Anyone can trigger this once the claim is `Approved` — the tokens
-    /// always go to the original claimant.
+    /// Only a registered governor may trigger the payout — the tokens always
+    /// go to the original claimant.
     ///
     /// # Arguments
+    /// * `caller`   - Must `require_auth()` and be a registered governor.
     /// * `claim_id` - Must be in `Approved` state.
-    pub fn execute_payout(env: Env, claim_id: u32) -> Result<(), InsuranceError> {
+    pub fn execute_payout(
+        env: Env,
+        caller: Address,
+        claim_id: u32,
+    ) -> Result<(), InsuranceError> {
+        caller.require_auth();
         Storage::require_initialized(&env)?;
+
+        if !Storage::is_governor(&env, &caller) {
+            return Err(InsuranceError::NotGovernor);
+        }
 
         let mut claim = Storage::load_claim(&env, claim_id)?;
         if claim.status != ClaimStatus::Approved {
@@ -610,6 +620,13 @@ impl InsuranceContract {
         }
 
         let amount = claim.amount;
+        if amount <= 0 {
+            return Err(InsuranceError::InvalidClaimAmount);
+        }
+        if amount > Storage::get_claim_cap(&env) {
+            return Err(InsuranceError::ClaimExceedsCap);
+        }
+
         let token = token::Client::new(&env, &Storage::get_token(&env));
         let balance = token.balance(&env.current_contract_address());
         if balance < amount {
@@ -1351,7 +1368,7 @@ mod tests {
         s.client.vote(&gov1, &id, &true);
         s.client.vote(&gov2, &id, &true);
 
-        s.client.execute_payout(&id);
+        s.client.execute_payout(&gov1, &id);
 
         let token_client = token::Client::new(&s.env, &s.token_id);
         assert_eq!(token_client.balance(&claimant), 1_000_i128);
