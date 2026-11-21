@@ -106,6 +106,24 @@ mod bridge_tests {
     // ── AC: Bridge confirmations are tracked ─────────────────────────────────
 
     #[test]
+    fn test_bridge_confirmation_rejected_before_initialization() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, EscrowContract);
+        let client = EscrowContractClient::new(&env, &contract_id);
+        let token = Address::generate(&env);
+
+        let result = client.try_update_bridge_confirmation(
+            &token,
+            &BridgeProtocol::Wormhole,
+            &MIN_BRIDGE_CONFIRMATIONS,
+        );
+
+        assert!(result.is_err());
+        assert!(client.get_bridge_confirmation(&token).is_none());
+    }
+
+    #[test]
     fn test_bridge_confirmation_tracked_below_threshold() {
         let (env, _, client) = setup();
         let transfer_token = Address::generate(&env);

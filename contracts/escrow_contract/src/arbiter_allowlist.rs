@@ -39,7 +39,7 @@ pub fn remove_from_arbiter_allowlist(
     Ok(())
 }
 
-pub fn is_arbiter_allowed(env: Env, arbiter: Address) -> bool {
+pub fn is_arbiter_allowed(env: &Env, arbiter: Address) -> bool {
     env.storage()
         .persistent()
         .get::<DataKey, bool>(&DataKey::ArbiterAllowlist(arbiter))

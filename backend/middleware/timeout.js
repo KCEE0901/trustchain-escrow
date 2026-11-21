@@ -20,6 +20,8 @@
  */
 
 import { createModuleLogger } from '../config/logger.js';
+import { httpRequestTimeoutsTotal } from '../lib/metrics.js';
+import { normalizeRoute } from './metricsMiddleware.js';
 
 const log = createModuleLogger('middleware.timeout');
 
@@ -34,6 +36,20 @@ export const DEFAULT_DOWNSTREAM_TIMEOUT_MS = parseInt(
 );
 
 const DISABLE_KEEP_ALIVE = process.env.TIMEOUT_DISABLE_KEEP_ALIVE === 'true';
+
+const KNOWN_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']);
+
+/**
+ * Builds low-cardinality metric labels for a timed-out request.
+ * Unknown methods collapse to OTHER and dynamic path segments are normalized.
+ */
+export function timeoutLabels(req) {
+  const method = String(req.method || '').toUpperCase();
+  return {
+    method: KNOWN_METHODS.has(method) ? method : 'OTHER',
+    route: normalizeRoute(req) || 'unknown',
+  };
+}
 
 /**
  * Returns an Express middleware that aborts the request with HTTP 503 if the
@@ -56,6 +72,8 @@ export function withTimeout(ms = DEFAULT_REQUEST_TIMEOUT_MS) {
         timeoutMs: ms,
         requestId: req.id,
       });
+
+      httpRequestTimeoutsTotal.inc(timeoutLabels(req));
 
       if (DISABLE_KEEP_ALIVE) {
         res.setHeader('Connection', 'close');

@@ -5,7 +5,7 @@
  * Delegates to the stellarMonitorService for actual status checking.
  */
 
-import { createModuleLogger } from '../config/logger.js';
+import { createModuleLogger, runWithCorrelation } from '../config/logger.js';
 import { pollPendingTransactions } from '../services/stellarMonitorService.js';
 
 const log = createModuleLogger('stellarMonitorWorker');
@@ -17,7 +17,15 @@ const log = createModuleLogger('stellarMonitorWorker');
  * @returns {Promise<object>} results summary
  */
 export async function handleMonitorJob(job) {
-  log.info({ message: 'monitor_job_received', jobId: job?.id });
+  return runWithCorrelation(job?.data?.correlationId, () => runMonitorJob(job));
+}
+
+async function runMonitorJob(job) {
+  log.info({
+    message: 'monitor_job_received',
+    jobId: job?.id,
+    correlationId: job?.data?.correlationId,
+  });
 
   const results = await pollPendingTransactions({
     batchSize: job?.data?.batchSize || 50,

@@ -7,11 +7,13 @@
  * GET  /api/stellar-monitor/status           — monitoring service status
  * POST /api/stellar-monitor/transactions      — register a tx for monitoring
  * GET  /api/stellar-monitor/transactions      — list monitored transactions
+ * GET  /api/stellar-monitor/review            — admin: transactions needing manual review
  */
 
 import express from 'express';
 import stellarMonitorController from '../controllers/stellarMonitorController.js';
 import authMiddleware from '../middleware/auth.js';
+import adminAuth from '../middleware/adminAuth.js';
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -33,5 +35,11 @@ router.post('/transactions', stellarMonitorController.trackTransaction);
  * @desc   List recent monitored transactions with optional status filter
  */
 router.get('/transactions', stellarMonitorController.listTransactions);
+
+/**
+ * @route  GET /api/stellar-monitor/review
+ * @desc   Admin-only: list transactions stuck pending or requiring manual review
+ */
+router.get('/review', adminAuth, stellarMonitorController.listReviewNeeded);
 
 export default router;

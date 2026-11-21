@@ -13,6 +13,16 @@ const EXPORT_FORMATS = {
   PDF: 'pdf',
 };
 
+const EXPORT_JOB_STATUS = {
+  QUEUED: 'queued',
+  RUNNING: 'running',
+  COMPLETE: 'complete',
+  FAILED: 'failed',
+};
+
+const exportJobs = new Map();
+let nextExportJobId = 1;
+
 const SCHEDULE_FREQUENCIES = {
   DAILY: 'daily',
   WEEKLY: 'weekly',
@@ -67,6 +77,195 @@ function ensureValidFrequency(frequency) {
   if (!Object.values(SCHEDULE_FREQUENCIES).includes(frequency)) {
     throw new Error(`Unsupported schedule frequency: ${frequency}`);
   }
+}
+
+// ── Structured filter validation ──────────────────────────────────────────────
+
+const VALID_PAYMENT_STATUSES = new Set([
+  'Pending',
+  'Completed',
+  'Failed',
+  'Refunded',
+]);
+
+const VALID_ESCROW_STATUSES = new Set([
+  'Active',
+  'Completed',
+  'Disputed',
+  'Cancelled',
+  'Expired',
+]);
+
+const VALID_KYC_STATUSES = new Set([
+  'Pending',
+  'Approved',
+  'Declined',
+  'Expired',
+]);
+
+/**
+ * Validate a filter object for a given report type.
+ * Throws a descriptive Error on any invalid combination.
+ *
+ * @param {string} type    Report type (transactions | users | activity)
+ * @param {object} filters Arbitrary filter object from the caller
+ * @returns {void}
+ */
+function validateFilters(type, filters = {}) {
+  ensureValidReportType(type);
+
+  // ── Date range ────────────────────────────────────────────────────────────
+  if (filters.from !== undefined && filters.from !== null && filters.from !== '') {
+    const fromTs = Date.parse(filters.from);
+    if (Number.isNaN(fromTs)) {
+      throw new Error(`Invalid "from" date: ${filters.from}`);
+    }
+    if (filters.to !== undefined && filters.to !== null && filters.to !== '') {
+      const toTs = Date.parse(filters.to);
+      if (Number.isNaN(toTs)) {
+        throw new Error(`Invalid "to" date: ${filters.to}`);
+      }
+      if (fromTs > toTs) {
+        throw new Error('"from" date must not be later than "to" date');
+      }
+    }
+  }
+
+  // ── Tenant ────────────────────────────────────────────────────────────────
+  if (filters.tenant !== undefined && filters.tenant !== null && filters.tenant !== '') {
+    if (typeof filters.tenant !== 'string' || filters.tenant.trim() === '') {
+      throw new Error('Filter "tenant" must be a non-empty string');
+    }
+  }
+
+  // ── Format ────────────────────────────────────────────────────────────────
+  if (filters.format !== undefined && filters.format !== null) {
+    if (!Object.values(EXPORT_FORMATS).includes(filters.format)) {
+      throw new Error(
+        `Invalid export format "${filters.format}". Allowed: ${Object.values(EXPORT_FORMATS).join(', ')}`,
+      );
+    }
+  }
+
+  // ── Status — validated per report type ───────────────────────────────────
+  if (filters.status !== undefined && filters.status !== null && filters.status !== '') {
+    if (type === REPORT_TYPES.TRANSACTIONS) {
+      if (!VALID_PAYMENT_STATUSES.has(filters.status) && !VALID_ESCROW_STATUSES.has(filters.status)) {
+        throw new Error(
+          `Invalid status "${filters.status}" for ${type} report. ` +
+          `Allowed: ${[...VALID_PAYMENT_STATUSES, ...VALID_ESCROW_STATUSES].join(', ')}`,
+        );
+      }
+    } else if (type === REPORT_TYPES.USERS) {
+      if (!VALID_KYC_STATUSES.has(filters.status)) {
+        throw new Error(
+          `Invalid status "${filters.status}" for ${type} report. ` +
+          `Allowed: ${[...VALID_KYC_STATUSES].join(', ')}`,
+        );
+      }
+    }
+    // activity report accepts any status / category string via auditService
+  }
+}
+
+// ── Result-size estimation ────────────────────────────────────────────────────
+
+/**
+ * Estimate the number of rows a report would contain without fetching them.
+ * Returns count breakdowns per data source so the UI can warn before
+ * triggering a large export.
+ *
+ * @param {string} type    Report type
+ * @param {object} filters Filter object (will be validated before counting)
+ * @returns {Promise<{type: string, counts: object, totalEstimate: number}>}
+ */
+async function estimateResultSize(type, filters = {}) {
+  validateFilters(type, filters);
+
+  const createdAt = normaliseDateRange(filters);
+
+  if (type === REPORT_TYPES.TRANSACTIONS) {
+    const paymentWhere = {};
+    const escrowWhere = {};
+    const eventWhere = {};
+
+    if (createdAt) {
+      paymentWhere.createdAt = createdAt;
+      escrowWhere.createdAt = createdAt;
+      eventWhere.ledgerAt = createdAt;
+    }
+    if (filters.status) {
+      paymentWhere.status = filters.status;
+      escrowWhere.status = filters.status;
+    }
+    if (filters.address) {
+      paymentWhere.address = filters.address;
+      escrowWhere.OR = [
+        { clientAddress: filters.address },
+        { freelancerAddress: filters.address },
+        { arbiterAddress: filters.address },
+      ];
+    }
+
+    const [payments, escrows, events] = await Promise.all([
+      prisma.payment.count({ where: paymentWhere }),
+      prisma.escrow.count({ where: escrowWhere }),
+      prisma.contractEvent.count({ where: eventWhere }),
+    ]);
+
+    return {
+      type,
+      counts: { payments, escrows, ledgerEvents: events },
+      totalEstimate: payments + escrows + events,
+    };
+  }
+
+  if (type === REPORT_TYPES.USERS) {
+    const userWhere = {};
+    const kycWhere = {};
+
+    if (createdAt) {
+      userWhere.createdAt = createdAt;
+      kycWhere.createdAt = createdAt;
+    }
+    if (filters.email) userWhere.email = { contains: filters.email, mode: 'insensitive' };
+    if (filters.address) kycWhere.address = filters.address;
+    if (filters.status) kycWhere.status = filters.status;
+
+    const [users, kycRecords] = await Promise.all([
+      prisma.user.count({ where: userWhere }),
+      prisma.kycVerification.count({ where: kycWhere }),
+    ]);
+
+    return {
+      type,
+      counts: { users, kycRecords },
+      totalEstimate: users,
+    };
+  }
+
+  // activity
+  const auditWhere = {};
+  const eventWhere = {};
+
+  if (createdAt) {
+    auditWhere.createdAt = createdAt;
+    eventWhere.ledgerAt = createdAt;
+  }
+  if (filters.actor) auditWhere.actor = { contains: filters.actor, mode: 'insensitive' };
+  if (filters.category) auditWhere.category = filters.category;
+  if (filters.eventType) eventWhere.eventType = filters.eventType;
+
+  const [auditLogs, contractEvents] = await Promise.all([
+    prisma.auditLog.count({ where: auditWhere }),
+    prisma.contractEvent.count({ where: eventWhere }),
+  ]);
+
+  return {
+    type,
+    counts: { auditLogs, contractEvents },
+    totalEstimate: auditLogs + contractEvents,
+  };
 }
 
 async function fetchAuditTrail(filters = {}) {
@@ -664,8 +863,62 @@ async function disableSchedule(scheduleId, actor = 'admin') {
   return schedule;
 }
 
+function toExportJobView(job) {
+  const { result, done, ...view } = job;
+  return { ...view, ready: Boolean(result) };
+}
+
+function updateExportJob(job, changes) {
+  Object.assign(job, changes, { updatedAt: new Date().toISOString() });
+}
+
+async function runExportJob(job) {
+  updateExportJob(job, { status: EXPORT_JOB_STATUS.RUNNING, progress: 10 });
+  try {
+    const result = await exportReport(job.type, job.format, job.filters, job.actor);
+    updateExportJob(job, { status: EXPORT_JOB_STATUS.COMPLETE, progress: 100, result });
+  } catch (error) {
+    updateExportJob(job, { status: EXPORT_JOB_STATUS.FAILED, error: error.message });
+  }
+}
+
+/**
+ * Queue a compliance export to run in the background.
+ * Returns immediately with a job whose status/progress can be polled.
+ */
+function startExportJob(type, format = EXPORT_FORMATS.JSON, filters = {}, actor = 'system') {
+  ensureValidExportFormat(format);
+  const now = new Date().toISOString();
+  const job = {
+    id: `export_${nextExportJobId++}`,
+    type,
+    format,
+    filters,
+    actor,
+    status: EXPORT_JOB_STATUS.QUEUED,
+    progress: 0,
+    error: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+  exportJobs.set(job.id, job);
+  job.done = new Promise((resolve) => setImmediate(() => runExportJob(job).then(resolve)));
+  return toExportJobView(job);
+}
+
+function getExportJob(jobId) {
+  const job = exportJobs.get(jobId);
+  return job ? toExportJobView(job) : null;
+}
+
+function getExportJobResult(jobId) {
+  return exportJobs.get(jobId)?.result ?? null;
+}
+
 function __resetForTests() {
   stopScheduler();
+  exportJobs.clear();
+  nextExportJobId = 1;
   scheduleState.definitions = [];
   scheduleState.history = [];
   scheduleState.nextId = 1;
@@ -673,18 +926,24 @@ function __resetForTests() {
 
 export {
   EXPORT_FORMATS,
+  EXPORT_JOB_STATUS,
   REPORT_TYPES,
   SCHEDULE_FREQUENCIES,
   __resetForTests,
   createSchedule,
   disableSchedule,
+  estimateResultSize,
   exportReport,
   generateReport,
+  getExportJob,
+  getExportJobResult,
   listSchedules,
   processDueSchedules,
   runScheduledReport,
+  startExportJob,
   startScheduler,
   stopScheduler,
+  validateFilters,
 };
 
 export default {
@@ -693,6 +952,11 @@ export default {
   SCHEDULE_FREQUENCIES,
   generateReport,
   exportReport,
+  validateFilters,
+  estimateResultSize,
+  startExportJob,
+  getExportJob,
+  getExportJobResult,
   createSchedule,
   listSchedules,
   getSchedule,

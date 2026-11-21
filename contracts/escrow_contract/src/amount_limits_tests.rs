@@ -54,17 +54,18 @@ mod amount_limits_tests {
         let token = register_token(&env, &admin, &client, MAX_ESCROW_AMOUNT);
 
         let result = contract.try_create_escrow(
-            &client,
-            &freelancer,
-            &token,
-            &(MIN_ESCROW_AMOUNT - 1),
-            &hash32(&env),
-            &None,
-            &None,
-            &None,
-            &None,
-            &no_multisig(&env),
-        );
+                    &client,
+                    &freelancer,
+                    &token,
+                    &(MIN_ESCROW_AMOUNT - 1),
+                    &hash32(&env),
+                    &None,
+                    &None,
+                    &None,
+                    &None,
+                    &no_multisig(&env),
+                    &None,
+                );
         assert_eq!(result, Err(Ok(EscrowError::E84)));
     }
 
@@ -74,17 +75,18 @@ mod amount_limits_tests {
         let token = register_token(&env, &admin, &client, MAX_ESCROW_AMOUNT);
 
         let result = contract.try_create_escrow(
-            &client,
-            &freelancer,
-            &token,
-            &0,
-            &hash32(&env),
-            &None,
-            &None,
-            &None,
-            &None,
-            &no_multisig(&env),
-        );
+                    &client,
+                    &freelancer,
+                    &token,
+                    &0,
+                    &hash32(&env),
+                    &None,
+                    &None,
+                    &None,
+                    &None,
+                    &no_multisig(&env),
+                    &None,
+                );
         assert_eq!(result, Err(Ok(EscrowError::E84)));
     }
 
@@ -95,17 +97,18 @@ mod amount_limits_tests {
         let token = register_token(&env, &admin, &client, over + 1_000_000);
 
         let result = contract.try_create_escrow(
-            &client,
-            &freelancer,
-            &token,
-            &over,
-            &hash32(&env),
-            &None,
-            &None,
-            &None,
-            &None,
-            &no_multisig(&env),
-        );
+                    &client,
+                    &freelancer,
+                    &token,
+                    &over,
+                    &hash32(&env),
+                    &None,
+                    &None,
+                    &None,
+                    &None,
+                    &no_multisig(&env),
+                    &None,
+                );
         assert_eq!(result, Err(Ok(EscrowError::E85)));
     }
 
@@ -115,17 +118,18 @@ mod amount_limits_tests {
         let token = register_token(&env, &admin, &client, MAX_ESCROW_AMOUNT);
 
         let result = contract.try_create_escrow(
-            &client,
-            &freelancer,
-            &token,
-            &MIN_ESCROW_AMOUNT,
-            &hash32(&env),
-            &None,
-            &None,
-            &None,
-            &None,
-            &no_multisig(&env),
-        );
+                    &client,
+                    &freelancer,
+                    &token,
+                    &MIN_ESCROW_AMOUNT,
+                    &hash32(&env),
+                    &None,
+                    &None,
+                    &None,
+                    &None,
+                    &no_multisig(&env),
+                    &None,
+                );
         assert!(
             result.is_ok(),
             "MIN_ESCROW_AMOUNT should be accepted, got {:?}",
@@ -138,17 +142,18 @@ mod amount_limits_tests {
         let (env, admin, client, freelancer, contract) = setup();
         let token = register_token(&env, &admin, &client, MAX_ESCROW_AMOUNT);
         let escrow_id = contract.create_escrow(
-            &client,
-            &freelancer,
-            &token,
-            &100_000,
-            &hash32(&env),
-            &None,
-            &None,
-            &None,
-            &None,
-            &no_multisig(&env),
-        );
+                    &client,
+                    &freelancer,
+                    &token,
+                    &100_000,
+                    &hash32(&env),
+                    &None,
+                    &None,
+                    &None,
+                    &None,
+                    &no_multisig(&env),
+                    &None,
+                );
         assert!(escrow_id.is_ok());
         let escrow_id = escrow_id.unwrap();
 

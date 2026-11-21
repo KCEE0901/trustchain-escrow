@@ -55,6 +55,7 @@
 mod admin_transfer_tests;
 mod amount_limits_tests;
 mod arbiter_allowlist;
+mod formal_verification;
 mod arbiter_allowlist_tests;
 mod arbiter_lifecycle_event_tests;
 mod arbiter_lifecycle_tests;
@@ -62,6 +63,7 @@ mod arbiter_reputation_tests;
 mod arbiter_storage_growth_tests;
 mod arbiter_validation_tests;
 mod auto_expiry;
+mod auto_expiry_tests;
 mod batch_add_milestones_cap_tests;
 mod batch_approve_release_e2e_tests;
 mod bridge;
@@ -88,7 +90,9 @@ mod meta_snapshot_tests;
 mod milestone_auth_boundary_tests;
 mod milestone_storage_growth_tests;
 mod module_registration_tests;
+mod multi_asset_fee_tests;
 mod multisig_lifecycle_tests;
+mod multisig_signer_rotation_tests;
 mod multisig_threshold_tests;
 mod nft;
 mod nft_tests;
@@ -99,6 +103,9 @@ mod oracle_tests;
 mod partial_cancel_tests;
 mod pause_tests;
 mod platform_fee;
+mod fuzz_tests;
+#[cfg(test)]
+mod gas_profiling;
 mod property_invariant_tests;
 mod reentrancy_guard_tests;
 mod reputation_auth_tests;
@@ -126,7 +133,7 @@ pub use types::{
     EscrowTemplate, FeeTier, Milestone, MilestoneStatus, MilestoneTemplate, MultisigConfig,
     OptionalBytesN32, OptionalPriceCondition, OptionalTimelock, OracleResolutionPayload,
     PriceCondition, PriceDirection, RecurringInterval, RecurringScheduleStatus, ReputationRecord,
-    StateHistoryEntry, Timelock, MS_APPROVED, MS_DISPUTED, MS_PENDING, MS_REJECTED, MS_RELEASED,
+    StateHistoryEntry, Timelock, TermsAcceptance, DexConfig, DexSwapRecord, MS_APPROVED, MS_DISPUTED, MS_PENDING, MS_REJECTED, MS_RELEASED,
     MS_SUBMITTED,
 };
 use types::{ArbiterUpdatedEvent, CancellationRequest, RecurringPaymentConfig, SlashRecord};
@@ -309,6 +316,12 @@ pub struct EscrowMeta {
     /// Oracle price (USD, with PRICE_DECIMALS decimals) recorded when slippage
     /// protection was configured. Used as the reference for slippage checks.
     pub slippage_reference_price: i128,
+    /// Optional SHA-256 hash of the off-chain terms document. When set, the
+    /// client must accept the terms before milestone funds can be released.
+    pub terms_hash: OptionalBytesN32,
+    /// Arbiter fee in basis points — portion of the escrow amount reserved
+    /// for the arbiter upon dispute resolution (0 = no arbiter fee).
+    pub arbiter_fee_bps: u32,
 }
 
 // ── Storage helpers ───────────────────────────────────────────────────────────
@@ -1102,6 +1115,9 @@ impl EscrowContract {
     /// # Panics
     /// Panics with `EscrowError::E1` if the contract has already been
     /// initialized.
+    /// Contract entry point: `initialize`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn initialize(env: Env, admin: Address) -> Result<(), EscrowError> {
         if !env.storage().instance().has(&DataKey::Admin) {
             admin.require_auth();
@@ -1111,6 +1127,9 @@ impl EscrowContract {
         }
     }
 
+    /// Contract entry point: `initialize_with_admin_signers`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn initialize_with_admin_signers(
         env: Env,
         admin: Address,
@@ -1138,6 +1157,9 @@ impl EscrowContract {
         Ok(())
     }
 
+    /// Contract entry point: `set_admin_multisig`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn set_admin_multisig(
         env: Env,
         caller: Address,
@@ -1159,6 +1181,9 @@ impl EscrowContract {
         Ok(())
     }
 
+    /// Contract entry point: `freeze_escrow`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn freeze_escrow(
         env: Env,
         escrow_id: u64,
@@ -1201,6 +1226,9 @@ impl EscrowContract {
         Ok(())
     }
 
+    /// Contract entry point: `unfreeze_escrow`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn unfreeze_escrow(
         env: Env,
         escrow_id: u64,
@@ -1283,6 +1311,9 @@ impl EscrowContract {
     // ── Oracle Configuration ──────────────────────────────────────────────────
 
     /// Set the primary price oracle contract address. Admin only.
+    /// Contract entry point: `set_oracle`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn set_oracle(env: Env, caller: Address, oracle: Address) -> Result<(), EscrowError> {
         ContractStorage::require_admin(&env, &caller)?;
         caller.require_auth();
@@ -1292,6 +1323,9 @@ impl EscrowContract {
     }
 
     /// Set the fallback oracle contract address. Admin only.
+    /// Contract entry point: `set_fallback_oracle`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn set_fallback_oracle(
         env: Env,
         caller: Address,
@@ -1306,6 +1340,9 @@ impl EscrowContract {
 
     /// Set the oracle staleness threshold (in seconds). Admin only.
     /// Valid range: 1–86400 seconds.
+    /// Contract entry point: `set_oracle_stale_threshold`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn set_oracle_stale_threshold(
         env: Env,
         caller: Address,
@@ -1320,6 +1357,9 @@ impl EscrowContract {
 
     /// Fetch the current USD price for `asset` from the configured oracle.
     /// Returns price with `oracle::PRICE_DECIMALS` decimal places.
+    /// Contract entry point: `get_price`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn get_price(env: Env, asset: Address) -> Result<i128, EscrowError> {
         ContractStorage::require_initialized(&env)?;
         oracle::get_price_usd(&env, &asset)
@@ -1327,6 +1367,9 @@ impl EscrowContract {
 
     /// Convert `amount` of `from_asset` into equivalent units of `to_asset`
     /// using live oracle prices.
+    /// Contract entry point: `convert_amount`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn convert_amount(
         env: Env,
         amount: i128,
@@ -1342,6 +1385,9 @@ impl EscrowContract {
     /// Identical to `add_milestone` but stores a `PriceCondition` on the
     /// milestone. Funds are released automatically when `trigger_oracle_release`
     /// is called and the condition is satisfied.
+    /// Contract entry point: `create_price_indexed_milestone`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn create_price_indexed_milestone(
         env: Env,
         caller: Address,
@@ -1408,6 +1454,9 @@ impl EscrowContract {
     ///
     /// Returns `EscrowError::E14` if the price condition
     /// is not yet satisfied, or if the milestone has no price condition.
+    /// Contract entry point: `trigger_oracle_release`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn trigger_oracle_release(
         env: Env,
         caller: Address,
@@ -1487,10 +1536,12 @@ impl EscrowContract {
             Ok(())
         })
     }
-
     // ── Bridge / Cross-Chain ──────────────────────────────────────────────────
 
     /// Set the Wormhole bridge contract address. Admin only.
+    /// Contract entry point: `set_wormhole_bridge`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn set_wormhole_bridge(
         env: Env,
         caller: Address,
@@ -1505,6 +1556,9 @@ impl EscrowContract {
 
     /// Register a wrapped (bridged) token so it can be used in escrows.
     /// Admin only. `info.is_approved` controls whether the token is usable.
+    /// Contract entry point: `register_wrapped_token`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn register_wrapped_token(
         env: Env,
         caller: Address,
@@ -1518,12 +1572,21 @@ impl EscrowContract {
     }
 
     /// Return canonical metadata for a wrapped token, or None if not registered.
+    /// Contract entry point: `get_wrapped_token_info`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn get_wrapped_token_info(env: Env, token: Address) -> Option<bridge::WrappedTokenInfo> {
         bridge::get_wrapped_token_info(&env, &token)
     }
 
     /// Record or update bridge confirmation state for a bridged token.
     /// Anyone may call this; finality is determined by `MIN_BRIDGE_CONFIRMATIONS`.
+    /// `updated_at` uses the current Stellar ledger timestamp (seconds); it is
+    /// not a source-chain timestamp. The write and TTL assumptions are documented
+    /// beside `bridge::record_bridge_confirmation`.
+    /// Contract entry point: `update_bridge_confirmation`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn update_bridge_confirmation(
         env: Env,
         token: Address,
@@ -1545,6 +1608,9 @@ impl EscrowContract {
     }
 
     /// Return bridge confirmation state for a bridged token.
+    /// Contract entry point: `get_bridge_confirmation`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn get_bridge_confirmation(env: Env, token: Address) -> Option<bridge::BridgeConfirmation> {
         bridge::get_bridge_confirmation(&env, &token)
     }
@@ -1557,6 +1623,9 @@ impl EscrowContract {
     ///
     /// # Arguments
     /// * `new_min` - The new minimum reputation score (0 to disable check)
+    /// Contract entry point: `set_min_arbiter_reputation`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn set_min_arbiter_reputation(
         env: Env,
         caller: Address,
@@ -1577,6 +1646,9 @@ impl EscrowContract {
     /// than one signer becomes mandatory. Admin-only.
     ///
     /// Returns `MultisigInvalidConfig` if `threshold` is not positive.
+    /// Contract entry point: `set_high_value_threshold`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn set_high_value_threshold(
         env: Env,
         caller: Address,
@@ -1594,12 +1666,18 @@ impl EscrowContract {
     }
 
     /// Returns the amount at or above which multisig is mandatory.
+    /// Contract entry point: `get_high_value_threshold`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn get_high_value_threshold(env: Env) -> i128 {
         Self::high_value_threshold(&env)
     }
 
     /// Returns the total approval weight recorded so far for a submitted milestone,
     /// alongside the threshold it must reach. Useful for "2 of 3 approved" displays.
+    /// Contract entry point: `get_multisig_progress`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn get_multisig_progress(
         env: Env,
         escrow_id: u64,
@@ -1612,6 +1690,9 @@ impl EscrowContract {
         Ok((accrued, meta.multisig_threshold))
     }
 
+    /// Contract entry point: `get_min_arbiter_reputation`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn get_min_arbiter_reputation(env: Env) -> u64 {
         env.storage()
             .instance()
@@ -1623,6 +1704,9 @@ impl EscrowContract {
 
     /// Sets the governance contract address for dispute escalation.
     /// Admin only.
+    /// Contract entry point: `set_governance_contract`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn set_governance_contract(
         env: Env,
         caller: Address,
@@ -1639,6 +1723,9 @@ impl EscrowContract {
     }
 
     /// Returns the governance contract address if configured.
+    /// Contract entry point: `get_governance_contract`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn get_governance_contract(env: Env) -> Option<Address> {
         env.storage().instance().get(&DataKey::GovernanceContract)
     }
@@ -1763,6 +1850,9 @@ impl EscrowContract {
         Ok((client_amount, freelancer_amount, collected_fee))
     }
 
+    /// Contract entry point: `set_platform_treasury`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn set_platform_treasury(
         env: Env,
         caller: Address,
@@ -1777,10 +1867,16 @@ impl EscrowContract {
         Ok(())
     }
 
+    /// Contract entry point: `get_platform_treasury`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn get_platform_treasury(env: Env) -> Option<Address> {
         env.storage().instance().get(&DataKey::PlatformTreasury)
     }
 
+    /// Contract entry point: `set_platform_fee_tiers`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn set_platform_fee_tiers(
         env: Env,
         caller: Address,
@@ -1796,6 +1892,9 @@ impl EscrowContract {
         Ok(())
     }
 
+    /// Contract entry point: `get_platform_fee_tiers`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn get_platform_fee_tiers(env: Env) -> Vec<FeeTier> {
         env.storage()
             .instance()
@@ -1811,6 +1910,9 @@ impl EscrowContract {
     /// - Auth check before any storage read.
     /// - Single `save_escrow_meta` write; no milestone writes at creation.
     /// - Token transfer is the dominant cost; nothing we can do there.
+    /// Contract entry point: `create_escrow`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn create_escrow(
         env: Env,
         client: Address,
@@ -1844,6 +1946,9 @@ impl EscrowContract {
         )
     }
 
+    /// Contract entry point: `create_escrow_dispute_timeout`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn create_escrow_dispute_timeout(
         env: Env,
         client: Address,
@@ -1880,6 +1985,9 @@ impl EscrowContract {
     /// The `caller` must hold at least one token of `token_id` in `nft_contract`.
     /// If the balance check passes, delegates to `create_escrow_internal` and
     /// emits an additional `nft_esc` event.
+    /// Contract entry point: `create_escrow_with_nft_gate`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn create_escrow_with_nft_gate(
         env: Env,
         caller: Address,
@@ -1918,6 +2026,9 @@ impl EscrowContract {
         Ok(escrow_id)
     }
 
+    /// Contract entry point: `create_escrow_with_buyer_signers`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn create_escrow_with_buyer_signers(
         env: Env,
         client: Address,
@@ -2264,6 +2375,8 @@ impl EscrowContract {
                 multisig_threshold,
                 slippage_bps: 0,
                 slippage_reference_price: 0,
+                terms_hash: terms_hash.into(),
+                arbiter_fee_bps: 0,
             },
         );
 
@@ -2288,6 +2401,9 @@ impl EscrowContract {
     }
 
     /// Creates a recurring escrow that automatically releases funds on a schedule.
+    /// Contract entry point: `create_recurring_escrow`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn create_recurring_escrow(
         env: Env,
         client: Address,
@@ -2377,6 +2493,8 @@ impl EscrowContract {
             multisig_threshold: 0,
             slippage_bps: 0,
             slippage_reference_price: 0,
+            terms_hash: None.into(),
+            arbiter_fee_bps: 0,
         };
         ContractStorage::charge_entry_rent(&env, &mut meta, &client, 1)?;
         ContractStorage::save_escrow_meta(&env, &meta);
@@ -2431,6 +2549,9 @@ impl EscrowContract {
     /// # Gas notes
     /// - Auth before storage read.
     /// - Writes only the new `Milestone` entry + updated `EscrowMeta`.
+    /// Contract entry point: `add_milestone`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn add_milestone(
         env: Env,
         caller: Address,
@@ -2592,6 +2713,9 @@ impl EscrowContract {
     /// Corrects the title of a pending milestone.
     ///
     /// Only callable by the client; milestone must still be in `MS_PENDING` state.
+    /// Contract entry point: `update_milestone_title`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn update_milestone_title(
         env: Env,
         caller: Address,
@@ -2636,6 +2760,9 @@ impl EscrowContract {
     /// * `amounts`           — parallel array of token amounts
     ///
     /// Returns the first milestone ID assigned (subsequent IDs are sequential).
+    /// Contract entry point: `batch_add_milestones`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn batch_add_milestones(
         env: Env,
         caller: Address,
@@ -2741,6 +2868,9 @@ impl EscrowContract {
     ///
     /// All milestone IDs must be in `Submitted` state; the call fails atomically
     /// if any ID is invalid or in the wrong state.
+    /// Contract entry point: `batch_approve_milestones`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn batch_approve_milestones(
         env: Env,
         caller: Address,
@@ -2886,6 +3016,9 @@ impl EscrowContract {
     /// Releases funds for multiple approved milestones in a single transaction.
     ///
     /// Admin-only. Batches the token transfer into one call instead of N calls.
+    /// Contract entry point: `batch_release_funds`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn batch_release_funds(
         env: Env,
         caller: Address,
@@ -2984,6 +3117,9 @@ impl EscrowContract {
     }
 
     /// Releases all recurring payments that are due at the current ledger timestamp.
+    /// Contract entry point: `process_recurring_payments`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn process_recurring_payments(env: Env, escrow_id: u64) -> Result<u32, EscrowError> {
         ContractStorage::require_initialized(&env)?;
         ContractStorage::require_not_paused(&env)?;
@@ -3115,6 +3251,9 @@ impl EscrowContract {
     ///
     /// # Gas notes
     /// - Loads only the single milestone entry, not the full escrow.
+    /// Contract entry point: `submit_milestone`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn submit_milestone(
         env: Env,
         caller: Address,
@@ -3173,6 +3312,9 @@ impl EscrowContract {
     /// - O(1) completion check via `approved_count` field — no milestone loop.
     /// - Single token transfer call.
     /// - Two storage writes: milestone + meta.
+    /// Contract entry point: `approve_milestone`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn approve_milestone(
         env: Env,
         caller: Address,
@@ -3316,6 +3458,9 @@ impl EscrowContract {
 
     /// Collect the platform fee for a completed or cancelled escrow.
     /// Transfers the fee to the configured treasury address.
+    /// Contract entry point: `collect_escrow_fee`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn collect_escrow_fee(
         env: Env,
         caller: Address,
@@ -3328,6 +3473,9 @@ impl EscrowContract {
 
     /// Request or consent to a deadline extension. Both client and freelancer
     /// must call with the same `new_deadline`. Returns `true` when applied.
+    /// Contract entry point: `consent_extend_deadline`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn consent_extend_deadline(
         env: Env,
         caller: Address,
@@ -3339,6 +3487,9 @@ impl EscrowContract {
 
     /// Check if there is a pending extension request for an escrow.
     /// Returns the proposed new deadline, or 0 if no request exists.
+    /// Contract entry point: `get_pending_extension_deadline`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn get_pending_extension_deadline(env: Env, escrow_id: u64) -> u64 {
         extension::get_pending_extension(&env, escrow_id)
             .map(|r| r.new_deadline)
@@ -3349,11 +3500,17 @@ impl EscrowContract {
 
     /// Trigger auto-expiry on an escrow whose deadline has passed.
     /// Refunds remaining balance to the client. Anyone may call this.
+    /// Contract entry point: `trigger_expiry`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn trigger_expiry(env: Env, caller: Address, escrow_id: u64) -> Result<i128, EscrowError> {
         auto_expiry::trigger_expiry(&env, &caller, escrow_id)
     }
 
     /// Check if an escrow has expired without triggering it.
+    /// Contract entry point: `is_expired`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn is_expired(env: Env, escrow_id: u64) -> Result<bool, EscrowError> {
         auto_expiry::is_expired(&env, escrow_id)
     }
@@ -3368,6 +3525,9 @@ impl EscrowContract {
     ///
     /// Returns `E86` if the slippage tolerance is exceeded when the price
     /// is checked against the recorded reference.
+    /// Contract entry point: `set_slippage_bps`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn set_slippage_bps(
         env: Env,
         caller: Address,
@@ -3395,6 +3555,9 @@ impl EscrowContract {
     }
 
     /// Returns the state history for a given escrow.
+    /// Contract entry point: `get_state_history`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn get_state_history(env: Env, escrow_id: u64) -> Vec<StateHistoryEntry> {
         state_history::get_state_history(&env, escrow_id)
     }
@@ -3403,6 +3566,9 @@ impl EscrowContract {
     ///
     /// # Gas notes
     /// - Loads only the single milestone entry.
+    /// Contract entry point: `reject_milestone`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn reject_milestone(
         env: Env,
         caller: Address,
@@ -3441,6 +3607,9 @@ impl EscrowContract {
     /// Sets the configurable milestone cap stored in instance storage.
     ///
     /// Requires admin authorization. `new_max` must be in [1, 100].
+    /// Contract entry point: `set_max_milestones`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn set_max_milestones(env: Env, caller: Address, new_max: u32) -> Result<(), EscrowError> {
         caller.require_auth();
         ContractStorage::require_admin(&env, &caller)?;
@@ -3461,6 +3630,9 @@ impl EscrowContract {
     /// Rejects a submitted milestone and stores an IPFS reason hash on-chain.
     ///
     /// `reason_hash` must be non-zero (a real IPFS CID).
+    /// Contract entry point: `reject_milestone_with_reason`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn reject_milestone_with_reason(
         env: Env,
         caller: Address,
@@ -3507,6 +3679,9 @@ impl EscrowContract {
     }
 
     /// Allows the client to withdraw excess rent above the minimum required reserve.
+    /// Contract entry point: `withdraw_rent_overpayment`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn withdraw_rent_overpayment(
         env: Env,
         caller: Address,
@@ -3554,6 +3729,9 @@ impl EscrowContract {
     /// # Security (STE-01, STE-02)
     /// - Requires admin authorization.
     /// - Milestone must be `Approved` to prevent double-payment.
+    /// Contract entry point: `release_funds`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn release_funds(
         env: Env,
         caller: Address,
@@ -3590,8 +3768,8 @@ impl EscrowContract {
 
             ContractStorage::check_lock_time_expired(&env, escrow_id, meta.lock_time)?;
 
-            if let Some(ref _th) = meta.terms_hash {
-                let acceptance = env.storage().persistent()
+            if matches!(meta.terms_hash, OptionalBytesN32::Some(_)) {
+                let acceptance: TermsAcceptance = env.storage().persistent()
                     .get(&DataKey::TermsAcceptance(escrow_id))
                     .ok_or(EscrowError::ClientHasNotAcceptedTerms)?;
                 if !acceptance.accepted {
@@ -3667,6 +3845,9 @@ impl EscrowContract {
     ///
     /// Only the current client may call this. The new client must not be the
     /// freelancer or the arbiter, and the escrow must be Active.
+    /// Contract entry point: `transfer_client_role`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn transfer_client_role(
         env: Env,
         escrow_id: u64,
@@ -3707,6 +3888,9 @@ impl EscrowContract {
     /// - Escrow is Active
     /// - Terms hash was set during creation
     /// - Client has not already accepted
+    /// Contract entry point: `accept_terms`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn accept_terms(
         env: Env,
         caller: Address,
@@ -3723,7 +3907,8 @@ impl EscrowContract {
         if meta.status != EscrowStatus::Active {
             return Err(EscrowError::E9);
         }
-        let terms_hash = meta.terms_hash.ok_or(EscrowError::TermsHashEmpty)?;
+        let terms_hash_opt: Option<BytesN<32>> = meta.terms_hash.clone().into();
+        let terms_hash = terms_hash_opt.ok_or(EscrowError::TermsHashEmpty)?;
 
         let key = DataKey::TermsAcceptance(escrow_id);
         let mut acceptance: TermsAcceptance = env
@@ -3752,13 +3937,17 @@ impl EscrowContract {
 
     /// View function: returns true if the client has accepted the terms
     /// bound to this escrow.
+    /// Contract entry point: `check_terms_accepted`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn check_terms_accepted(env: Env, escrow_id: u64) -> Result<bool, EscrowError> {
         ContractStorage::require_initialized(&env)?;
         let meta = ContractStorage::load_escrow_meta_with_rent(&env, escrow_id)?;
-        if meta.terms_hash.is_none() {
+        let terms_hash_opt: Option<BytesN<32>> = meta.terms_hash.clone().into();
+        if terms_hash_opt.is_none() {
             return Ok(false);
         }
-        let acceptance = env
+        let acceptance: TermsAcceptance = env
             .storage()
             .persistent()
             .get(&DataKey::TermsAcceptance(escrow_id))
@@ -3776,6 +3965,9 @@ impl EscrowContract {
     ///
     /// Records the swap intent in escrow state. Actual cross-contract calls
     /// require WASM imports; this function simulates the flow for the exercise.
+    /// Contract entry point: `swap_asset_via_dex`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn swap_asset_via_dex(
         env: Env,
         caller: Address,
@@ -3805,7 +3997,7 @@ impl EscrowContract {
             .ok_or(EscrowError::DexNotConfigured)?;
 
         let pair_found = dex_config.supported_pairs.iter().any(|(a, b)| {
-            *a == token_in && *b == token_out
+            a == token_in && b == token_out
         });
         if !pair_found {
             return Err(EscrowError::InvalidSwapParameters);
@@ -3821,8 +4013,8 @@ impl EscrowContract {
         let now = env.ledger().timestamp();
         let record = DexSwapRecord {
             escrow_id,
-            token_in,
-            token_out,
+            token_in: token_in.clone(),
+            token_out: token_out.clone(),
             amount_in,
             min_amount_out,
             amount_out: Some(amount_in),
@@ -3846,6 +4038,9 @@ impl EscrowContract {
     }
 
     /// Cancels an escrow and returns remaining funds to the client.
+    /// Contract entry point: `cancel_escrow`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn cancel_escrow(env: Env, caller: Address, escrow_id: u64) -> Result<(), EscrowError> {
         caller.require_auth();
         ContractStorage::require_not_paused(&env)?;
@@ -3952,6 +4147,9 @@ impl EscrowContract {
 
     /// Splits the unallocated balance of an active escrow into two new child escrows.
     /// Requires joint authorization from both the client and freelancer.
+    /// Contract entry point: `split_escrow`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn split_escrow(
         env: Env,
         caller: Address,
@@ -4010,39 +4208,41 @@ impl EscrowContract {
         };
 
         let child1_id = Self::create_escrow_internal(
-            env.clone(),
-            meta.client.clone(),
-            meta.freelancer.clone(),
-            meta.token.clone(),
-            child1_amount,
-            new_brief_hash.clone(),
-            meta.arbiter.clone(),
-            meta.deadline,
-            meta.lock_time,
-            meta.dispute_timeout_ledger,
-            Some(meta.buyer_signers.clone()),
-            inherited_multisig.clone(),
-            inherited_timelock.clone(),
-            false,
-        )?;
+                    env.clone(),
+                    meta.client.clone(),
+                    meta.freelancer.clone(),
+                    meta.token.clone(),
+                    child1_amount,
+                    new_brief_hash.clone(),
+                    meta.arbiter.clone(),
+                    meta.deadline,
+                    meta.lock_time,
+                    meta.dispute_timeout_ledger,
+                    Some(meta.buyer_signers.clone()),
+                    inherited_multisig.clone(),
+                    inherited_timelock.clone(),
+                    None,
+                    false,
+                )?;
 
         // Create second child escrow
         let child2_id = Self::create_escrow_internal(
-            env.clone(),
-            meta.client.clone(),
-            meta.freelancer.clone(),
-            meta.token.clone(),
-            child2_amount,
-            new_brief_hash,
-            meta.arbiter.clone(),
-            meta.deadline,
-            meta.lock_time,
-            meta.dispute_timeout_ledger,
-            Some(meta.buyer_signers.clone()),
-            inherited_multisig,
-            inherited_timelock,
-            false,
-        )?;
+                    env.clone(),
+                    meta.client.clone(),
+                    meta.freelancer.clone(),
+                    meta.token.clone(),
+                    child2_amount,
+                    new_brief_hash,
+                    meta.arbiter.clone(),
+                    meta.deadline,
+                    meta.lock_time,
+                    meta.dispute_timeout_ledger,
+                    Some(meta.buyer_signers.clone()),
+                    inherited_multisig,
+                    inherited_timelock,
+                    None,
+                    false,
+                )?;
 
         // Note: Parent escrow remains active, only unallocated balance is split
 
@@ -4060,6 +4260,9 @@ impl EscrowContract {
     ///
     /// # Returns
     /// The amount refunded to the client (unallocated balance)
+    /// Contract entry point: `partial_cancel`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn partial_cancel(env: Env, caller: Address, escrow_id: u64) -> Result<i128, EscrowError> {
         caller.require_auth();
         ContractStorage::require_not_paused(&env)?;
@@ -4100,6 +4303,9 @@ impl EscrowContract {
     ///
     /// `duration_ledger` is the number of ledger seconds to wait before release.
     /// Valid values are 1 to 30 days (inclusive).
+    /// Contract entry point: `start_timelock`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn start_timelock(
         env: Env,
         caller: Address,
@@ -4143,6 +4349,9 @@ impl EscrowContract {
     ///
     /// Only the client can extend the lock time, and the new lock time
     /// must be in the future.
+    /// Contract entry point: `extend_lock_time`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn extend_lock_time(
         env: Env,
         caller: Address,
@@ -4195,6 +4404,9 @@ impl EscrowContract {
     /// - `TimelockAlreadySet`         – a release time is already configured.
     /// - `E9`                         – escrow is not Active.
     /// - `E3`                         – caller is not the client.
+    /// Contract entry point: `set_timelock`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn set_timelock(
         env: Env,
         caller: Address,
@@ -4246,6 +4458,9 @@ impl EscrowContract {
     /// - `E44`                – milestone has not been approved.
     /// - `E9`                 – escrow is not Active.
     /// - `E3`                 – caller is not the client or freelancer.
+    /// Contract entry point: `release_with_timelock`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn release_with_timelock(
         env: Env,
         caller: Address,
@@ -4323,6 +4538,9 @@ impl EscrowContract {
     // ── Dispute Resolution ────────────────────────────────────────────────────
 
     /// Raises a dispute, freezing further fund releases.
+    /// Contract entry point: `raise_dispute`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn raise_dispute(
         env: Env,
         caller: Address,
@@ -4388,6 +4606,9 @@ impl EscrowContract {
         Ok(())
     }
 
+    /// Contract entry point: `claim_dispute_timeout`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn claim_dispute_timeout(
         env: Env,
         caller: Address,
@@ -4491,6 +4712,9 @@ impl EscrowContract {
     /// # Gas notes
     /// - Two token transfers in sequence; unavoidable.
     /// - Reputation updates are two upserts, each touching only one storage entry.
+    /// Contract entry point: `resolve_dispute`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn resolve_dispute(
         env: Env,
         caller: Address,
@@ -4524,7 +4748,7 @@ impl EscrowContract {
                 return Err(EscrowError::E20);
             }
             if let Some(disputed_at) = meta.dispute_start_ledger {
-                let current_ledger = env.ledger().sequence();
+                let current_ledger = env.ledger().sequence() as u64;
                 if current_ledger < disputed_at + DISPUTE_COOLDOWN_LEDGERS as u64 {
                     return Err(EscrowError::E64);
                 }
@@ -4622,6 +4846,9 @@ impl EscrowContract {
     ///
     /// # Returns
     /// The proposal ID created in the governance contract
+    /// Contract entry point: `escalate_dispute_to_governance`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn escalate_dispute_to_governance(
         env: Env,
         caller: Address,
@@ -4688,6 +4915,9 @@ impl EscrowContract {
 
     /// Admin-only: register the trusted oracle Ed25519 public key used to
     /// verify fallback resolution payloads.
+    /// Contract entry point: `set_trusted_oracle_key`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn set_trusted_oracle_key(
         env: Env,
         caller: Address,
@@ -4715,6 +4945,9 @@ impl EscrowContract {
     ///    the stored trusted oracle public key.
     ///
     /// On success, funds are distributed and the escrow is marked Completed.
+    /// Contract entry point: `oracle_resolve_dispute`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn oracle_resolve_dispute(
         env: Env,
         escrow_id: u64,
@@ -4879,6 +5112,9 @@ impl EscrowContract {
 
     // ── Upgrade ───────────────────────────────────────────────────────────────
 
+    /// Contract entry point: `upgrade`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn upgrade(
         env: Env,
         caller: Address,
@@ -4930,6 +5166,9 @@ impl EscrowContract {
 
     /// Returns the current contract code version and upgrade history metadata.
     /// Distinct from the internal storage-layout version used for migrations.
+    /// Contract entry point: `get_contract_version`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn get_contract_version(env: Env) -> Result<ContractVersionInfo, EscrowError> {
         ContractStorage::require_initialized(&env)?;
         env.storage()
@@ -4944,6 +5183,9 @@ impl EscrowContract {
     ///
     /// The caller must be the client or freelancer of the escrow.
     /// The escrow must be in Disputed status.
+    /// Contract entry point: `add_evidence`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn add_evidence(
         env: Env,
         caller: Address,
@@ -4973,7 +5215,7 @@ impl EscrowContract {
         if desc_len == 0 {
             return Err(EscrowError::E80);
         }
-        if desc_len > MAX_STRING_LEN as usize {
+        if desc_len as usize > MAX_STRING_LEN as usize {
             return Err(EscrowError::E81);
         }
 
@@ -5001,6 +5243,9 @@ impl EscrowContract {
     }
 
     /// Get all evidence entries for a disputed escrow.
+    /// Contract entry point: `get_evidence`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn get_evidence(env: Env, escrow_id: u64) -> Result<Vec<DisputeEvidence>, EscrowError> {
         ContractStorage::require_initialized(&env)?;
 
@@ -5016,6 +5261,9 @@ impl EscrowContract {
     // ── Arbiter Allowlist ──────────────────────────────────────────────
 
     /// Add an arbiter address to the allowlist. Admin only.
+    /// Contract entry point: `add_to_arbiter_allowlist`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn add_to_arbiter_allowlist(
         env: Env,
         caller: Address,
@@ -5035,6 +5283,9 @@ impl EscrowContract {
     }
 
     /// Remove an arbiter address from the allowlist. Admin only.
+    /// Contract entry point: `remove_from_arbiter_allowlist`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn remove_from_arbiter_allowlist(
         env: Env,
         caller: Address,
@@ -5053,17 +5304,20 @@ impl EscrowContract {
     }
 
     /// Check if an arbiter address is on the allowlist.
+    /// Contract entry point: `is_arbiter_allowed`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn is_arbiter_allowed(env: Env, arbiter: Address) -> bool {
-        env.storage()
-            .persistent()
-            .get::<DataKey, bool>(&DataKey::ArbiterAllowlist(arbiter))
-            .unwrap_or(false)
+        crate::arbiter_allowlist::is_arbiter_allowed(&&env, arbiter)
     }
 
     // ── Arbiter Fee Configuration ──────────────────────────────────────
 
     /// Set the arbiter fee basis points for an escrow. Admin only.
     /// Must be between 0 and 10000 inclusive.
+    /// Contract entry point: `set_arbiter_fee_bps`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn set_arbiter_fee_bps(
         env: Env,
         caller: Address,
@@ -5086,6 +5340,9 @@ impl EscrowContract {
     // ── Emergency Pause ──────────────────────────────────────────────────────
 
     /// Pauses the contract, preventing new escrows and milestone additions.
+    /// Contract entry point: `pause`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn pause(env: Env, caller: Address) -> Result<(), EscrowError> {
         caller.require_auth();
         ContractStorage::require_admin(&env, &caller)?;
@@ -5100,6 +5357,9 @@ impl EscrowContract {
     }
 
     /// Unpauses the contract, resuming normal operation.
+    /// Contract entry point: `unpause`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn unpause(env: Env, caller: Address) -> Result<(), EscrowError> {
         caller.require_auth();
         ContractStorage::require_admin(&env, &caller)?;
@@ -5114,12 +5374,33 @@ impl EscrowContract {
     }
 
     /// Returns the current pause state of the contract.
+    /// Contract entry point: `is_paused`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn is_paused(env: Env) -> bool {
         ContractStorage::is_paused(&env)
     }
 
+    /// Returns the contract pause state and whitelist status for a token.
+    ///
+    /// Indexers must derive status changes from the corresponding whitelist
+    /// events, whose topics include the operation and affected token and whose
+    /// data includes the authoritative caller or enabled state. The tuple order
+    /// is stable across upgrades: `(paused, whitelist_enabled, token_approved)`.
+    /// Contract entry point: `get_token_status`.
+    pub fn get_token_status(env: Env, token: Address) -> (bool, bool, bool) {
+        (
+            ContractStorage::is_paused(&env),
+            ContractStorage::is_token_whitelist_enabled(&env),
+            ContractStorage::is_token_approved(&env, &token),
+        )
+    }
+
     /// Returns the current admin address.
     /// Returns EscrowError::E2 if the contract has not been initialized.
+    /// Contract entry point: `get_admin`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn get_admin(env: Env) -> Result<Address, EscrowError> {
         ContractStorage::require_initialized(&env)?;
         let admin: Address = env
@@ -5131,6 +5412,9 @@ impl EscrowContract {
     }
 
     /// Returns the current admin signer set.
+    /// Contract entry point: `get_admin_signers`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn get_admin_signers(env: Env) -> Result<soroban_sdk::Vec<Address>, EscrowError> {
         ContractStorage::require_initialized(&env)?;
         let signers: soroban_sdk::Vec<Address> = env
@@ -5142,6 +5426,9 @@ impl EscrowContract {
     }
 
     /// Returns the current admin signer threshold.
+    /// Contract entry point: `get_admin_threshold`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn get_admin_threshold(env: Env) -> Result<u32, EscrowError> {
         ContractStorage::require_initialized(&env)?;
         let threshold: u32 = env
@@ -5157,6 +5444,9 @@ impl EscrowContract {
     /// Only the current admin may call this. Stores `new_admin` under
     /// `DataKey::PendingAdmin`. The transfer is not complete until the
     /// proposed admin calls `accept_admin`.
+    /// Contract entry point: `propose_admin`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn propose_admin(env: Env, caller: Address, new_admin: Address) -> Result<(), EscrowError> {
         caller.require_auth();
         ContractStorage::require_admin(&env, &caller)?;
@@ -5175,6 +5465,9 @@ impl EscrowContract {
     /// Only the address stored as `DataKey::PendingAdmin` may call this.
     /// On success, `DataKey::Admin` is updated to the caller and
     /// `DataKey::PendingAdmin` is cleared.
+    /// Contract entry point: `accept_admin`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn accept_admin(env: Env, caller: Address) -> Result<(), EscrowError> {
         caller.require_auth();
         ContractStorage::require_initialized(&env)?;
@@ -5207,6 +5500,9 @@ impl EscrowContract {
 
     /// Adds a token to the approved whitelist for escrow creation.
     /// Requires admin authorization.
+    /// Contract entry point: `add_approved_token`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn add_approved_token(
         env: Env,
         caller: Address,
@@ -5215,11 +5511,15 @@ impl EscrowContract {
         caller.require_auth();
         ContractStorage::require_admin(&env, &caller)?;
         ContractStorage::add_approved_token(&env, &token);
+        events::emit_token_whitelist_added(&env, &caller, &token);
         Ok(())
     }
 
     /// Removes a token from the approved whitelist.
     /// Requires admin authorization.
+    /// Contract entry point: `remove_approved_token`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn remove_approved_token(
         env: Env,
         caller: Address,
@@ -5228,12 +5528,16 @@ impl EscrowContract {
         caller.require_auth();
         ContractStorage::require_admin(&env, &caller)?;
         ContractStorage::remove_approved_token(&env, &token);
+        events::emit_token_whitelist_removed(&env, &caller, &token);
         Ok(())
     }
 
     /// Enables or disables the token whitelist enforcement.
     /// When enabled, only whitelisted tokens can be used in new escrows.
     /// Requires admin authorization.
+    /// Contract entry point: `set_token_whitelist_enabled`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn set_token_whitelist_enabled(
         env: Env,
         caller: Address,
@@ -5242,12 +5546,16 @@ impl EscrowContract {
         caller.require_auth();
         ContractStorage::require_admin(&env, &caller)?;
         ContractStorage::set_token_whitelist_enabled(&env, enabled);
+        events::emit_token_whitelist_set(&env, &caller, enabled);
         Ok(())
     }
 
     // ── Escrow Template System ───────────────────────────────────────────────
 
     /// Creates a new escrow template with predefined milestones.
+    /// Contract entry point: `create_template`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn create_template(
         env: Env,
         caller: Address,
@@ -5270,12 +5578,18 @@ impl EscrowContract {
     }
 
     /// Retrieves an escrow template by ID.
+    /// Contract entry point: `get_template`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn get_template(env: Env, template_id: u64) -> Result<EscrowTemplate, EscrowError> {
         ContractStorage::require_initialized(&env)?;
         ContractStorage::load_template(&env, template_id)
     }
 
     /// Creates a new escrow from a template, adding all template milestones.
+    /// Contract entry point: `create_escrow_from_template`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn create_escrow_from_template(
         env: Env,
         caller: Address,
@@ -5313,6 +5627,7 @@ impl EscrowContract {
             None,             // buyer_signers
             None,             // multisig_config
             None,             // timelock
+            None,             // terms_hash
             caller != client, // client auth already taken when caller is the client
         )?;
 
@@ -5332,6 +5647,9 @@ impl EscrowContract {
     }
 
     /// Pauses scheduled recurring releases for an escrow.
+    /// Contract entry point: `pause_recurring_schedule`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn pause_recurring_schedule(
         env: Env,
         caller: Address,
@@ -5358,6 +5676,9 @@ impl EscrowContract {
     }
 
     /// Resumes scheduled recurring releases for an escrow.
+    /// Contract entry point: `resume_recurring_schedule`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn resume_recurring_schedule(
         env: Env,
         caller: Address,
@@ -5395,6 +5716,9 @@ impl EscrowContract {
     }
 
     /// Cancels a recurring schedule and refunds all future payments to the client.
+    /// Contract entry point: `cancel_recurring_escrow`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn cancel_recurring_escrow(
         env: Env,
         caller: Address,
@@ -5471,12 +5795,18 @@ impl EscrowContract {
         Ok(meta)
     }
 
+    /// Contract entry point: `collect_rent`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn collect_rent(env: Env, escrow_id: u64) -> Result<i128, EscrowError> {
         ContractStorage::require_initialized(&env)?;
         let mut meta = ContractStorage::load_escrow_meta(&env, escrow_id)?;
         ContractStorage::collect_rent(&env, &mut meta)
     }
 
+    /// Contract entry point: `top_up_rent`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn top_up_rent(
         env: Env,
         caller: Address,
@@ -5507,10 +5837,16 @@ impl EscrowContract {
         Ok(top_up)
     }
 
+    /// Contract entry point: `get_reputation`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn get_reputation(env: Env, address: Address) -> Result<ReputationRecord, EscrowError> {
         Ok(ContractStorage::load_reputation(&env, &address))
     }
 
+    /// Contract entry point: `get_recurring_config`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn get_recurring_config(
         env: Env,
         escrow_id: u64,
@@ -5523,6 +5859,9 @@ impl EscrowContract {
     ///
     /// Prefer this over `get_recurring_config` when only active/paused/cancelled
     /// state and next-payment info are needed.
+    /// Contract entry point: `get_recurring_schedule_status`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn get_recurring_schedule_status(
         env: Env,
         escrow_id: u64,
@@ -5614,12 +5953,18 @@ impl EscrowContract {
         ContractStorage::load_cancellation_request(&env, escrow_id)
     }
 
+    /// Contract entry point: `get_slash_record`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn get_slash_record(env: Env, escrow_id: u64) -> Result<SlashRecord, EscrowError> {
         ContractStorage::ensure_live_escrow(&env, escrow_id)?;
         ContractStorage::load_slash_record(&env, escrow_id)
     }
 
     /// Returns escrow IDs where `participant` is the client or freelancer.
+    /// Contract entry point: `get_escrow_ids_by_participant`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn get_escrow_ids_by_participant(
         env: Env,
         participant: Address,
@@ -5642,6 +5987,9 @@ impl EscrowContract {
     }
 
     /// Returns escrow IDs in the given status.
+    /// Contract entry point: `get_escrow_ids_by_status`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn get_escrow_ids_by_status(
         env: Env,
         status: EscrowStatus,
@@ -5664,6 +6012,9 @@ impl EscrowContract {
     }
 
     /// Returns escrow IDs with active cancellation requests by `requester`.
+    /// Contract entry point: `list_cancellations_by_requester`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn list_cancellations_by_requester(env: Env, requester: Address) -> soroban_sdk::Vec<u64> {
         env.storage()
             .persistent()
@@ -5672,6 +6023,9 @@ impl EscrowContract {
     }
 
     /// Returns slash records for the given slashed user address.
+    /// Contract entry point: `get_slash_records_by_address`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn get_slash_records_by_address(
         env: Env,
         slashed_user: Address,
@@ -5695,6 +6049,9 @@ impl EscrowContract {
     ///
     /// Requires authorization from both the client and the freelancer.
     /// The new arbiter must not be the client or freelancer themselves.
+    /// Contract entry point: `update_arbiter`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn update_arbiter(
         env: Env,
         escrow_id: u64,
@@ -5739,6 +6096,9 @@ impl EscrowContract {
     /// Requests cancellation of an escrow.
     ///
     /// Can be called by client or freelancer. Starts a dispute period.
+    /// Contract entry point: `request_cancellation`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn request_cancellation(
         env: Env,
         caller: Address,
@@ -5814,6 +6174,9 @@ impl EscrowContract {
 
     /// Allows the counterparty to explicitly approve a pending cancellation,
     /// enabling immediate execution without waiting for the dispute window.
+    /// Contract entry point: `client_approve_cancellation`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn client_approve_cancellation(
         env: Env,
         caller: Address,
@@ -5846,6 +6209,9 @@ impl EscrowContract {
     /// Executes a cancellation after the dispute period.
     ///
     /// Can be called by anyone after dispute period expires.
+    /// Contract entry point: `execute_cancellation`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn execute_cancellation(env: Env, escrow_id: u64) -> Result<(), EscrowError> {
         ContractStorage::require_initialized(&env)?;
         ContractStorage::require_not_paused(&env)?;
@@ -5925,6 +6291,9 @@ impl EscrowContract {
     /// Disputes a cancellation request.
     ///
     /// Can only be called by the other party (non-requester).
+    /// Contract entry point: `dispute_cancellation`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn dispute_cancellation(
         env: Env,
         caller: Address,
@@ -5988,6 +6357,9 @@ impl EscrowContract {
     /// Releases a held slash to the recipient after the dispute period expires.
     ///
     /// Can be called by anyone once `SLASH_DISPUTE_PERIOD` has passed without a dispute.
+    /// Contract entry point: `finalize_slash`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn finalize_slash(env: Env, escrow_id: u64) -> Result<(), EscrowError> {
         ContractStorage::require_initialized(&env)?;
         ContractStorage::require_not_paused(&env)?;
@@ -6029,6 +6401,9 @@ impl EscrowContract {
     /// Disputes a slash applied to a user.
     ///
     /// Can only be called by the slashed user within the dispute period.
+    /// Contract entry point: `dispute_slash`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn dispute_slash(env: Env, caller: Address, escrow_id: u64) -> Result<(), EscrowError> {
         caller.require_auth();
         ContractStorage::require_not_paused(&env)?;
@@ -6067,6 +6442,9 @@ impl EscrowContract {
     ///
     /// Can only be called by arbiter or admin.
     /// If upheld, the slash remains. If reversed, funds are returned.
+    /// Contract entry point: `resolve_slash_dispute`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn resolve_slash_dispute(
         env: Env,
         caller: Address,
@@ -6300,6 +6678,9 @@ impl EscrowContract {
     /// Returns the contract's current token balance for the given token address.
     /// Use this for on-chain solvency checks to verify the contract holds
     /// sufficient funds to cover all active escrow `remaining_balance` values.
+    /// Contract entry point: `get_contract_balance`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn get_contract_balance(env: Env, token: Address) -> i128 {
         ContractStorage::bump_instance_ttl(&env);
         token::Client::new(&env, &token).balance(&env.current_contract_address())
@@ -6309,6 +6690,9 @@ impl EscrowContract {
     ///
     /// Currently only checks the deadline. Signature verification and dispatch
     /// are stubbed for now.
+    /// Contract entry point: `execute_meta_transaction`.
+    ///
+    /// See the function name for the public contract operation.
     pub fn execute_meta_transaction(
         env: Env,
         meta_tx: types::MetaTransaction,
@@ -6347,7 +6731,7 @@ mod tests {
         (env, admin, contract_id, client)
     }
 
-    fn no_multisig(env: &Env) -> MultisigConfig {
+    pub fn no_multisig(env: &Env) -> MultisigConfig {
         MultisigConfig {
             approvers: soroban_sdk::Vec::new(env),
             weights: soroban_sdk::Vec::new(env),
@@ -7900,21 +8284,20 @@ mod tests {
         token_admin.mint(&escrow_client, &(amount + reserve));
 
         let escrow_id = contract_client.create_escrow(
-            &escrow_client,
-            &freelancer,
-            &token_id,
-            &amount,
-            &BytesN::from_array(&env, &[1u8; 32]),
-            &None,
-            &None,
-            &None,
-            &None,
-            &MultisigConfig {
-                approvers: soroban_sdk::Vec::new(&env),
-                weights: soroban_sdk::Vec::new(&env),
-                threshold: 0,
-            },
-        );
+                    &escrow_client,
+                    &freelancer,
+                    &token_id,
+                    &amount,
+                    &BytesN::from_array(&env, &[1u8; 32]),
+                    &None,
+                    &None,
+                    &None,
+                    &None,
+                    &MultisigConfig { approvers: soroban_sdk::Vec::new(&env),
+                    weights: soroban_sdk::Vec::new(&env),
+                    threshold: 0, },
+                    &None,
+                );
 
         (
             env,
@@ -7986,21 +8369,20 @@ mod tests {
         let token_admin = token::StellarAssetClient::new(&env, &token_id);
         token_admin.mint(&escrow_client, &200_i128);
         client.create_escrow(
-            &escrow_client,
-            &freelancer,
-            &token_id,
-            &100_i128,
-            &BytesN::from_array(&env, &[1u8; 32]),
-            &None,
-            &None,
-            &None,
-            &None,
-            &MultisigConfig {
-                approvers: soroban_sdk::Vec::new(&env),
-                weights: soroban_sdk::Vec::new(&env),
-                threshold: 0,
-            },
-        );
+                    &escrow_client,
+                    &freelancer,
+                    &token_id,
+                    &100_i128,
+                    &BytesN::from_array(&env, &[1u8; 32]),
+                    &None,
+                    &None,
+                    &None,
+                    &None,
+                    &MultisigConfig { approvers: soroban_sdk::Vec::new(&env),
+                    weights: soroban_sdk::Vec::new(&env),
+                    threshold: 0, },
+                    &None,
+                );
     }
 
     #[test]
@@ -9005,3 +9387,48 @@ mod tests {
         assert!(matches!(result, Err(Ok(EscrowError::E57))));
     }
 }
+
+// BEGIN ISSUE-419 PAYMENT TOKEN STATUS UPGRADE TESTS
+#[cfg(test)]
+mod payment_token_status_upgrade_compat_tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, Bytes, Env};
+
+    #[test]
+    fn whitelist_status_tuple_and_storage_survive_code_upgrade() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let outsider = Address::generate(&env);
+        let approved = Address::generate(&env);
+        let unapproved = Address::generate(&env);
+        let id = env.register_contract(None, EscrowContract);
+        let contract = EscrowContractClient::new(&env, &id);
+        contract.initialize(&admin);
+
+        assert_eq!(contract.get_token_status(&approved), (false, false, false));
+        contract.set_token_whitelist_enabled(&admin, &true);
+        contract.add_approved_token(&admin, &approved);
+        let before = contract.get_token_status(&approved);
+        assert_eq!(before, (false, true, true));
+        assert_eq!(contract.get_token_status(&unapproved), (false, true, false));
+
+        // Same dummy WASM fixture used by existing upgrade_tests.rs.  This
+        // exercises storage/version compatibility in the native Soroban tests;
+        // it is not a migration test between two separately compiled releases.
+        let wasm = Bytes::from_slice(&env, &[0, 97, 115, 109, 1, 0, 0, 0]);
+        let hash = env.deployer().upload_contract_wasm(wasm);
+        assert_eq!(contract.upgrade(&admin, &hash), Ok(2));
+        assert_eq!(contract.get_token_status(&approved), before);
+        assert_eq!(contract.get_token_status(&unapproved), (false, true, false));
+
+        // Authorization still applies and a rejected mutation is non-destructive.
+        assert!(contract.try_remove_approved_token(&outsider, &approved).is_err());
+        assert_eq!(contract.get_token_status(&approved), before);
+        contract.remove_approved_token(&admin, &approved);
+        assert_eq!(contract.get_token_status(&approved), (false, true, false));
+        contract.set_token_whitelist_enabled(&admin, &false);
+        assert_eq!(contract.get_token_status(&approved), (false, false, false));
+    }
+}
+// END ISSUE-419 PAYMENT TOKEN STATUS UPGRADE TESTS

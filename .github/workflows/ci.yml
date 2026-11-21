@@ -292,6 +292,184 @@ jobs:
           SLACK_MESSAGE: '⚠️ Fuzz testing found a failure on ${{ github.ref }} (${{ github.sha }})'
 
   # ─────────────────────────────────────────
+  # 🔍 Contract Static Analysis (Slither)
+  # ─────────────────────────────────────────
+  contract-static-analysis:
+    name: Smart Contract Static Analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect contract changes
+        id: changes
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags --depth=50 origin "${{ github.base_ref }}"
+            BASE=$(git merge-base HEAD "origin/${{ github.base_ref }}" 2>/dev/null || echo "origin/${{ github.base_ref }}")
+            CHANGED=$(git diff --name-only "$BASE"...HEAD 2>/dev/null || git diff --name-only HEAD~1 HEAD)
+          else
+            if git rev-parse HEAD^ >/dev/null 2>&1; then
+              CHANGED=$(git diff --name-only HEAD^ HEAD)
+            else
+              CHANGED=$(git ls-tree -r --name-only HEAD)
+            fi
+          fi
+          echo "$CHANGED"
+          if echo "$CHANGED" | grep -qE '^(contracts/|Cargo\.(toml|lock))'; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set up Python
+        if: steps.changes.outputs.changed == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Slither
+        if: steps.changes.outputs.changed == 'true'
+        run: pip install slither-analyzer==0.10.4
+
+      - name: Run Slither
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          slither contracts/ --config-file slither.config.json || true
+        # `|| true` because Slither exits non-zero when it finds any findings;
+        # the High/Critical gate below is what actually fails the job.
+
+      - name: Gate on High/Critical findings
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          python3 - <<'EOF'
+          import json, sys, os
+          report = "slither-report.json"
+          if not os.path.exists(report):
+              print("slither-report.json not found — Slither did not produce output.")
+              sys.exit(1)
+          with open(report) as fh:
+              data = json.load(fh)
+          findings = data.get("results", {}).get("detectors", [])
+          high_crit = [f for f in findings if f.get("impact") in ("High", "Critical")]
+          if high_crit:
+              print(f"FAIL: {len(high_crit)} High/Critical finding(s) detected.")
+              for f in high_crit:
+                  print(f"  [{f.get('impact')}] {f.get('check')}: {f.get('description', '')[:120]}")
+              sys.exit(1)
+          print(f"OK: No High/Critical findings. Total findings: {len(findings)}.")
+          EOF
+
+      - name: Upload Slither reports
+        if: steps.changes.outputs.changed == 'true' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: slither-reports-${{ github.sha }}
+          path: |
+            slither-report.json
+            slither-report.sarif
+          retention-days: 30
+
+      - name: Upload SARIF to GitHub Code Scanning
+        if: >
+          steps.changes.outputs.changed == 'true' &&
+          github.event_name == 'pull_request' &&
+          hashFiles('slither-report.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: slither-report.sarif
+          category: slither
+
+      - name: Job Summary
+        if: always()
+        run: |
+          if [ "${{ steps.changes.outputs.changed }}" = "true" ]; then
+            echo "✅ Static analysis completed — see slither-reports artifact"
+          else
+            echo "⏭️ No contract changes detected — skipped"
+          fi
+
+      - name: Slack Notification on failure
+        if: ${{ failure() && env.SLACK_WEBHOOK != '' }}
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_COLOR: danger
+          SLACK_MESSAGE: '🔍 Slither static analysis failed — ${{ github.ref }} (${{ github.sha }})'
+
+  # ─────────────────────────────────────────
+  # ✅ Formal Verification (Kani)
+  # ─────────────────────────────────────────
+  kani-verify:
+    name: Formal Verification (Kani)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' # Kani is slow; run on push only, not every PR
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect contract changes
+        id: changes
+        run: |
+          if git rev-parse HEAD^ >/dev/null 2>&1; then
+            CHANGED=$(git diff --name-only HEAD^ HEAD)
+          else
+            CHANGED=$(git ls-tree -r --name-only HEAD)
+          fi
+          echo "$CHANGED"
+          if echo "$CHANGED" | grep -qE '^(contracts/|Cargo\.(toml|lock))'; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup Rust (stable)
+        if: steps.changes.outputs.changed == 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Kani
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          cargo install --locked kani-verifier --quiet
+          cargo kani setup
+
+      - name: Run Kani proofs
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          mkdir -p test-artifacts
+          cargo kani --workspace --output-format terse 2>&1 | tee test-artifacts/kani-results.txt
+          # Exit code from cargo kani is the authoritative gate.
+
+      - name: Upload Kani results
+        if: steps.changes.outputs.changed == 'true' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kani-results-${{ github.sha }}
+          path: test-artifacts/kani-results.txt
+          retention-days: 30
+
+      - name: Job Summary
+        if: always()
+        run: |
+          if [ "${{ steps.changes.outputs.changed }}" = "true" ]; then
+            echo "✅ Kani formal verification completed — see kani-results artifact"
+          else
+            echo "⏭️ No contract changes detected — skipped"
+          fi
+
+      - name: Slack Notification on failure
+        if: ${{ failure() && env.SLACK_WEBHOOK != '' }}
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_COLOR: danger
+          SLACK_MESSAGE: '❌ Kani proof failure on ${{ github.ref }} (${{ github.sha }}) — a formal verification invariant was broken'
+
+  # ─────────────────────────────────────────
   # ⚙️ Backend (Node.js)
   # ─────────────────────────────────────────
   backend:

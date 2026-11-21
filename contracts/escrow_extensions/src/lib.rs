@@ -390,6 +390,10 @@ impl EscrowExtensions {
     ///
     /// Anyone can open arbitration for an escrow that is in Disputed state.
     /// Voting runs for VOTING_WINDOW_SECONDS (7 days).
+    ///
+    /// # Returns
+    /// `Ok(())` when the dispute record is created, or `DisputeAlreadyExists`
+    /// if the escrow already has an active arbitration window.
     pub fn open_dispute(env: Env, escrow_id: u64) -> Result<(), ExtError> {
         let key = DataKey::Dispute(escrow_id);
         if env.storage().persistent().has(&key) {
@@ -428,6 +432,10 @@ impl EscrowExtensions {
     /// * `escrow_id`  — the disputed escrow
     /// * `stake`      — reputation points committed (burned on slash)
     /// * `for_client` — true = vote for client, false = vote for freelancer
+    ///
+    /// # Returns
+    /// `Ok(())` on a recorded vote, or a domain error if the dispute is
+    /// missing, closed, resolved, or the caller has already voted.
     pub fn cast_vote(
         env: Env,
         voter: Address,
@@ -508,6 +516,10 @@ impl EscrowExtensions {
     ///   are flagged (actual stake deduction handled by reputation contract)
     ///
     /// Anyone can call this after the window closes.
+    ///
+    /// # Returns
+    /// `Ok(true)` when the client wins, `Ok(false)` when the freelancer wins,
+    /// or a domain error if the window is still open or the dispute is absent.
     #[deny(clippy::arithmetic_side_effects)]
     pub fn resolve_dispute(env: Env, escrow_id: u64) -> Result<bool, ExtError> {
         let key = DataKey::Dispute(escrow_id);
@@ -577,6 +589,10 @@ impl EscrowExtensions {
     }
 
     /// Returns the current state of an arbitration dispute.
+    ///
+    /// # Returns
+    /// The stored dispute record, or `DisputeNotFound` when the escrow has no
+    /// active arbitration window.
     pub fn get_dispute(env: Env, escrow_id: u64) -> Result<ArbitrationDispute, ExtError> {
         env.storage()
             .persistent()
@@ -674,3 +690,258 @@ impl EscrowExtensions {
 }
 
 mod tests;
+
+#[cfg(test)]
+mod limits_upgrade_compat_tests {
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger},
+        token, Address, BytesN, Env, Vec,
+    };
+
+    use crate::{
+        BatchEscrowParams, DataKey, EscrowExtensions, EscrowExtensionsClient, ExtError,
+        PendingUpgrade, MAX_BATCH_SIZE, MAX_FEE_BPS, UPGRADE_DELAY_SECONDS,
+    };
+
+    /// Registers the contract and writes the instance storage exactly as an
+    /// earlier version would have left it (no `initialize` call).
+    fn legacy(fee_bps: u32, counter: u64) -> (Env, Address, EscrowExtensionsClient<'static>) {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().with_mut(|l| l.timestamp = 10_000);
+        let admin = Address::generate(&env);
+        let id = env.register_contract(None, EscrowExtensions);
+        let client = EscrowExtensionsClient::new(&env, &id);
+        env.as_contract(&id, || {
+            env.storage().instance().set(&DataKey::Admin, &admin);
+            env.storage().instance().set(&DataKey::FeeBps, &fee_bps);
+            env.storage()
+                .instance()
+                .set(&DataKey::StorageVersion, &counter);
+        });
+        (env, admin, client)
+    }
+
+    fn batch(env: &Env, token: &Address, n: u32) -> Vec<BatchEscrowParams> {
+        let mut v = Vec::new(env);
+        for i in 0..n {
+            v.push_back(BatchEscrowParams {
+                freelancer: Address::generate(env),
+                token: token.clone(),
+                total_amount: 100,
+                brief_hash: BytesN::from_array(env, &[i as u8; 32]),
+                arbiter: None,
+                deadline: None,
+            });
+        }
+        v
+    }
+
+    #[test]
+    fn legacy_fee_storage_keeps_the_fee_cap() {
+        let (_env, admin, client) = legacy(150, 0);
+        assert_eq!(client.get_fee_bps(), 150);
+
+        client.set_fee_bps(&admin, &MAX_FEE_BPS);
+        assert_eq!(client.get_fee_bps(), MAX_FEE_BPS);
+        assert_eq!(
+            client
+                .try_set_fee_bps(&admin, &(MAX_FEE_BPS + 1))
+                .unwrap_err()
+                .unwrap(),
+            ExtError::FeeTooHigh
+        );
+        assert_eq!(client.get_fee_bps(), MAX_FEE_BPS);
+    }
+
+    #[test]
+    fn legacy_state_cannot_be_reinitialized() {
+        let (env, _admin, client) = legacy(0, 0);
+        let other = Address::generate(&env);
+        assert_eq!(
+            client.try_initialize(&other, &0).unwrap_err().unwrap(),
+            ExtError::AlreadyInitialized
+        );
+    }
+
+    #[test]
+    fn legacy_batch_counter_continues_at_the_batch_size_limit() {
+        let (env, _admin, client) = legacy(0, 5);
+        let token_admin = Address::generate(&env);
+        let token = env.register_stellar_asset_contract_v2(token_admin).address();
+        let payer = Address::generate(&env);
+        token::StellarAssetClient::new(&env, &token).mint(&payer, &10_000);
+
+        let ids = client.create_batch(&payer, &batch(&env, &token, MAX_BATCH_SIZE));
+        assert_eq!(ids.len(), MAX_BATCH_SIZE);
+        assert_eq!(ids.get(0).unwrap(), 5);
+        assert_eq!(ids.get(MAX_BATCH_SIZE - 1).unwrap(), 5 + u64::from(MAX_BATCH_SIZE) - 1);
+        let after = client.batch_escrow_count();
+        assert_eq!(after, 5 + u64::from(MAX_BATCH_SIZE));
+
+        assert_eq!(
+            client
+                .try_create_batch(&payer, &batch(&env, &token, MAX_BATCH_SIZE + 1))
+                .unwrap_err()
+                .unwrap(),
+            ExtError::BatchTooLarge
+        );
+        assert_eq!(
+            client
+                .try_create_batch(&payer, &batch(&env, &token, 0))
+                .unwrap_err()
+                .unwrap(),
+            ExtError::BatchEmpty
+        );
+        assert_eq!(client.batch_escrow_count(), after);
+    }
+
+    #[test]
+    fn legacy_pending_upgrade_keeps_the_delay_limit() {
+        let (env, admin, client) = legacy(0, 0);
+        let hash = BytesN::from_array(&env, &[0xAA; 32]);
+        let now = env.ledger().timestamp();
+        let pending = PendingUpgrade {
+            new_wasm_hash: hash.clone(),
+            queued_at: now,
+            executable_after: now + UPGRADE_DELAY_SECONDS,
+            queued_by: admin.clone(),
+        };
+        env.as_contract(&client.address, || {
+            env.storage()
+                .instance()
+                .set(&DataKey::PendingUpgrade, &pending);
+        });
+
+        assert_eq!(client.get_pending_upgrade().unwrap().new_wasm_hash, hash);
+        assert_eq!(
+            client.try_queue_upgrade(&admin, &hash).unwrap_err().unwrap(),
+            ExtError::UpgradeAlreadyPending
+        );
+        env.ledger()
+            .with_mut(|l| l.timestamp = now + UPGRADE_DELAY_SECONDS - 1);
+        assert_eq!(
+            client.try_execute_upgrade(&admin).unwrap_err().unwrap(),
+            ExtError::UpgradeDelayNotElapsed
+        );
+        assert!(client.get_pending_upgrade().is_some());
+    }
+}
+
+// BEGIN ISSUE-420-421-425 EXISTING MULTI-TOKEN BATCH TESTS
+// NOTE: These cover the existing multi-token batch path, not Stellar cross-asset
+// path payments (no such entry point exists in escrow_extensions currently).
+#[cfg(test)]
+mod multi_token_batch_boundary_tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, token, Address, BytesN, Env, Vec};
+
+    fn make_batch(
+        env: &Env,
+        token_a: &Address,
+        token_b: &Address,
+        size: u32,
+        bad_index: Option<u32>,
+    ) -> Vec<BatchEscrowParams> {
+        let mut batch = Vec::new(env);
+        for i in 0..size {
+            batch.push_back(BatchEscrowParams {
+                freelancer: Address::generate(env),
+                token: if i % 2 == 0 { token_a.clone() } else { token_b.clone() },
+                total_amount: if bad_index == Some(i) { 0 } else { 100 },
+                brief_hash: BytesN::from_array(env, &[i as u8; 32]),
+                arbiter: None,
+                deadline: None,
+            });
+        }
+        batch
+    }
+
+    fn funded() -> (Env, Address, EscrowExtensionsClient<'static>, Address, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let contract_id = env.register_contract(None, EscrowExtensions);
+        let contract = EscrowExtensionsClient::new(&env, &contract_id);
+        contract.initialize(&admin, &0);
+        let payer = Address::generate(&env);
+        let a = env.register_stellar_asset_contract_v2(admin.clone()).address();
+        let b = env.register_stellar_asset_contract_v2(admin).address();
+        token::StellarAssetClient::new(&env, &a).mint(&payer, &50_000);
+        token::StellarAssetClient::new(&env, &b).mint(&payer, &50_000);
+        (env, payer, contract, a, b)
+    }
+
+    #[test]
+    fn multi_token_batch_accepts_boundary_and_rejects_invalid_without_debits() {
+        let (env, payer, contract, a, b) = funded();
+        for size in [1_u32, MAX_BATCH_SIZE] {
+            let old = contract.batch_escrow_count();
+            let ids = contract.create_batch(&payer, &make_batch(&env, &a, &b, size, None));
+            assert_eq!(ids.len(), size);
+            assert_eq!(ids.get(0), Some(old));
+            assert_eq!(contract.batch_escrow_count(), old + u64::from(size));
+        }
+        let count = contract.batch_escrow_count();
+        let a_balance = token::Client::new(&env, &a).balance(&payer);
+        let b_balance = token::Client::new(&env, &b).balance(&payer);
+
+        assert_eq!(
+            contract.try_create_batch(&payer, &make_batch(&env, &a, &b, 0, None)).unwrap_err().unwrap(),
+            ExtError::BatchEmpty
+        );
+        assert_eq!(
+            contract.try_create_batch(&payer, &make_batch(&env, &a, &b, MAX_BATCH_SIZE + 1, None)).unwrap_err().unwrap(),
+            ExtError::BatchTooLarge
+        );
+        assert_eq!(
+            contract.try_create_batch(&payer, &make_batch(&env, &a, &b, 2, Some(1))).unwrap_err().unwrap(),
+            ExtError::BatchItemInvalid
+        );
+        assert_eq!(contract.batch_escrow_count(), count);
+        assert_eq!(token::Client::new(&env, &a).balance(&payer), a_balance);
+        assert_eq!(token::Client::new(&env, &b).balance(&payer), b_balance);
+    }
+
+    // Deterministic pseudo-fuzz matrix; no additional fuzzing framework needed.
+    #[test]
+    fn deterministic_length_and_amount_boundary_matrix_preserves_counter() {
+        for seed in 0..36_u32 {
+            let (env, payer, contract, a, b) = funded();
+            let size = seed % (MAX_BATCH_SIZE + 3);
+            let bad_index = if size > 0 && seed % 4 == 0 { Some(size / 2) } else { None };
+            let batch = make_batch(&env, &a, &b, size, bad_index);
+            let outcome = contract.try_create_batch(&payer, &batch);
+            if size == 0 {
+                assert_eq!(outcome.unwrap_err().unwrap(), ExtError::BatchEmpty);
+            } else if size > MAX_BATCH_SIZE {
+                assert_eq!(outcome.unwrap_err().unwrap(), ExtError::BatchTooLarge);
+            } else if bad_index.is_some() {
+                assert_eq!(outcome.unwrap_err().unwrap(), ExtError::BatchItemInvalid);
+            } else {
+                assert!(outcome.is_ok());
+                assert_eq!(contract.batch_escrow_count(), u64::from(size));
+            }
+            if size == 0 || size > MAX_BATCH_SIZE || bad_index.is_some() {
+                assert_eq!(contract.batch_escrow_count(), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn multi_token_batch_rejects_missing_payer_authorization() {
+        // No mock_all_auths: must be rejected at payer.require_auth(), before
+        // accessing the arbitrary placeholder token addresses.
+        let env = Env::default();
+        let payer = Address::generate(&env);
+        let a = Address::generate(&env);
+        let b = Address::generate(&env);
+        let id = env.register_contract(None, EscrowExtensions);
+        let contract = EscrowExtensionsClient::new(&env, &id);
+        assert!(contract
+            .try_create_batch(&payer, &make_batch(&env, &a, &b, 1, None))
+            .is_err());
+        assert_eq!(contract.batch_escrow_count(), 0);
+    }
+}
+// END ISSUE-420-421-425 EXISTING MULTI-TOKEN BATCH TESTS

@@ -349,6 +349,62 @@ export async function getResolutionRecommendation(disputeId) {
   return { ...evaluation, clientAmount, freelancerAmount };
 }
 
+export const DEFAULT_APPEAL_WINDOW_SECONDS = 7 * 24 * 60 * 60; // 7 days
+
+/**
+ * Calculates the appeal deadline timestamp for a dispute.
+ *
+ * @param {object} dispute
+ * @param {string|Date} [dispute.appealDeadline]
+ * @param {string|Date} [dispute.resolvedAt]
+ * @returns {Date|null}
+ */
+export function getAppealDeadline(dispute) {
+  if (dispute.appealDeadline) {
+    return new Date(dispute.appealDeadline);
+  }
+  if (!dispute.resolvedAt) {
+    return null;
+  }
+  const windowSeconds = parseInt(
+    process.env.DISPUTE_APPEAL_WINDOW_SECONDS ||
+      process.env.APPEAL_WINDOW_SECONDS ||
+      String(DEFAULT_APPEAL_WINDOW_SECONDS),
+    10,
+  );
+  return new Date(new Date(dispute.resolvedAt).getTime() + windowSeconds * 1000);
+}
+
+/**
+ * Validates that an appeal is submitted before the dispute's appeal deadline.
+ *
+ * @param {object} dispute
+ * @param {Date|string|number} [referenceTime=new Date()]
+ * @throws {Error} with err.code = 'APPEAL_DEADLINE_EXPIRED' if deadline has passed
+ * @returns {Date} The deadline timestamp
+ */
+export function validateAppealDeadline(dispute, referenceTime = new Date()) {
+  if (!dispute.resolvedAt) {
+    const err = new Error('Can only appeal a resolved dispute');
+    err.code = 'DISPUTE_NOT_RESOLVED';
+    err.status = 400;
+    throw err;
+  }
+
+  const deadline = getAppealDeadline(dispute);
+  const now = referenceTime instanceof Date ? referenceTime : new Date(referenceTime);
+
+  if (now.getTime() > deadline.getTime()) {
+    const err = new Error(`Appeal deadline expired on ${deadline.toISOString()}`);
+    err.code = 'APPEAL_DEADLINE_EXPIRED';
+    err.status = 400;
+    err.deadline = deadline;
+    throw err;
+  }
+
+  return deadline;
+}
+
 /**
  * Submit an appeal for a resolved dispute.
  *
@@ -356,10 +412,11 @@ export async function getResolutionRecommendation(disputeId) {
  * @param {object} payload
  * @param {string} payload.appealedBy - Stellar address
  * @param {string} payload.reason
+ * @param {Date|string} [payload.submittedAt]
  * @returns {Promise<object>} Created appeal record
  */
 export async function submitAppeal(disputeId, payload) {
-  const { appealedBy, reason } = payload;
+  const { appealedBy, reason, submittedAt } = payload;
   if (!reason?.trim()) throw new Error('reason is required');
 
   const dispute = await prisma.dispute.findUnique({
@@ -369,6 +426,10 @@ export async function submitAppeal(disputeId, payload) {
 
   if (!dispute) throw new Error('Dispute not found');
   if (!dispute.resolvedAt) throw new Error('Can only appeal a resolved dispute');
+
+  // Enforce appeal deadline window
+  validateAppealDeadline(dispute, submittedAt);
+
   if (dispute.appeals.length > 0)
     throw new Error('You have already submitted an appeal for this dispute');
 
@@ -430,4 +491,7 @@ export default {
   reviewAppeal,
   evaluateRules,
   ResolutionType,
+  getAppealDeadline,
+  validateAppealDeadline,
+  DEFAULT_APPEAL_WINDOW_SECONDS,
 };

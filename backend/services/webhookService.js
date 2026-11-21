@@ -7,11 +7,15 @@ import { enqueueWebhookDelivery } from '../queues/webhookQueue.js';
 const SIGNATURE_HEADER = 'X-Webhook-Signature';
 const DELIVERY_ID_HEADER = 'X-Webhook-Delivery-Id';
 const EVENT_TYPE_HEADER = 'X-Webhook-Event-Type';
+const SCHEMA_VERSION_HEADER = 'X-Webhook-Schema-Version';
+// Bump when the envelope or any event's `data` shape changes incompatibly.
+const WEBHOOK_SCHEMA_VERSION = '1';
 const DEFAULT_RETRY_ATTEMPTS = 5;
 const DEFAULT_BACKOFF_DELAY_MS = 5000;
 
 function buildWebhookPayload(eventType, payload, deliveryId) {
   return {
+    schemaVersion: WEBHOOK_SCHEMA_VERSION,
     eventType,
     deliveryId,
     timestamp: new Date().toISOString(),
@@ -120,6 +124,7 @@ async function queueSubscriptionWebhook(subscription, payload, eventType) {
     [SIGNATURE_HEADER]: signature,
     [DELIVERY_ID_HEADER]: delivery.id,
     [EVENT_TYPE_HEADER]: eventType,
+    [SCHEMA_VERSION_HEADER]: WEBHOOK_SCHEMA_VERSION,
   };
 
   await prisma.webhookDelivery.update({
@@ -166,6 +171,8 @@ export {
   SIGNATURE_HEADER,
   DELIVERY_ID_HEADER,
   EVENT_TYPE_HEADER,
+  SCHEMA_VERSION_HEADER,
+  WEBHOOK_SCHEMA_VERSION,
 };
 
 export default {

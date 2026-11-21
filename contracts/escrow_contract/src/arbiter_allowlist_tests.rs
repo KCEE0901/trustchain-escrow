@@ -19,7 +19,7 @@ mod arbiter_allowlist_tests {
 
     #[test]
     fn test_add_to_allowlist_requires_admin() {
-        let (env, admin, contract) = setup();
+        let (env, _admin, contract) = setup();
         let arbiter = Address::generate(&env);
         let non_admin = Address::generate(&env);
 

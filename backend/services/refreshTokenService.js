@@ -9,6 +9,8 @@ import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import prisma from '../lib/prisma.js';
 import tokenBlacklistService from './tokenBlacklistService.js';
+import auditService from './auditService.js';
+import tokenMetricsService from './tokenMetricsService.js';
 
 const REFRESH_TOKEN_EXPIRY_DAYS = 7;
 const MAX_ACTIVE_TOKENS_PER_USER = 5;
@@ -23,16 +25,24 @@ function generateTokenId() {
 /**
  * Create a new refresh token record
  */
-async function createRefreshToken(user, deviceInfo = {}, ipAddress = null, userAgent = null) {
+async function createRefreshToken(
+  user,
+  deviceInfo = {},
+  ipAddress = null,
+  userAgent = null,
+  familyId = null,
+) {
   const tokenId = generateTokenId();
+  const tokenFamilyId = familyId || generateTokenId();
   const expiresAt = new Date(Date.now() + REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
 
-  // Create JWT with token ID for identification
+  // Create JWT with token ID and familyId for identification
   const refreshToken = jwt.sign(
     {
       userId: user.id,
       tenantId: user.tenantId,
       tokenId,
+      familyId: tokenFamilyId,
       type: 'refresh',
     },
     process.env.JWT_REFRESH_SECRET || 'fallback_refresh_secret',
@@ -76,13 +86,18 @@ async function createRefreshToken(user, deviceInfo = {}, ipAddress = null, userA
     });
   }
 
-  // Create new refresh token record
+  // Create new refresh token record with familyId in deviceInfo
+  const enrichedDeviceInfo = {
+    ...(deviceInfo || {}),
+    familyId: tokenFamilyId,
+  };
+
   const tokenRecord = await prisma.refreshToken.create({
     data: {
       userId: user.id,
       tenantId: user.tenantId,
       tokenHash,
-      deviceInfo,
+      deviceInfo: enrichedDeviceInfo,
       ipAddress,
       userAgent,
       isActive: true,
@@ -90,13 +105,104 @@ async function createRefreshToken(user, deviceInfo = {}, ipAddress = null, userA
     },
   });
 
-  console.log(`[RefreshToken] Created token ${tokenId} for user ${user.id}`);
+  console.log(`[RefreshToken] Created token ${tokenId} (family: ${tokenFamilyId}) for user ${user.id}`);
 
   return {
     refreshToken,
     tokenId: tokenRecord.id,
+    familyId: tokenFamilyId,
     expiresAt: tokenRecord.expiresAt,
   };
+}
+
+/**
+ * Revoke an entire token family when reuse or compromise is detected
+ */
+async function revokeTokenFamily(familyId, userId, tenantId, reason = 'family_compromise') {
+  if (!familyId) return false;
+
+  // Blacklist the family ID in cache/Redis
+  await tokenBlacklistService.blacklistTokenFamily(familyId, userId, tenantId, reason);
+
+  // Deactivate all sibling token records for this user matching the family
+  if (userId) {
+    const activeTokens = await prisma.refreshToken.findMany({
+      where: {
+        userId,
+        ...(tenantId ? { tenantId } : {}),
+        isActive: true,
+      },
+    });
+
+    const siblingTokenIds = [];
+    for (const t of activeTokens) {
+      if (t.deviceInfo && typeof t.deviceInfo === 'object') {
+        const info = t.deviceInfo;
+        if (info.familyId === familyId) {
+          siblingTokenIds.push(t.id);
+        }
+      }
+    }
+
+    if (siblingTokenIds.length > 0) {
+      await prisma.refreshToken.updateMany({
+        where: { id: { in: siblingTokenIds } },
+        data: { isActive: false },
+      });
+    }
+  }
+
+  console.log(`[RefreshToken] Revoked entire token family ${familyId} (${reason})`);
+  return true;
+}
+
+/**
+ * Handle refresh token family compromise: log audit event, revoke sibling tokens, and update metrics
+ */
+async function handleTokenFamilyCompromise({
+  token,
+  familyId,
+  userId,
+  tenantId,
+  ipAddress = null,
+  userAgent = null,
+  reason = 'refresh_token_reuse_detected',
+}) {
+  console.warn(`[RefreshToken] COMPROMISE DETECTED: Refresh token reuse for family ${familyId}`);
+
+  // Write immutable audit log
+  await auditService.log({
+    category: auditService.AuditCategory.AUTH,
+    action: auditService.AuditAction.TOKEN_FAMILY_COMPROMISED,
+    actor: userId ? `user:${userId}` : 'unknown',
+    resourceId: familyId || 'unknown',
+    ipAddress,
+    metadata: {
+      reason,
+      familyId,
+      userId,
+      tenantId,
+      ipAddress,
+      userAgent,
+      detectedAt: new Date().toISOString(),
+    },
+    statusCode: 403,
+  });
+
+  // Revoke all sibling tokens in the family
+  await revokeTokenFamily(familyId, userId, tenantId, reason);
+
+  // Record security metric
+  if (tokenMetricsService?.recordSuspiciousActivity) {
+    await tokenMetricsService
+      .recordSuspiciousActivity(
+        userId || 'unknown',
+        tenantId || 'unknown',
+        'token_reuse_compromise',
+        { familyId, reason },
+      )
+      .catch(() => null);
+  }
 }
 
 /**
@@ -109,13 +215,57 @@ async function rotateRefreshToken(
   userAgent = null,
 ) {
   try {
-    // First check if token is blacklisted
+    // Decode token first (without verify) to inspect family and identity
+    const decodedUnverified = jwt.decode(oldRefreshToken);
+    const tokenHash = tokenBlacklistService.hashToken(oldRefreshToken);
+
+    // Look up existing token record to verify if it was previously rotated or revoked
+    const existingRecord = await prisma.refreshToken.findFirst({
+      where: { tokenHash },
+      include: { user: true },
+    });
+
     const isBlacklisted = await tokenBlacklistService.isTokenBlacklisted(
       oldRefreshToken,
       'refresh',
     );
+
+    const familyId =
+      decodedUnverified?.familyId ||
+      (existingRecord?.deviceInfo && typeof existingRecord.deviceInfo === 'object'
+        ? existingRecord.deviceInfo.familyId
+        : null);
+
+    const userId = decodedUnverified?.userId || existingRecord?.userId;
+    const tenantId = decodedUnverified?.tenantId || existingRecord?.tenantId;
+
+    // Detect compromise via token reuse:
+    // A token was already rotated (inactive in DB or blacklisted due to rotation) and is presented again
+    const metadata = isBlacklisted
+      ? await tokenBlacklistService.getBlacklistMetadata(oldRefreshToken, 'refresh')
+      : null;
+
+    const isRotationReuse =
+      metadata?.reason === 'rotation' ||
+      metadata?.reason === 'compromised' ||
+      (existingRecord && !existingRecord.isActive);
+
+    if ((isBlacklisted && isRotationReuse) || (existingRecord && !existingRecord.isActive)) {
+      if (familyId) {
+        await handleTokenFamilyCompromise({
+          token: oldRefreshToken,
+          familyId,
+          userId,
+          tenantId,
+          ipAddress,
+          userAgent,
+          reason: 'refresh_token_reuse_detected',
+        });
+        throw new Error('Refresh token reuse detected: token family revoked due to compromise');
+      }
+    }
+
     if (isBlacklisted) {
-      const metadata = await tokenBlacklistService.getBlacklistMetadata(oldRefreshToken, 'refresh');
       throw new Error(`Token is blacklisted: ${metadata?.reason || 'security issue'}`);
     }
 
@@ -134,20 +284,8 @@ async function rotateRefreshToken(
       throw new Error('Invalid token type');
     }
 
-    // Find token record
-    const tokenHash = tokenBlacklistService.hashToken(oldRefreshToken);
-    const tokenRecord = await prisma.refreshToken.findFirst({
-      where: {
-        tokenHash,
-        userId: decoded.userId,
-        tenantId: decoded.tenantId,
-        isActive: true,
-        expiresAt: { gt: new Date() },
-      },
-      include: {
-        user: true,
-      },
-    });
+    // Find active token record
+    const tokenRecord = existingRecord && existingRecord.isActive ? existingRecord : null;
 
     if (!tokenRecord) {
       throw new Error('Refresh token not found or expired');
@@ -162,7 +300,7 @@ async function rotateRefreshToken(
       throw new Error('All user tokens have been revoked');
     }
 
-    // Blacklist the old token
+    // Blacklist the old token with reason 'rotation'
     await tokenBlacklistService.blacklistToken(oldRefreshToken, 'refresh', 'rotation');
 
     // Deactivate the old token record
@@ -181,12 +319,20 @@ async function rotateRefreshToken(
       },
     });
 
-    // Create new refresh token
+    // Preserve familyId across rotations so sibling tokens belong to the same family lineage
+    const activeFamilyId =
+      decoded.familyId ||
+      (tokenRecord.deviceInfo && typeof tokenRecord.deviceInfo === 'object'
+        ? tokenRecord.deviceInfo.familyId
+        : generateTokenId());
+
+    // Create new refresh token in the same family
     const newTokenData = await createRefreshToken(
       tokenRecord.user,
       deviceInfo,
       ipAddress,
       userAgent,
+      activeFamilyId,
     );
 
     // Generate new access token
@@ -200,11 +346,12 @@ async function rotateRefreshToken(
       { expiresIn: process.env.JWT_ACCESS_EXPIRATION || '15m' },
     );
 
-    console.log(`[RefreshToken] Rotated token for user ${tokenRecord.user.id}`);
+    console.log(`[RefreshToken] Rotated token for user ${tokenRecord.user.id} in family ${activeFamilyId}`);
 
     return {
       accessToken,
       refreshToken: newTokenData.refreshToken,
+      familyId: activeFamilyId,
       expiresAt: newTokenData.expiresAt,
     };
   } catch (error) {
@@ -312,6 +459,8 @@ export default {
   createRefreshToken,
   rotateRefreshToken,
   revokeRefreshToken,
+  revokeTokenFamily,
+  handleTokenFamilyCompromise,
   revokeAllUserTokens,
   cleanupExpiredTokens,
   getUserActiveTokens,

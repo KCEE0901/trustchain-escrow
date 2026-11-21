@@ -10,6 +10,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAdminStore } from '../../../store/app-store';
 import { adminFetch } from '../../../store/admin';
+import AppealDeadlineIndicator from '../../../components/dispute/AppealDeadlineIndicator';
 
 function ResolveModal({ dispute, onClose, onConfirm }) {
   const [clientAmount, setClientAmount] = useState('');
@@ -19,6 +20,13 @@ function ResolveModal({ dispute, onClose, onConfirm }) {
   if (!dispute) return null;
 
   const totalAmount = dispute.escrow?.totalAmount || '?';
+  const numericTotal = Number(dispute.escrow?.totalAmount ?? 0);
+  const numericClient = Number(clientAmount || 0);
+  const numericFreelancer = Number(freelancerAmount || 0);
+  const previewRemaining =
+    Number.isFinite(numericTotal) && Number.isFinite(numericClient + numericFreelancer)
+      ? numericTotal - numericClient - numericFreelancer
+      : null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -55,6 +63,19 @@ function ResolveModal({ dispute, onClose, onConfirm }) {
               placeholder="e.g. 500"
               className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 text-sm focus:outline-none focus:border-indigo-500"
             />
+          </div>
+        </div>
+
+        <div className="mb-4 rounded-lg border border-gray-800 bg-gray-950/60 p-3 text-xs">
+          <p className="mb-2 font-semibold uppercase tracking-wider text-gray-400">
+            Payout Preview
+          </p>
+          <div className="grid grid-cols-3 gap-2 text-gray-300">
+            <span>Client: {clientAmount || '0'}</span>
+            <span>Freelancer: {freelancerAmount || '0'}</span>
+            <span className={previewRemaining === 0 ? 'text-emerald-400' : 'text-amber-400'}>
+              Remaining: {previewRemaining ?? '?'}
+            </span>
           </div>
         </div>
 
@@ -265,6 +286,16 @@ export default function AdminDisputesPage() {
                   </button>
                 )}
               </div>
+              {/* Appeal deadline — shown for recently resolved disputes that carry an appealDeadline */}
+              {d.resolvedAt && d.appealDeadline && (
+                <div className="mt-3 border-t border-gray-800 pt-3">
+                  <AppealDeadlineIndicator
+                    disputeId={d.id}
+                    deadline={d.appealDeadline}
+                    appealWindowOpen={d.appealWindowOpen ?? true}
+                  />
+                </div>
+              )}
             </div>
           ))
         )}

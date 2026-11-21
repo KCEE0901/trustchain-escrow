@@ -1,4 +1,5 @@
 import express from 'express';
+import { idempotencyMiddleware } from '../../lib/idempotency.js';
 import paymentController from '../controllers/paymentController.js';
 import {
   stellarAddressParam,
@@ -32,6 +33,7 @@ router.post(
   stellarAddressBody('address'),
   handleValidationErrors,
   authorizeBodyAddress('address'),
+  idempotencyMiddleware,
   paymentController.createCheckout,
 );
 

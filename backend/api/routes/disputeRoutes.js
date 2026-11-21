@@ -4,6 +4,7 @@ import { cacheResponse, invalidateOn, TTL } from '../middleware/cache.js';
 import authMiddleware from '../middleware/auth.js';
 import { requireMfa } from '../middleware/mfaAuth.js';
 import { checkPermission, ROLES } from '../middleware/roleGuard.js';
+import { idempotencyMiddleware } from '../../lib/idempotency.js';
 import { handleUploadError } from '../middleware/fileUpload.js';
 import {
   validate,
@@ -45,6 +46,7 @@ router.post(
   '/:id/evidence',
   invalidateOn({ tags: (req) => [`dispute:${req.params.id}`, 'disputes'] }),
   disputeController.uploadEvidence,
+  idempotencyMiddleware,
   disputeController.postEvidence,
   handleUploadError,
 );
@@ -98,6 +100,7 @@ router.post(
 
 router.post(
   '/:id/appeals',
+  idempotencyMiddleware,
   invalidateOn({ tags: (req) => [`dispute:${req.params.id}`, 'disputes'] }),
   disputeController.postAppeal,
 );

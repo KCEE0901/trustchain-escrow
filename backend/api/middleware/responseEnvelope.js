@@ -17,6 +17,15 @@
  */
 
 const API_VERSION = process.env.API_VERSION || 'v1';
+const PAGINATION_KEYS = [
+  'page',
+  'limit',
+  'total',
+  'totalPages',
+  'hasNextPage',
+  'hasPreviousPage',
+  'nextCursor',
+];
 
 /**
  * Patches `res.json` so that the body is re-shaped before it is written to
@@ -67,6 +76,15 @@ export function responseEnvelope(req, res, next) {
         version: API_VERSION,
       },
     };
+
+    // Preserve pagination fields from list responses shaped { data, page, limit, ... }.
+    if ('data' in body) {
+      const pagination = {};
+      for (const key of PAGINATION_KEYS) {
+        if (key in body) pagination[key] = body[key];
+      }
+      if (Object.keys(pagination).length > 0) enveloped.meta.pagination = pagination;
+    }
 
     return originalJson(enveloped);
   };

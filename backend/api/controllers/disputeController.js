@@ -11,6 +11,7 @@ import { uploadEvidence } from '../middleware/fileUpload.js';
 import ipfsService from '../../services/ipfsService.js';
 import { broadcastToDispute } from '../websocket/handlers.js';
 import { verifyFile, merkleRoot, hashFile } from '../../services/ipfsHashService.js';
+import { validateAppealDeadline } from '../../services/disputeResolution.js';
 
 /**
  * List and get handlers assume query/params are already validated by
@@ -392,18 +393,61 @@ const getRecommendation = async (req, res) => {
 
 const postAppeal = async (req, res) => {
   try {
-    const { reason } = req.body;
+    const { reason, submittedAt } = req.body;
     const userAddress = req.user?.walletAddress ?? req.userAddress;
 
     if (!reason || reason.trim().length === 0) {
-      return res.status(400).json({ error: 'Appeal reason is required' });
+      return res.status(400).json({ error: 'Appeal reason is required', code: 'REASON_REQUIRED' });
     }
 
-    const dispute = req.dispute;
+    const disputeId = parseInt(req.params.id);
+    let dispute = req.dispute;
+    if (!dispute) {
+      dispute = await prisma.dispute.findFirst({
+        where: { id: disputeId, tenantId: req.tenant?.id },
+        include: { escrow: true },
+      });
+    }
+
+    if (!dispute) {
+      return res.status(404).json({ error: 'Dispute not found', code: 'DISPUTE_NOT_FOUND' });
+    }
+
+    if (!dispute.resolvedAt) {
+      return res.status(400).json({
+        error: 'Can only appeal a resolved dispute',
+        code: 'DISPUTE_NOT_RESOLVED',
+      });
+    }
+
+    // Enforce appeal deadline window
+    try {
+      validateAppealDeadline(dispute, submittedAt);
+    } catch (deadlineError) {
+      return res.status(400).json({
+        error: deadlineError.message,
+        code: deadlineError.code || 'APPEAL_DEADLINE_EXPIRED',
+        deadline: deadlineError.deadline ? deadlineError.deadline.toISOString() : undefined,
+      });
+    }
+
+    // Check if participant has already appealed
+    const existingAppeal = await prisma.disputeAppeal.findFirst({
+      where: {
+        disputeId: dispute.id,
+        appealedBy: userAddress,
+      },
+    });
+    if (existingAppeal) {
+      return res.status(400).json({
+        error: 'You have already submitted an appeal for this dispute',
+        code: 'APPEAL_ALREADY_EXISTS',
+      });
+    }
 
     const appeal = await prisma.disputeAppeal.create({
       data: {
-        tenantId: req.tenant.id,
+        tenantId: req.tenant?.id || dispute.tenantId,
         disputeId: dispute.id,
         appealedBy: userAddress,
         reason: reason.trim(),
@@ -423,6 +467,13 @@ const postAppeal = async (req, res) => {
       appeal,
     });
   } catch (error) {
+    if (error.code === 'APPEAL_DEADLINE_EXPIRED') {
+      return res.status(400).json({
+        error: error.message,
+        code: error.code,
+        deadline: error.deadline ? error.deadline.toISOString() : undefined,
+      });
+    }
     console.error('Error posting appeal:', error);
     res.status(500).json({ error: 'Failed to post appeal' });
   }

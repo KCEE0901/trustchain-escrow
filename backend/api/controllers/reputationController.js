@@ -85,7 +85,7 @@ const getLeaderboard = async (req, res) => {
 const search = async (req, res) => {
   try {
     const q = (req.query.q ?? '').trim();
-    const limit = Math.min(parseInt(req.query.limit ?? '10', 10), 50);
+    const limit = Math.min(parsePagination({ limit: 10, ...req.query }).limit, 50);
     const from = parseInt(req.query.from ?? '0', 10);
     const tenantId = req.tenant?.id;
 

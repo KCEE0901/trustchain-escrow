@@ -280,6 +280,32 @@ describe('expiryService', () => {
       expect(results.skipped).toBe(1);
       expect(results.failed).toBe(0);
     });
+
+    it('bounds a delayed run to the catch-up window and reports stale records', async () => {
+      prismaMock.escrow.count.mockResolvedValue(7);
+      prismaMock.escrow.findMany.mockResolvedValue([]);
+      const maxAgeMs = 3_600_000;
+
+      const results = await processExpiredEscrows({ batchSize: 10, maxAgeMs });
+
+      expect(results.stale).toBe(7);
+      const countWhere = prismaMock.escrow.count.mock.calls[0][0].where;
+      expect(countWhere.deadline.lt.getTime()).toBeLessThanOrEqual(Date.now() - maxAgeMs);
+      const findArgs = prismaMock.escrow.findMany.mock.calls[0][0];
+      expect(findArgs.take).toBe(10);
+      expect(findArgs.where.deadline.gte).toBeInstanceOf(Date);
+      expect(findArgs.where.deadline.gte.getTime()).toBeLessThan(findArgs.where.deadline.lt.getTime());
+    });
+
+    it('does not bound the window when maxAgeMs is 0', async () => {
+      prismaMock.escrow.findMany.mockResolvedValue([]);
+
+      const results = await processExpiredEscrows({ maxAgeMs: 0 });
+
+      expect(results.stale).toBe(0);
+      expect(prismaMock.escrow.count).not.toHaveBeenCalled();
+      expect(prismaMock.escrow.findMany.mock.calls[0][0].where.deadline.gte).toBeUndefined();
+    });
   });
 
   describe('getExpiryStatus', () => {

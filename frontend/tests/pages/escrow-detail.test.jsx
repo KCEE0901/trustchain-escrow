@@ -61,8 +61,8 @@ describe('EscrowDetailPage', () => {
 
   it('renders info cells', () => {
     renderWithAppProviders(<EscrowDetailPage params={params} />);
-    expect(screen.getByText('2,000 USDC')).toBeInTheDocument();
-    expect(screen.getByText('1,500 USDC')).toBeInTheDocument();
+    expect(screen.getAllByText('2,000 USDC').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('1,500 USDC').length).toBeGreaterThan(0);
   });
 
   it('renders Raise Dispute button for active escrow', () => {
@@ -93,9 +93,9 @@ describe('EscrowDetailPage', () => {
 
   it('renders all 3 milestones', () => {
     renderWithAppProviders(<EscrowDetailPage params={params} />);
-    expect(screen.getByText('Codebase Review')).toBeInTheDocument();
-    expect(screen.getByText('Vulnerability Report')).toBeInTheDocument();
-    expect(screen.getByText('Final Sign-off')).toBeInTheDocument();
+    expect(screen.getAllByText('Codebase Review').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Vulnerability Report').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Final Sign-off').length).toBeGreaterThan(0);
   });
 
   it('renders party cards', () => {

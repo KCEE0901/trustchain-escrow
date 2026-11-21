@@ -47,6 +47,7 @@ export default function MilestoneItem({
   onReject,
   onSubmit,
   isLast,
+  actionsDisabled = false,
 }) {
   const [isActing, setIsActing] = useState(false);
   const { t, formatDate } = useI18n();
@@ -116,6 +117,7 @@ export default function MilestoneItem({
             <ActionButtons
               status={milestone.status}
               role={role}
+              actionsDisabled={actionsDisabled}
               onApprove={() => handleAction(onApprove, 'approve')}
               onReject={() => handleAction(onReject, 'reject')}
               onSubmit={() => handleAction(onSubmit, 'submit')}
@@ -133,14 +135,14 @@ export default function MilestoneItem({
 /**
  * Renders the correct set of action buttons based on role + status.
  */
-function ActionButtons({ status, role, onApprove, onReject, onSubmit, t }) {
+function ActionButtons({ status, role, onApprove, onReject, onSubmit, actionsDisabled, t }) {
   if (role === 'client' && status === 'Submitted') {
     return (
       <div className="flex gap-2">
-        <Button variant="primary" size="sm" onClick={onApprove}>
+        <Button variant="primary" size="sm" disabled={actionsDisabled} onClick={onApprove}>
           ✓ {t('escrow.actions.approve')}
         </Button>
-        <Button variant="danger" size="sm" onClick={onReject}>
+        <Button variant="danger" size="sm" disabled={actionsDisabled} onClick={onReject}>
           ✗ {t('escrow.actions.reject')}
         </Button>
       </div>
@@ -149,7 +151,7 @@ function ActionButtons({ status, role, onApprove, onReject, onSubmit, t }) {
 
   if (role === 'freelancer' && (status === 'Pending' || status === 'Rejected')) {
     return (
-      <Button variant="secondary" size="sm" onClick={onSubmit}>
+      <Button variant="secondary" size="sm" disabled={actionsDisabled} onClick={onSubmit}>
         📤 {t('escrow.actions.submit')}
       </Button>
     );

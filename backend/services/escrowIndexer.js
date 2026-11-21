@@ -19,6 +19,12 @@ import prisma from '../lib/prisma.js';
 import { createModuleLogger } from '../config/logger.js';
 import { getContractEvents, getLatestLedger } from './stellarService.js';
 import * as reputationService from './reputationService.js';
+import {
+  indexerLatestLedger,
+  indexerProcessedLedger,
+  indexerLedgerLag,
+  indexerLagAlert,
+} from '../lib/metrics.js';
 
 const log = createModuleLogger('service.escrowIndexer');
 
@@ -27,6 +33,7 @@ const log = createModuleLogger('service.escrowIndexer');
 const CONTRACT_ID = process.env.ESCROW_CONTRACT_ID || '';
 const POLL_INTERVAL_MS = parseInt(process.env.INDEXER_POLL_INTERVAL_MS || '5000', 10);
 const START_LEDGER = parseInt(process.env.INDEXER_START_LEDGER || '0', 10);
+const LAG_ALERT_THRESHOLD = parseInt(process.env.INDEXER_LAG_ALERT_THRESHOLD || '100', 10);
 const MAX_RETRIES = 3;
 const DLQ_KEY = 'indexer:dlq';
 
@@ -77,9 +84,9 @@ const parseAddress = (v) => {
 // ── Event handlers ────────────────────────────────────────────────────────────
 
 export async function handleMilestoneApproved(event) {
-  const escrowId = parseBigInt(event.topic?.[1]);
   const [milestoneId] = event.value ?? [];
-  if (!escrowId || milestoneId === undefined) return;
+  if (event.topic?.[1] == null || milestoneId == null) return;
+  const escrowId = parseBigInt(event.topic[1]);
   await prisma.milestone.updateMany({
     where: { escrowId, milestoneIndex: Number(parseBigInt(milestoneId)) },
     data: { status: 'Approved', resolvedAt: new Date(event.ledgerClosedAt) },
@@ -87,8 +94,8 @@ export async function handleMilestoneApproved(event) {
 }
 
 export async function handleDisputeRaised(event) {
-  const escrowId = parseBigInt(event.topic?.[1]);
-  if (!escrowId) return;
+  if (event.topic?.[1] == null) return;
+  const escrowId = parseBigInt(event.topic[1]);
   const raisedBy = parseAddress(event.value);
   await prisma.$transaction([
     prisma.escrow.updateMany({ where: { id: escrowId }, data: { status: 'Disputed' } }),
@@ -105,9 +112,9 @@ export async function handleDisputeRaised(event) {
 }
 
 export async function handleFundsReleased(event) {
-  const escrowId = parseBigInt(event.topic?.[1]);
   const [, amount] = event.value ?? [];
-  if (!escrowId || !amount) return;
+  if (event.topic?.[1] == null || amount == null) return;
+  const escrowId = parseBigInt(event.topic[1]);
 
   // Fetch escrow to get client and freelancer addresses
   const escrow = await prisma.escrow.findUnique({
@@ -141,15 +148,15 @@ export async function handleFundsReleased(event) {
 }
 
 export async function handleEscrowCancelled(event) {
-  const escrowId = parseBigInt(event.topic?.[1]);
-  if (!escrowId) return;
+  if (event.topic?.[1] == null) return;
+  const escrowId = parseBigInt(event.topic[1]);
   await prisma.escrow.updateMany({ where: { id: escrowId }, data: { status: 'Cancelled' } });
 }
 
 export async function handleEscrowCreated(event) {
-  const escrowId = parseBigInt(event.topic?.[1]);
   const [client, freelancer, amount] = event.value ?? [];
-  if (!escrowId || !client) return;
+  if (event.topic?.[1] == null || client == null) return;
+  const escrowId = parseBigInt(event.topic[1]);
   await prisma.escrow.upsert({
     where: { id: escrowId },
     create: {
@@ -169,9 +176,9 @@ export async function handleEscrowCreated(event) {
 }
 
 export async function handleMilestoneAdded(event) {
-  const escrowId = parseBigInt(event.topic?.[1]);
   const [milestoneId, amount] = event.value ?? [];
-  if (!escrowId || milestoneId === undefined) return;
+  if (event.topic?.[1] == null || milestoneId == null) return;
+  const escrowId = parseBigInt(event.topic[1]);
   const milestoneIndex = Number(parseBigInt(milestoneId));
   await prisma.milestone.upsert({
     where: { escrowId_milestoneIndex: { escrowId, milestoneIndex } },
@@ -188,9 +195,9 @@ export async function handleMilestoneAdded(event) {
 }
 
 export async function handleMilestoneSubmitted(event) {
-  const escrowId = parseBigInt(event.topic?.[1]);
   const [milestoneId] = event.value ?? [];
-  if (!escrowId || milestoneId === undefined) return;
+  if (event.topic?.[1] == null || milestoneId == null) return;
+  const escrowId = parseBigInt(event.topic[1]);
   await prisma.milestone.updateMany({
     where: { escrowId, milestoneIndex: Number(parseBigInt(milestoneId)) },
     data: { status: 'Submitted', submittedAt: new Date(event.ledgerClosedAt) },
@@ -198,8 +205,8 @@ export async function handleMilestoneSubmitted(event) {
 }
 
 export async function handleDisputeResolved(event) {
-  const escrowId = parseBigInt(event.topic?.[1]);
-  if (!escrowId) return;
+  if (event.topic?.[1] == null) return;
+  const escrowId = parseBigInt(event.topic[1]);
 
   // Contract emits resolution outcome in value: [winnerId, ...] or similar
   // For now, assume the event.value contains winner address indicator
@@ -234,7 +241,7 @@ export async function handleDisputeResolved(event) {
 
 export async function handleReputationUpdated(event) {
   const [address, newScore] = event.value ?? [];
-  if (!address) return;
+  if (address == null) return;
   await prisma.reputationRecord.upsert({
     where: { address: String(address) },
     create: {
@@ -309,6 +316,30 @@ async function processWithRetry(event) {
 // ── Core polling ──────────────────────────────────────────────────────────────
 
 /**
+ * Records indexer lag metrics and alerts when lag exceeds the configured threshold.
+ *
+ * @param {number} latestLedger
+ * @param {number} processedLedger
+ * @param {number} [threshold]
+ * @returns {{ latestLedger: number, processedLedger: number, lag: number, lagging: boolean }}
+ */
+export function recordIndexerLag(latestLedger, processedLedger, threshold = LAG_ALERT_THRESHOLD) {
+  const lag = Math.max(0, latestLedger - processedLedger);
+  const lagging = lag > threshold;
+
+  indexerLatestLedger.set(latestLedger);
+  indexerProcessedLedger.set(processedLedger);
+  indexerLedgerLag.set(lag);
+  indexerLagAlert.set(lagging ? 1 : 0);
+
+  if (lagging) {
+    log.warn({ message: 'indexer_lag_alert', latestLedger, processedLedger, lag, threshold });
+  }
+
+  return { latestLedger, processedLedger, lag, lagging };
+}
+
+/**
  * Fetches all events since fromLedger and processes them.
  * Advances the ledger cursor only after all events in a ledger are committed.
  *
@@ -355,6 +386,7 @@ export async function startIndexer() {
         cursor = latest;
         await persistCursor(cursor);
       }
+      recordIndexerLag(latest, cursor);
       backoff = 1000;
     } catch (err) {
       log.error({ message: 'indexer_tick_error', backoffMs: backoff, error: err.message });
@@ -370,6 +402,7 @@ export async function startIndexer() {
 export default {
   startIndexer,
   fetchAndProcessEvents,
+  recordIndexerLag,
   dispatchEvent,
   handleEscrowCreated,
   handleMilestoneAdded,

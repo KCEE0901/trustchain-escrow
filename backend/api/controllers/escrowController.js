@@ -10,6 +10,7 @@
 
 import prisma from '../../lib/prisma.js';
 import cache from '../../lib/cache.js';
+import exportService from '../../services/exportService.js';
 import { buildPaginatedResponse, parsePagination } from '../../lib/pagination.js';
 import { logControllerError } from '../../config/logger.js';
 import { submitTransaction } from '../../services/stellarService.js';
@@ -517,6 +518,69 @@ const searchEscrowsV1 = async (req, res) => {
   }
 };
 
+export const queueEscrowExport = async (req, res) => {
+  try {
+    const address = req.user?.address || req.query.address;
+    if (!address) {
+      return res.status(400).json({ error: 'Address required for escrow export' });
+    }
+    const job = exportService.createExportJob(address, {
+      tenantId: req.tenant?.id,
+      requestedBy: req.user?.address ?? 'admin',
+      type: 'escrow_export',
+    });
+    return res.status(202).json({
+      status: 'queued',
+      message: 'Escrow export queued successfully',
+      jobId: job.id,
+      job,
+    });
+  } catch (err) {
+    logControllerError('escrow.queueEscrowExport', err, req);
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+export const getEscrowExportStatus = async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    const job = await exportService.getExportJob(jobId);
+    if (!job) {
+      return res.status(404).json({ error: 'Export job not found' });
+    }
+    return res.json({ job });
+  } catch (err) {
+    logControllerError('escrow.getEscrowExportStatus', err, req);
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+export const cancelEscrowExport = async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    const existingJob = await exportService.getExportJob(jobId);
+    if (!existingJob) {
+      return res.status(404).json({ error: 'Export job not found' });
+    }
+
+    const cancelledBy = req.isAdmin ? 'admin' : (req.user?.address ?? 'user');
+    const job = await exportService.cancelExportJob(jobId, { cancelledBy });
+    return res.json({
+      success: true,
+      message: 'Escrow export cancelled successfully',
+      job,
+    });
+  } catch (err) {
+    logControllerError('escrow.cancelEscrowExport', err, req);
+    const code = err.message.includes('not found')
+      ? 404
+      : err.message.includes('completed')
+        ? 409
+        : 500;
+    return res.status(code).json({ error: err.message });
+  }
+};
+
 export default {
   listEscrows,
   getEscrow,
@@ -529,6 +593,9 @@ export default {
   getSuccessRate,
   invalidateStatsCaches,
   searchEscrowsV1,
+  queueEscrowExport,
+  getEscrowExportStatus,
+  cancelEscrowExport,
 };
 
 // ── Validation rule sets (used by escrowRoutes) ───────────────────────────────

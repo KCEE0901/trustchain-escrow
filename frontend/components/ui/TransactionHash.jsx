@@ -12,6 +12,7 @@
 'use client';
 
 import CopyButton from './CopyButton';
+import { isValidStellarTransactionHash } from '../../../shared/stellarTransactionHash.js';
 
 export default function TransactionHash({ hash, explorerUrl, label = 'Transaction Hash' }) {
   return (
@@ -22,7 +23,7 @@ export default function TransactionHash({ hash, explorerUrl, label = 'Transactio
       </div>
       <div className="flex gap-2 flex-shrink-0">
         <CopyButton text={hash} label="Copy" />
-        {explorerUrl && (
+        {explorerUrl && isValidStellarTransactionHash(hash) && (
           <a
             href={explorerUrl}
             target="_blank"
