@@ -1138,4 +1138,18 @@ mod tests {
         let result = client.try_cast_vote(&voter, &id, &true);
         assert!(result.is_err(), "Expected AlreadyVoted error");
     }
+
+    #[test]
+    fn test_get_dispute_panel_bound_checks() {
+        let (_env, _, _, _, client) = setup();
+        assert!(client.get_dispute_panel(&0_u64).is_none());
+        assert!(client.get_dispute_panel(&u64::MAX).is_none());
+    }
+
+    #[test]
+    fn test_is_in_registry_caller_checks() {
+        let (env, admin, _, _, client) = setup();
+        assert!(!client.is_in_registry(&admin));
+        assert!(!client.is_in_registry(&Address::generate(&env)));
+    }
 }
