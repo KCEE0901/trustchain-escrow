@@ -9,6 +9,8 @@
 use soroban_sdk::{Env, IntoVal, Val};
 
 pub mod auth;
+#[cfg(test)]
+mod instance_ttl_tests;
 
 // ── TTL constants ─────────────────────────────────────────────────────────────
 
