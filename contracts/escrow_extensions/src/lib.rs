@@ -264,7 +264,12 @@ impl EscrowExtensions {
         caller.require_auth();
         require_admin(&env, &caller)?;
 
-        let total: u32 = recipients.iter().map(|r| r.share_bps).sum();
+        let mut total: u32 = 0;
+        for r in recipients.iter() {
+            total = total
+                .checked_add(r.share_bps)
+                .ok_or(ExtError::InvalidRecipient)?;
+        }
         if total != 10_000 {
             return Err(ExtError::InvalidRecipient);
         }

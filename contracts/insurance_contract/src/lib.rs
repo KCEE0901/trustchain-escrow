@@ -1715,4 +1715,46 @@ mod tests {
         let token_client = token::Client::new(&s.env, &s.token_id);
         assert_eq!(token_client.balance(&claimant), 1_000_i128);
     }
+
+    // ── Caller and bound checks: set_max_slash_bps ────────────────────────────
+
+    #[test]
+    fn test_set_max_slash_bps_admin_succeeds_and_caps_proposals() {
+        let s = setup();
+        assert_eq!(s.client.try_set_max_slash_bps(&s.admin, &1_000_u32), Ok(Ok(())));
+
+        let gov = Address::generate(&s.env);
+        s.client.add_governor(&s.admin, &gov);
+        let reason = String::from_str(&s.env, "cap");
+        assert!(s.client.try_propose_slash(&gov, &1_001_u32, &reason).is_err());
+        assert!(s.client.try_propose_slash(&gov, &1_000_u32, &reason).is_ok());
+    }
+
+    #[test]
+    fn test_set_max_slash_bps_accepts_ceiling() {
+        let s = setup();
+        assert_eq!(s.client.try_set_max_slash_bps(&s.admin, &4_000_u32), Ok(Ok(())));
+    }
+
+    #[test]
+    fn test_set_max_slash_bps_rejects_other_caller() {
+        let s = setup();
+        let stranger = Address::generate(&s.env);
+        assert_eq!(
+            s.client.try_set_max_slash_bps(&stranger, &1_000_u32),
+            Err(Ok(InsuranceError::AdminOnly))
+        );
+    }
+
+    #[test]
+    fn test_set_max_slash_bps_zero_and_max_return_error() {
+        let s = setup();
+        for bps in [0_u32, 4_001, u32::MAX] {
+            assert_eq!(
+                s.client.try_set_max_slash_bps(&s.admin, &bps),
+                Err(Ok(InsuranceError::InvalidSlashBps)),
+                "set_max_slash_bps({bps}) must return InvalidSlashBps"
+            );
+        }
+    }
 }
