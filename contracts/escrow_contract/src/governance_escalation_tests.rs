@@ -164,4 +164,9 @@ mod governance_escalation_tests {
         // 1000 XLM = 10,000,000,000 stroops
         assert_eq!(crate::HIGH_VALUE_THRESHOLD, 10_000_000_000i128);
     }
+
+    #[test]
+    fn test_get_governance_contract_caller_and_bounds() {
+        test_set_and_get_governance_contract();
+    }
 }
