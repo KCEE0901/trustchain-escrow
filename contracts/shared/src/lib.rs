@@ -33,14 +33,18 @@ pub fn bump_instance_ttl(env: &Env) {
 }
 
 /// Bump persistent TTL using shared config constants.
+///
+/// A missing key is a no-op: extending the TTL of an entry that does not
+/// exist would otherwise trap the host and abort the calling contract.
 #[inline]
 pub fn bump_persistent_ttl<K>(env: &Env, key: &K)
 where
     K: IntoVal<Env, Val>,
 {
-    env.storage()
-        .persistent()
-        .extend_ttl(key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
+    let storage = env.storage().persistent();
+    if storage.has(key) {
+        storage.extend_ttl(key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
+    }
 }
 
 // ── Escrow limits ─────────────────────────────────────────────────────────────
@@ -75,3 +79,53 @@ pub const RENT_RESERVE_PERIODS: u64 = 30;
 
 /// Rent cost per storage entry per period (in token base units).
 pub const RENT_PER_ENTRY_PER_PERIOD: i128 = 1;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::{contract, testutils::storage::Persistent as _, Env};
+
+    #[contract]
+    struct TtlTestContract;
+
+    #[test]
+    fn test_bump_persistent_ttl_extends_existing_entry() {
+        let env = Env::default();
+        let id = env.register_contract(None, TtlTestContract);
+        env.as_contract(&id, || {
+            let key = 7u32;
+            env.storage().persistent().set(&key, &true);
+            bump_persistent_ttl(&env, &key);
+            assert!(env.storage().persistent().get_ttl(&key) >= PERSISTENT_TTL_EXTEND_TO);
+        });
+    }
+
+    #[test]
+    fn test_bump_persistent_ttl_missing_key_does_not_panic() {
+        let env = Env::default();
+        let id = env.register_contract(None, TtlTestContract);
+        env.as_contract(&id, || {
+            let key = 42u32;
+            bump_persistent_ttl(&env, &key);
+            assert!(!env.storage().persistent().has(&key));
+        });
+    }
+
+    #[test]
+    fn test_bump_persistent_ttl_zero_and_max_keys() {
+        let env = Env::default();
+        let id = env.register_contract(None, TtlTestContract);
+        env.as_contract(&id, || {
+            for key in [0u64, u64::MAX] {
+                // Missing entry: no panic, nothing created.
+                bump_persistent_ttl(&env, &key);
+                assert!(!env.storage().persistent().has(&key));
+
+                // Existing entry: TTL extended to the shared target.
+                env.storage().persistent().set(&key, &1u32);
+                bump_persistent_ttl(&env, &key);
+                assert!(env.storage().persistent().get_ttl(&key) >= PERSISTENT_TTL_EXTEND_TO);
+            }
+        });
+    }
+}
