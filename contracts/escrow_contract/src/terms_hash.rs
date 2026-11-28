@@ -26,17 +26,17 @@ pub fn record_terms_acceptance(
     terms_hash: BytesN<32>,
 ) -> Result<(), EscrowError> {
     let key = DataKey::TermsAcceptance(escrow_id);
-    let mut acceptance: TermsAcceptance = env
-        .storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or(TermsAcceptance {
-            escrow_id,
-            client: client.clone(),
-            terms_hash,
-            accepted: false,
-            accepted_at: None,
-        });
+    let mut acceptance: TermsAcceptance =
+        env.storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or(TermsAcceptance {
+                escrow_id,
+                client: client.clone(),
+                terms_hash,
+                accepted: false,
+                accepted_at: None,
+            });
     if acceptance.accepted {
         return Err(EscrowError::ClientAlreadyAcceptedTerms);
     }
