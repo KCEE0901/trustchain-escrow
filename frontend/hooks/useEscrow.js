@@ -3,20 +3,15 @@
 import useSWR from 'swr';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+
 const fetcher = async (url) => {
   const response = await fetch(url);
   if (!response.ok) {
-    const err = new Error(
-      response.status === 404 ? 'Escrow not found' : `Request failed (${response.status})`,
-    );
+    const err = new Error(`Request failed (${response.status})`);
     err.status = response.status;
     throw err;
   }
-  const body = await response.json();
-  if (body?.error) {
-    throw new Error(body.error);
-  }
-  return body;
+  return response.json();
 };
 
 /**
@@ -31,8 +26,8 @@ export function useEscrow(id) {
     id ? `${API_URL}/api/escrows/${id}` : null,
     fetcher,
     {
-      refreshInterval: 30_000, // poll every 30 seconds
-      refreshWhenHidden: false, // pause polling when page is not visible
+      refreshInterval: 30_000,
+      refreshWhenHidden: false,
     },
   );
   return { escrow: data, isLoading, error, mutate };
@@ -44,22 +39,31 @@ export function useEscrow(id) {
  * @param {string} address — Stellar public key
  * @param {'client'|'freelancer'|'all'} role
  * @returns {{ escrows: Array, isLoading: boolean, error: Error|null }}
- *
- * TODO (contributor — Issue #39)
  */
-export function useUserEscrows(_address, _role = 'all') {
-  // TODO: implement with SWR
-  return { escrows: [], isLoading: false, error: null };
+export function useUserEscrows(address, role = 'all') {
+  const query = new URLSearchParams({ role });
+  const { data, error, isLoading } = useSWR(
+    address ? `${API_URL}/api/users/${address}/escrows?${query}` : null,
+    fetcher,
+  );
+
+  const escrows = data?.data ?? data?.items ?? [];
+  return { escrows, isLoading, error: error ?? null };
 }
 
 /**
  * Fetch paginated list of all escrows (for Explorer).
  *
  * @param {{ page: number, limit: number, status: string }} options
- *
- * TODO (contributor — Issue #39)
  */
-export function useEscrowList({ page: _page = 1, limit: _limit = 20, status: _status = '' } = {}) {
-  // TODO: implement with SWR
-  return { escrows: [], total: 0, isLoading: false, error: null };
+export function useEscrowList({ page = 1, limit = 20, status = '' } = {}) {
+  const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+  if (status) params.set('status', status);
+
+  const { data, error, isLoading } = useSWR(`${API_URL}/api/escrows?${params}`, fetcher);
+
+  const escrows = data?.data ?? [];
+  const total = data?.pagination?.total ?? data?.total ?? escrows.length;
+
+  return { escrows, total, isLoading, error: error ?? null };
 }

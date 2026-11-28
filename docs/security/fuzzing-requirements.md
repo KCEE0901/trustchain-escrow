@@ -193,9 +193,9 @@ Apply the same pattern to every other `#[contracttype]` struct in the contract (
 
 ### Round-trip coverage (issue batches)
 
-- `FundStats`
-- `GovConfig`
-- `StakeRecord`
+- `FundPayload`
+- `LockRecord`
+- `PendingUpgrade`
 
 ---
 

@@ -405,3 +405,21 @@ mod incentive_tests {
         });
     }
 }
+
+#[cfg(test)]
+mod lockrecord_roundtrip_tests {
+    use super::*;
+    use soroban_sdk::{Env, IntoVal, TryFromVal, Val};
+    #[test]
+    fn lockrecord_scval_roundtrip() {
+        let env = Env::default();
+        let staker = soroban_sdk::Address::generate(&env);
+        let zero = LockRecord { staker: staker.clone(), locked_amount: 0, bonus_accumulated: 0, lock_end: 0, last_extension_at: 0 };
+        let back = LockRecord::try_from_val(&env, &zero.clone().into_val(&env)).unwrap();
+        assert_eq!(back.locked_amount, 0);
+        let nz = LockRecord { staker, locked_amount: 1, bonus_accumulated: 2, lock_end: 3, last_extension_at: 4 };
+        let back2 = LockRecord::try_from_val(&env, &nz.clone().into_val(&env)).unwrap();
+        assert_eq!(back2.bonus_accumulated, 2);
+
+    }
+}
