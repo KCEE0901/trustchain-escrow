@@ -287,4 +287,80 @@ export function attachChatSocket(io) {
   log.info({ msg: 'chat_socket_attached', pattern: DISPUTE_NS_RE.toString() });
 }
 
-export { getOrCreateDisputeNamespace, isDisputeParty };
+// ── Access-change broadcasting ────────────────────────────────────────────────
+
+/**
+ * Notify connected sockets in a dispute room about party changes.
+ *
+ * Call this whenever the escrow linked to a dispute has its client /
+ * freelancer / arbiterAddress updated so that chat participants learn
+ * about their new (or removed) access without polling.
+ *
+ * @param {import('socket.io').Server} io
+ * @param {number|string} disputeId
+ * @param {object} changes
+ * @param {string[]} [changes.added]    Wallet addresses that have been granted access
+ * @param {string[]} [changes.removed]  Wallet addresses whose access has been revoked
+ * @param {string[]} [changes.changed]  Wallet addresses whose role has changed
+ * @param {object}  [changes.roles]     Map of address → new role label (optional)
+ */
+async function broadcastAccessChange(io, disputeId, { added = [], removed = [], changed = [], roles = {} } = {}) {
+  const nsp = `/dispute/${disputeId}`;
+  const room = `dispute:${disputeId}`;
+  const timestamp = new Date().toISOString();
+
+  // Retrieve the namespace if it exists; if the room was never opened there
+  // is nothing to notify.
+  if (!io._nsps?.has(nsp)) return;
+
+  const namespace = io.of(nsp);
+
+  // ── Notify addresses that have lost access ─────────────────────────────
+  if (removed.length > 0) {
+    // Find connected sockets for each removed address and disconnect them
+    const sockets = await namespace.in(room).fetchSockets();
+    for (const sock of sockets) {
+      if (removed.includes(sock.data.address)) {
+        sock.emit('access:revoked', {
+          address: sock.data.address,
+          disputeId: Number(disputeId),
+          reason: 'Your access to this dispute chat has been revoked.',
+          timestamp,
+        });
+        // Disconnect after a brief moment so the client can receive the event
+        setTimeout(() => sock.disconnect(true), 200);
+        log.info({ msg: 'chat_access_revoked', nsp, address: sock.data.address });
+      }
+    }
+  }
+
+  // ── Notify addresses whose role has changed ────────────────────────────
+  if (changed.length > 0) {
+    const sockets = await namespace.in(room).fetchSockets();
+    for (const sock of sockets) {
+      if (changed.includes(sock.data.address)) {
+        sock.emit('access:changed', {
+          address: sock.data.address,
+          disputeId: Number(disputeId),
+          newRole: roles[sock.data.address] ?? null,
+          timestamp,
+        });
+        log.info({ msg: 'chat_access_changed', nsp, address: sock.data.address });
+      }
+    }
+  }
+
+  // ── Notify newly-added addresses (broadcast to room) ──────────────────
+  if (added.length > 0) {
+    namespace.to(room).emit('access:changed', {
+      address: null,
+      disputeId: Number(disputeId),
+      added,
+      roles,
+      timestamp,
+    });
+    log.info({ msg: 'chat_access_added', nsp, added });
+  }
+}
+
+export { getOrCreateDisputeNamespace, isDisputeParty, broadcastAccessChange };

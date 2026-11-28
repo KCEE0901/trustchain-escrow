@@ -1,4 +1,5 @@
 import express from 'express';
+import { idempotencyMiddleware } from '../../lib/idempotency.js';
 import escrowController, {
   validateBroadcast,
   validateEscrowId,
@@ -47,6 +48,7 @@ router.get('/search', validatePagination, escrowController.searchEscrowsV1);
 router.post(
   '/broadcast',
   validateBroadcast,
+  idempotencyMiddleware,
   invalidateOn({ tags: ['escrows'] }),
   escrowController.broadcastCreateEscrow,
 );
@@ -93,5 +95,25 @@ router.get(
   }),
   escrowController.getEscrow,
 );
+
+/**
+ * @route  POST /api/escrows/export
+ * @desc   Queue an escrow data export
+ */
+router.post('/export', escrowController.queueEscrowExport);
+
+/**
+ * @route  GET /api/escrows/export/:jobId
+ * @desc   Get escrow export status
+ */
+router.get('/export/:jobId', escrowController.getEscrowExportStatus);
+
+/**
+ * @route  POST /api/escrows/export/:jobId/cancel
+ * @route  DELETE /api/escrows/export/:jobId
+ * @desc   Cancel a queued or running escrow export
+ */
+router.post('/export/:jobId/cancel', escrowController.cancelEscrowExport);
+router.delete('/export/:jobId', escrowController.cancelEscrowExport);
 
 export default router;

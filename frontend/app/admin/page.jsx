@@ -17,6 +17,7 @@ import {
   AlertTriangle,
   ClipboardList,
   Flag,
+  Inbox,
   RefreshCw,
   Scale,
   Settings,
@@ -74,6 +75,12 @@ const NAV_ITEMS = [
     label: 'Operations Console',
     Icon: TerminalSquare,
     desc: 'Cache, secrets, and archival tools',
+  },
+  {
+    href: '/admin/queues',
+    label: 'Queue Management',
+    Icon: Inbox,
+    desc: 'Inspect and replay dead-letter queue jobs',
   },
 ];
 

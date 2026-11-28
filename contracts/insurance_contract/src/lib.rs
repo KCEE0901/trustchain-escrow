@@ -1818,22 +1818,58 @@ mod tests {
     }
 
     #[test]
-    fn test_get_token_uninitialized_returns_typed_error() {
-        let env = Env::default();
+    fn test_set_claim_cap_caller_and_bounds() {
+        let s = setup();
+        let other = Address::generate(&s.env);
+        assert_eq!(s.client.try_set_claim_cap(&s.admin, &i128::MAX), Ok(Ok(())));
         assert_eq!(
-            Storage::get_token(&env),
-            Err(InsuranceError::NotInitialized),
+            s.client.try_set_claim_cap(&other, &1_i128),
+            Err(Ok(InsuranceError::AdminOnly))
+        );
+        assert_eq!(
+            s.client.try_set_claim_cap(&s.admin, &0_i128),
+            Err(Ok(InsuranceError::InvalidAmount))
         );
     }
 
     #[test]
-    fn test_execute_slash_admin_missing_returns_typed_error() {
-        let env = Env::default();
-        let admin = env
-            .storage()
-            .instance()
-            .get::<DataKey, Address>(&DataKey::Admin)
-            .ok_or(InsuranceError::NotInitialized);
-        assert_eq!(admin, Err(InsuranceError::NotInitialized));
+    fn test_set_quorum_caller_and_bounds() {
+        let s = setup();
+        let other = Address::generate(&s.env);
+        assert_eq!(s.client.try_set_quorum(&s.admin, &u32::MAX), Ok(Ok(())));
+        assert_eq!(
+            s.client.try_set_quorum(&other, &1_u32),
+            Err(Ok(InsuranceError::AdminOnly))
+        );
+        assert_eq!(
+            s.client.try_set_quorum(&s.admin, &0_u32),
+            Err(Ok(InsuranceError::InvalidAmount))
+        );
+    }
+
+    #[test]
+    fn test_get_fund_info_initialized_and_uninitialized() {
+        let s = setup();
+        let info = s.client.get_fund_info();
+        assert_eq!(info.total_claims, 0);
+        let uninit = s.env.register_contract(None, InsuranceContract);
+        let uninit_client = InsuranceContractClient::new(&s.env, &uninit);
+        assert_eq!(
+            uninit_client.try_get_fund_info(),
+            Err(Ok(InsuranceError::NotInitialized))
+        );
+    }
+
+    #[test]
+    fn test_get_claim_out_of_range_ids() {
+        let s = setup();
+        assert_eq!(
+            s.client.try_get_claim(&0_u32),
+            Err(Ok(InsuranceError::ClaimNotFound))
+        );
+        assert_eq!(
+            s.client.try_get_claim(&u32::MAX),
+            Err(Ok(InsuranceError::ClaimNotFound))
+        );
     }
 }

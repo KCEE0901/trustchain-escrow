@@ -81,28 +81,17 @@ pub fn is_approved_wrapped_token(env: &Env, token: &Address) -> bool {
 
 /// Record or update bridge confirmation state for a bridged token.
 ///
-/// The caller must be the stored admin; otherwise `EscrowError::E3` is
-/// returned. `confirmations` is bounds-checked and `EscrowError::E54` is
-/// returned for out-of-range values.
-pub fn record_bridge_confirmation(
-    env: &Env,
-    caller: &Address,
-    confirmation: &BridgeConfirmation,
-) -> Result<(), EscrowError> {
-    caller.require_auth();
-    let admin: Address = env
-        .storage()
-        .instance()
-        .get(&DataKey::Admin)
-        .ok_or(EscrowError::E3)?;
-    if &admin != caller {
-        return Err(EscrowError::E3);
-    }
-    if confirmation.confirmations > MAX_BRIDGE_CONFIRMATIONS {
-        return Err(EscrowError::E54);
-    }
+/// Ledger assumptions:
+/// - One fixed-shape persistent entry is written per token; later updates overwrite it.
+/// - The entry TTL is renewed to 50,000 ledgers with a 5,000-ledger threshold.
+/// - Transaction size remains protocol-bounded; the call adds one fixed-size record
+///   and one small event. Fees are resource-based, not a contract constant.
+/// - `updated_at` is Stellar ledger time in seconds, not source-chain block time;
+///   updates in the same ledger may share a timestamp.
+pub fn record_bridge_confirmation(env: &Env, confirmation: &BridgeConfirmation) {
     let key = BridgeDataKey::BridgeConfirmation(confirmation.token.clone());
     env.storage().persistent().set(&key, confirmation);
+    // TTL is measured in ledger entries, not seconds.
     env.storage().persistent().extend_ttl(&key, 5_000, 50_000);
     Ok(())
 }

@@ -1,4 +1,5 @@
 import { Queue } from 'bullmq';
+import { getCorrelationId } from '../config/logger.js';
 
 class InMemoryQueue {
   constructor(name) {
@@ -40,8 +41,22 @@ export const connection = process.env.REDIS_URL
       port: parseInt(process.env.REDIS_PORT || '6379', 10),
     };
 
-const createQueue = (name) =>
-  process.env.NODE_ENV === 'test' ? new InMemoryQueue(name) : new Queue(name, { connection });
+/**
+ * Attach the current request's correlation id to job payloads so workers can
+ * log against the originating HTTP request.
+ */
+export const withCorrelationId = (data) => {
+  const correlationId = data?.correlationId ?? getCorrelationId();
+  return correlationId ? { ...data, correlationId } : data;
+};
+
+const createQueue = (name) => {
+  const queue =
+    process.env.NODE_ENV === 'test' ? new InMemoryQueue(name) : new Queue(name, { connection });
+  const add = queue.add.bind(queue);
+  queue.add = (jobName, data, opts) => add(jobName, withCorrelationId(data), opts);
+  return queue;
+};
 
 export const emailQueue = createQueue('email');
 export const webhookQueue = createQueue('webhook');

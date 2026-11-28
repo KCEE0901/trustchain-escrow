@@ -1,4 +1,5 @@
 import express from 'express';
+import { idempotencyMiddleware } from '../../lib/idempotency.js';
 import webhookController from '../controllers/webhookController.js';
 import { createSlidingWindowRateLimiter } from '../middleware/rateLimiter.js';
 
@@ -19,7 +20,7 @@ const subscribeRateLimit = createSlidingWindowRateLimiter({
   message: 'Too many webhook subscription requests — try again later',
 });
 
-router.post('/subscribe', subscribeRateLimit, webhookController.subscribe);
+router.post('/subscribe', subscribeRateLimit, idempotencyMiddleware, webhookController.subscribe);
 router.get('/', webhookController.listSubscriptions);
 router.delete('/:id', webhookController.deleteSubscription);
 router.get('/:id/deliveries', webhookController.getDeliveries);

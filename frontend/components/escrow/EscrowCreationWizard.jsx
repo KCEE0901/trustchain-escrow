@@ -25,6 +25,7 @@ import { useState, useCallback, useId } from 'react';
 import { AlertCircle, CheckCircle2, ChevronRight, Plus, Trash2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import Button from '../ui/Button';
+import SlippageControl from './SlippageControl';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -38,8 +39,9 @@ const STEPS = [
 const STELLAR_ADDRESS_RE = /^[GC][A-Z2-7]{55}$/;
 
 const FUNDING_TOKENS = [
-  { symbol: 'XLM',  label: 'Lumen (XLM)' },
-  { symbol: 'USDC', label: 'USDC (SAC)' },
+  { symbol: 'XLM',  label: 'Lumen (XLM)', isPathPayment: false },
+  { symbol: 'USDC', label: 'USDC (SAC)',   isPathPayment: false },
+  { symbol: 'CUSTOM', label: 'Custom token (path payment)', isPathPayment: true },
 ];
 
 // ─── Validation helpers ────────────────────────────────────────────────────────
@@ -328,6 +330,18 @@ function StepSettings({ data, onChange, errors }) {
           </select>
         </div>
 
+        {/* Slippage — only relevant for path-payment (custom token) escrows */}
+        {FUNDING_TOKENS.find(t => t.symbol === data.fundingToken)?.isPathPayment && (
+          <div className="rounded-lg border border-gray-700 bg-gray-800/40 p-4">
+            <SlippageControl
+              sendAmount={data.milestones.reduce((s, m) => s + (parseFloat(m.amount) || 0), 0)}
+              exchangeRate={1}
+              value={data.slippagePct ?? 0.5}
+              onChange={v => onChange('slippagePct', v)}
+            />
+          </div>
+        )}
+
         <div>
           <Label htmlFor={timelockId}>Timelock (optional)</Label>
           <Input
@@ -403,6 +417,12 @@ function StepReview({ data }) {
 
         <ReviewSection title="Settings">
           <ReviewRow label="Funding token" value={data.fundingToken} />
+          {FUNDING_TOKENS.find(t => t.symbol === data.fundingToken)?.isPathPayment && (
+            <ReviewRow
+              label="Slippage tolerance"
+              value={`${data.slippagePct ?? 0.5} %`}
+            />
+          )}
           <ReviewRow
             label="Timelock"
             value={data.timelockDate ? new Date(data.timelockDate).toUTCString() : 'None'}
@@ -459,6 +479,7 @@ export default function EscrowCreationWizard({ onSuccess, onCancel }) {
     contractorAddress: '',
     milestones:        [{ id: Date.now(), description: '', amount: '' }],
     fundingToken:      'XLM',
+    slippagePct:       0.5,
     timelockDate:      '',
     arbiterAddress:    '',
   });
@@ -511,6 +532,9 @@ export default function EscrowCreationWizard({ onSuccess, onCancel }) {
         clientAddress:     formData.clientAddress.trim(),
         contractorAddress: formData.contractorAddress.trim(),
         fundingToken:      formData.fundingToken,
+        slippagePct:       FUNDING_TOKENS.find(t => t.symbol === formData.fundingToken)?.isPathPayment
+          ? formData.slippagePct
+          : undefined,
         timelockUnix:      formData.timelockDate
           ? Math.floor(new Date(formData.timelockDate).getTime() / 1000)
           : null,

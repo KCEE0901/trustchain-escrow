@@ -51,6 +51,26 @@ router.post('/:address/import', authorizeParamAddress('address'), exportControll
 router.get('/:address/export/file', exportRateLimit, exportController.downloadExportFile);
 
 /**
+ * @route  POST /api/users/:address/export/jobs
+ * @desc   Queue a background export job
+ */
+router.post('/:address/export/jobs', exportRateLimit, exportController.createExportJob);
+
+/**
+ * @route  GET /api/users/:address/export/jobs/:jobId
+ * @desc   Get status of an export job
+ */
+router.get('/:address/export/jobs/:jobId', exportController.getExportJobStatus);
+
+/**
+ * @route  POST /api/users/:address/export/jobs/:jobId/cancel
+ * @route  DELETE /api/users/:address/export/jobs/:jobId
+ * @desc   Cancel a queued or running export job
+ */
+router.post('/:address/export/jobs/:jobId/cancel', exportController.cancelExportJob);
+router.delete('/:address/export/jobs/:jobId', exportController.cancelExportJob);
+
+/**
  * @route  DELETE /api/users/:address/data
  * @desc   Pseudonymize user data for GDPR deletion/admin retention
  */

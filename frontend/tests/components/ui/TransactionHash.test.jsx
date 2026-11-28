@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import TransactionHash from '../../../components/ui/TransactionHash';
 
 describe('TransactionHash', () => {
-  const mockHash = 'a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6a7b8c9d0e1f2';
+  const mockHash = 'a'.repeat(64);
 
   it('renders transaction hash', () => {
     render(<TransactionHash hash={mockHash} />);
@@ -35,6 +35,11 @@ describe('TransactionHash', () => {
 
   it('does not render explorer link when explorerUrl is not provided', () => {
     render(<TransactionHash hash={mockHash} />);
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+  });
+
+  it('does not render explorer link for malformed hashes', () => {
+    render(<TransactionHash hash="invalid-hash" explorerUrl="https://example.com/tx" />);
     expect(screen.queryByRole('link')).not.toBeInTheDocument();
   });
 

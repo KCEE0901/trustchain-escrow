@@ -35,6 +35,19 @@ const environment = process.env.SENTRY_ENVIRONMENT || process.env.NODE_ENV || 'd
 /** @type {AsyncLocalStorage<{ requestId: string }>} */
 export const requestContext = new AsyncLocalStorage();
 
+/**
+ * Correlation id of the current request or job, if any.
+ * @returns {string|undefined}
+ */
+export const getCorrelationId = () => requestContext.getStore()?.correlationId;
+
+/**
+ * Run fn with the given correlation id in context so logs emitted by queue
+ * workers carry the id of the HTTP request that enqueued the job.
+ */
+export const runWithCorrelation = (correlationId, fn) =>
+  correlationId ? requestContext.run({ ...requestContext.getStore(), correlationId }, fn) : fn();
+
 const baseMeta = () => ({
   service: serviceName,
   environment,
@@ -46,6 +59,7 @@ const jsonFormat = winston.format.combine(
   winston.format((info) => {
     const ctx = requestContext.getStore();
     if (ctx?.requestId) Object.assign(info, { requestId: ctx.requestId });
+    if (ctx?.correlationId) Object.assign(info, { correlationId: ctx.correlationId });
     return info;
   })(),
   winston.format.json(),

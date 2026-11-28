@@ -37,6 +37,34 @@ const exportReport = async (req, res) => {
   }
 };
 
+const startExportJob = (req, res) => {
+  try {
+    const format = (req.query.format ?? 'json').toLowerCase();
+    const job = complianceService.startExportJob(req.params.type, format, req.query, getActor(req));
+    res.status(202).json(job);
+  } catch (error) {
+    const code = error.message.startsWith('Unsupported') ? 400 : 500;
+    res.status(code).json({ error: error.message });
+  }
+};
+
+const getExportJob = (req, res) => {
+  const job = complianceService.getExportJob(req.params.id);
+  if (!job) return res.status(404).json({ error: 'Export job not found' });
+  return res.json(job);
+};
+
+const downloadExportJob = (req, res) => {
+  const job = complianceService.getExportJob(req.params.id);
+  if (!job) return res.status(404).json({ error: 'Export job not found' });
+  if (!job.ready) return res.status(409).json({ error: `Export job is ${job.status}` });
+  const exportResult = complianceService.getExportJobResult(req.params.id);
+  const filename = `compliance-${job.type}-${job.id}.${exportResult.extension}`;
+  res.setHeader('Content-Type', exportResult.contentType);
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  return res.send(exportResult.body);
+};
+
 const createSchedule = async (req, res) => {
   try {
     const { type, format, frequency, filters } = req.body;
@@ -86,6 +114,9 @@ const disableSchedule = async (req, res) => {
 export default {
   generateReport,
   exportReport,
+  startExportJob,
+  getExportJob,
+  downloadExportJob,
   createSchedule,
   listSchedules,
   runSchedule,

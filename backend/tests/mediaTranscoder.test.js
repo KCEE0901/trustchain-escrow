@@ -308,4 +308,73 @@ describe('Media Transcoder Service', () => {
       expect(result).toHaveProperty('status');
     });
   });
+
+  describe('Media Input Validation (#197)', () => {
+    it('fails before enqueue with user-readable error when MIME type is unsupported', async () => {
+      const unsupportedAttachment = {
+        filename: 'malicious.exe',
+        mimeType: 'application/x-msdownload',
+        buffer: Buffer.from('MZ...'),
+      };
+
+      await expect(
+        mediaTranscoder.enqueue(unsupportedAttachment, 'QmBadMime'),
+      ).rejects.toThrow(/Unsupported media type "application\/x-msdownload"/i);
+
+      // Verify direct validateMediaInput method
+      expect(() => mediaTranscoder.validateMediaInput(unsupportedAttachment)).toThrow(
+        /Unsupported media type/i,
+      );
+    });
+
+    it('fails before enqueue with user-readable error when video duration is oversized', async () => {
+      const oversizedDurationAttachment = {
+        filename: 'long_evidence.mp4',
+        mimeType: 'video/mp4',
+        duration: 450, // exceeds 300s limit
+        buffer: Buffer.from('mock video bytes'),
+      };
+
+      await expect(
+        mediaTranscoder.enqueue(oversizedDurationAttachment, 'QmLongVideo'),
+      ).rejects.toThrow(/Media duration of 450 seconds exceeds the maximum allowed limit of 300 seconds/i);
+    });
+
+    it('fails before enqueue with user-readable error when dimensions exceed limits', async () => {
+      const oversizedDimensionAttachment = {
+        filename: 'huge_screenshot.png',
+        mimeType: 'image/png',
+        width: 8000, // exceeds 4096px limit
+        height: 2000,
+        buffer: Buffer.from('mock image bytes'),
+      };
+
+      await expect(
+        mediaTranscoder.enqueue(oversizedDimensionAttachment, 'QmHugeImage'),
+      ).rejects.toThrow(/Media width \(8000px\) exceeds the maximum allowed limit of 4096px/i);
+    });
+
+    it('succeeds for valid media within duration, dimension, and MIME constraints', async () => {
+      const validBuffer = await sharp({
+        create: { width: 640, height: 480, channels: 3, background: { r: 10, g: 20, b: 30 } },
+      })
+        .jpeg()
+        .toBuffer();
+
+      const validAttachment = {
+        filename: 'valid_evidence.jpg',
+        mimeType: 'image/jpeg',
+        width: 640,
+        height: 480,
+        duration: 0,
+        buffer: validBuffer,
+      };
+
+      expect(() => mediaTranscoder.validateMediaInput(validAttachment)).not.toThrow();
+
+      const result = await mediaTranscoder.enqueue(validAttachment, 'QmValidEvidence');
+      expect(result).toHaveProperty('status');
+    });
+  });
 });
+

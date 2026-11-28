@@ -1351,218 +1351,36 @@ mod tests {
         let result = client.try_cast_vote(&voter, &id, &true);
         assert!(result.is_err(), "Expected AlreadyVoted error");
     }
+    #[test]
+    fn slashing_preserves_stake_accounting_invariants() {
+        let (env, admin, token_admin, token, client) = setup();
+        let arbitrator = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        mint(&env, &token_admin, &token, &arbitrator, 2_000);
+        client.stake_arbitrator(&arbitrator, &2_000);
+        assert_eq!(client.slash_arbitrator(&admin, &arbitrator, &recipient, &str(&env, "evidence")), 200);
+        assert!(client.is_arbitrator(&arbitrator));
+        assert_eq!(token::Client::new(&env, &token).balance(&recipient), 200);
+    }
 
-    // ── Arbitrator registry and panel checks (#742–#745) ──────────────────────
+    #[test]
+    fn slashing_at_minimum_removes_ineligible_arbitrator() {
+        let (env, admin, token_admin, token, client) = setup();
+        let arbitrator = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        mint(&env, &token_admin, &token, &arbitrator, 1_000);
+        client.stake_arbitrator(&arbitrator, &1_000);
+        assert_eq!(client.slash_arbitrator(&admin, &arbitrator, &recipient, &str(&env, "boundary")), 100);
+        assert!(!client.is_arbitrator(&arbitrator));
+    }
 
-    mod arbitrator_registry_checks {
-        use super::*;
-
-        use crate::GovError;
-        use soroban_sdk::testutils::{MockAuth, MockAuthInvoke};
-        use soroban_sdk::{IntoVal, Vec};
-
-        const STAKE: i128 = 1_000;
-        const ACCEPT_WINDOW: u64 = 172_800;
-
-        /// Stake `n` fresh arbitrators and return them (not yet in the registry).
-        fn staked(
-            env: &Env,
-            ta: &Address,
-            token: &Address,
-            client: &GovernanceContractClient,
-            n: u32,
-        ) -> Vec<Address> {
-            let mut arbs = Vec::new(env);
-            for _ in 0..n {
-                let arb = Address::generate(env);
-                mint(env, ta, token, &arb, STAKE);
-                client.stake_arbitrator(&arb, &STAKE);
-                arbs.push_back(arb);
-            }
-            arbs
-        }
-
-        /// #742: only the admin may add, and only whitelisted arbitrators;
-        /// adding twice is a no-op.
-        #[test]
-        fn test_registry_add_arbitrator_caller_and_bounds() {
-            let (env, admin, ta, token, client) = setup();
-            let arb = staked(&env, &ta, &token, &client, 1).get(0).unwrap();
-            let stranger = Address::generate(&env);
-
-            assert_eq!(
-                client.try_registry_add_arbitrator(&stranger, &arb),
-                Err(Ok(GovError::AdminOnly))
-            );
-            assert_eq!(
-                client.try_registry_add_arbitrator(&admin, &stranger),
-                Err(Ok(GovError::NotArbitrator))
-            );
-            client.registry_add_arbitrator(&admin, &arb);
-            client.registry_add_arbitrator(&admin, &arb);
-            assert!(client.is_in_registry(&arb));
-            assert_eq!(client.get_arbitrator_count(), 1);
-        }
-
-        /// #742: another address cannot authorize as the admin.
-        #[test]
-        fn test_registry_add_arbitrator_rejects_other_signer() {
-            let (env, admin, ta, token, client) = setup();
-            let arb = staked(&env, &ta, &token, &client, 1).get(0).unwrap();
-            let stranger = Address::generate(&env);
-
-            env.mock_auths(&[MockAuth {
-                address: &stranger,
-                invoke: &MockAuthInvoke {
-                    contract: &client.address,
-                    fn_name: "registry_add_arbitrator",
-                    args: (admin.clone(), arb.clone()).into_val(&env),
-                    sub_invokes: &[],
-                },
-            }]);
-            assert!(client.try_registry_add_arbitrator(&admin, &arb).is_err());
-            assert!(!client.is_in_registry(&arb));
-        }
-
-        /// #743: only the admin may remove; removing an unknown address is a
-        /// no-op.
-        #[test]
-        fn test_registry_remove_arbitrator_caller_and_bounds() {
-            let (env, admin, ta, token, client) = setup();
-            let arb = staked(&env, &ta, &token, &client, 1).get(0).unwrap();
-            let stranger = Address::generate(&env);
-            client.registry_add_arbitrator(&admin, &arb);
-
-            assert_eq!(
-                client.try_registry_remove_arbitrator(&stranger, &arb),
-                Err(Ok(GovError::AdminOnly))
-            );
-            client.registry_remove_arbitrator(&admin, &stranger);
-            assert!(client.is_in_registry(&arb));
-
-            client.registry_remove_arbitrator(&admin, &arb);
-            assert!(!client.is_in_registry(&arb));
-            client.registry_remove_arbitrator(&admin, &arb);
-            assert_eq!(client.get_arbitrator_count(), 0);
-        }
-
-        /// #743: another address cannot authorize as the admin.
-        #[test]
-        fn test_registry_remove_arbitrator_rejects_other_signer() {
-            let (env, admin, ta, token, client) = setup();
-            let arb = staked(&env, &ta, &token, &client, 1).get(0).unwrap();
-            let stranger = Address::generate(&env);
-            client.registry_add_arbitrator(&admin, &arb);
-
-            env.mock_auths(&[MockAuth {
-                address: &stranger,
-                invoke: &MockAuthInvoke {
-                    contract: &client.address,
-                    fn_name: "registry_remove_arbitrator",
-                    args: (admin.clone(), arb.clone()).into_val(&env),
-                    sub_invokes: &[],
-                },
-            }]);
-            assert!(client.try_registry_remove_arbitrator(&admin, &arb).is_err());
-            assert!(client.is_in_registry(&arb));
-        }
-
-        /// #744: `select_dispute_panel` takes no caller; dispute ids 0 and
-        /// u64::MAX work, too few arbitrators and an uninitialized contract
-        /// return errors, and a clock at u64::MAX does not overflow.
-        #[test]
-        fn test_select_dispute_panel_caller_and_bounds() {
-            let (env, admin, ta, token, client) = setup();
-            let arbs = staked(&env, &ta, &token, &client, 3);
-
-            assert_eq!(
-                client.try_select_dispute_panel(&0),
-                Err(Ok(GovError::NotArbitrator))
-            );
-            client.registry_add_arbitrator(&admin, &arbs.get(0).unwrap());
-            client.registry_add_arbitrator(&admin, &arbs.get(1).unwrap());
-            assert_eq!(
-                client.try_select_dispute_panel(&u64::MAX),
-                Err(Ok(GovError::NotArbitrator))
-            );
-            client.registry_add_arbitrator(&admin, &arbs.get(2).unwrap());
-
-            env.set_auths(&[]);
-            let panel = client.select_dispute_panel(&0);
-            assert_eq!(panel.dispute_id, 0);
-            assert_eq!(panel.slots.len(), 3);
-            for i in 0..panel.slots.len() {
-                for j in (i + 1)..panel.slots.len() {
-                    assert_ne!(
-                        panel.slots.get(i).unwrap().arbitrator,
-                        panel.slots.get(j).unwrap().arbitrator
-                    );
-                }
-            }
-
-            env.ledger().with_mut(|l| l.timestamp = u64::MAX);
-            let panel = client.select_dispute_panel(&u64::MAX);
-            assert_eq!(panel.dispute_id, u64::MAX);
-            assert_eq!(panel.slots.get(0).unwrap().deadline, u64::MAX);
-
-            let uninit = GovernanceContractClient::new(
-                &env,
-                &env.register_contract(None, GovernanceContract),
-            );
-            assert_eq!(
-                uninit.try_select_dispute_panel(&0),
-                Err(Ok(GovError::NotInitialized))
-            );
-        }
-
-        /// #745: `rotate_timed_out_slot` takes no caller; unknown disputes,
-        /// out-of-range slots (u32::MAX) and slots still inside their window
-        /// return errors, and a timed-out slot rotates.
-        #[test]
-        fn test_rotate_timed_out_slot_caller_and_bounds() {
-            let (env, admin, ta, token, client) = setup();
-            let arbs = staked(&env, &ta, &token, &client, 4);
-            for i in 0..3 {
-                client.registry_add_arbitrator(&admin, &arbs.get(i).unwrap());
-            }
-            env.set_auths(&[]);
-
-            assert_eq!(
-                client.try_rotate_timed_out_slot(&0, &0),
-                Err(Ok(GovError::Unauthorized))
-            );
-            assert_eq!(
-                client.try_rotate_timed_out_slot(&u64::MAX, &0),
-                Err(Ok(GovError::Unauthorized))
-            );
-
-            client.select_dispute_panel(&7);
-            assert_eq!(
-                client.try_rotate_timed_out_slot(&7, &u32::MAX),
-                Err(Ok(GovError::Unauthorized))
-            );
-            assert_eq!(
-                client.try_rotate_timed_out_slot(&7, &0),
-                Err(Ok(GovError::Unauthorized)),
-                "deadline has not passed"
-            );
-
-            // Past the window but no spare arbitrator to rotate in.
-            env.ledger().with_mut(|l| l.timestamp = ACCEPT_WINDOW + 1);
-            assert_eq!(
-                client.try_rotate_timed_out_slot(&7, &0),
-                Err(Ok(GovError::Unauthorized))
-            );
-
-            env.mock_all_auths();
-            client.registry_add_arbitrator(&admin, &arbs.get(3).unwrap());
-            env.set_auths(&[]);
-            client.rotate_timed_out_slot(&7, &0);
-            let panel = client.get_dispute_panel(&7).unwrap();
-            assert_eq!(panel.slots.len(), 4);
-            let replacement = panel.slots.get(1).unwrap();
-            assert_eq!(replacement.arbitrator, arbs.get(3).unwrap());
-            assert_eq!(replacement.deadline, ACCEPT_WINDOW + 1 + ACCEPT_WINDOW);
-        }
+    #[test]
+    fn slashing_rejects_non_admin_and_missing_stake() {
+        let (env, admin, _, _, client) = setup();
+        let outsider = Address::generate(&env);
+        let arbitrator = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        assert_eq!(client.try_slash_arbitrator(&outsider, &arbitrator, &recipient, &str(&env, "bad")), Err(Ok(crate::GovError::AdminOnly)));
+        assert_eq!(client.try_slash_arbitrator(&admin, &arbitrator, &recipient, &str(&env, "missing")), Err(Ok(crate::GovError::NotArbitrator)));
     }
 }

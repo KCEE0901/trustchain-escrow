@@ -6,6 +6,7 @@ import { Search, SlidersHorizontal, X } from 'lucide-react';
 import Spinner from '../../components/ui/Spinner';
 import EscrowCard from '../../components/escrow/EscrowCard';
 import SearchFilters from '../../components/explorer/SearchFilters';
+import StaleIndexerWarning from '../../components/explorer/StaleIndexerWarning';
 import Button from '../../components/ui/Button';
 import EmptyState from '../../components/ui/EmptyState';
 import ErrorBoundary from '../../components/error/ErrorBoundary';
@@ -86,6 +87,15 @@ function ExplorerContent() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState(null);
+  const [indexerStatus, setIndexerStatus] = useState(null);
+
+  // Best-effort indexer status fetch on mount — does not block the main UI.
+  useEffect(() => {
+    fetch(`${API_BASE}/api/indexer/status`)
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(data => setIndexerStatus(data))
+      .catch(() => { /* ignore — banner simply won't show */ });
+  }, []);
 
   const debounceTimer = useRef(null);
   useEffect(() => {
@@ -173,6 +183,8 @@ function ExplorerContent() {
         <h1 className="text-2xl font-bold text-white">Escrow Explorer</h1>
         <p className="text-gray-400 mt-1">Browse all public escrow agreements.</p>
       </div>
+
+      <StaleIndexerWarning status={indexerStatus} />
 
       <div className="flex gap-3">
         <div className="relative flex-1">

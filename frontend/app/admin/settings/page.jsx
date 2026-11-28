@@ -9,6 +9,7 @@
 import { useState, useEffect } from 'react';
 import { useAdminStore } from '../../../store/app-store';
 import { adminFetch } from '../../../store/admin';
+import RuntimeConfigChecksumPanel from '../../../components/admin/RuntimeConfigChecksumPanel';
 
 export default function AdminSettingsPage() {
   const { apiKey } = useAdminStore();
@@ -144,6 +145,7 @@ export default function AdminSettingsPage() {
                 not yet stored.
               </p>
             </div>
+            <RuntimeConfigChecksumPanel instances={settings.runtimeChecksums} />
           </div>
         )
       )}

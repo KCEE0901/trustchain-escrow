@@ -39,17 +39,18 @@ mod dispute_evidence_tests {
         let brief = BytesN::from_array(env, &[1u8; 32]);
 
         let escrow_id = contract.create_escrow(
-            client,
-            freelancer,
-            &token,
-            &100_000,
-            &brief,
-            &None,
-            &None,
-            &None,
-            &None,
-            &crate::no_multisig(env),
-        );
+                    client,
+                    freelancer,
+                    &token,
+                    &100_000,
+                    &brief,
+                    &None,
+                    &None,
+                    &None,
+                    &None,
+                    &crate::no_multisig(env),
+                    &None,
+                );
 
         contract.raise_dispute(client, &escrow_id, &None);
         escrow_id
@@ -64,17 +65,18 @@ mod dispute_evidence_tests {
         let brief = BytesN::from_array(&env, &[1u8; 32]);
 
         let escrow_id = contract.create_escrow(
-            &client,
-            &freelancer,
-            &token,
-            &100_000,
-            &brief,
-            &None,
-            &None,
-            &None,
-            &None,
-            &crate::no_multisig(&env),
-        );
+                    &client,
+                    &freelancer,
+                    &token,
+                    &100_000,
+                    &brief,
+                    &None,
+                    &None,
+                    &None,
+                    &None,
+                    &crate::no_multisig(&env),
+                    &None,
+                );
 
         let evidence_hash = BytesN::from_array(&env, &[2u8; 32]);
         let description = String::from_str(&env, "test evidence");
@@ -171,17 +173,18 @@ mod dispute_evidence_tests {
         let brief = BytesN::from_array(&env, &[1u8; 32]);
 
         let escrow_id = contract.create_escrow(
-            &client,
-            &freelancer,
-            &token,
-            &100_000,
-            &brief,
-            &None,
-            &None,
-            &None,
-            &None,
-            &crate::no_multisig(&env),
-        );
+                    &client,
+                    &freelancer,
+                    &token,
+                    &100_000,
+                    &brief,
+                    &None,
+                    &None,
+                    &None,
+                    &None,
+                    &crate::no_multisig(&env),
+                    &None,
+                );
 
         let evidences = contract.get_evidence(&escrow_id);
         assert_eq!(evidences.len(), 0);

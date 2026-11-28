@@ -42,6 +42,13 @@ export const httpRequestTotal = new client.Counter({
   registers: [register],
 });
 
+export const httpRequestTimeoutsTotal = new client.Counter({
+  name: 'http_request_timeouts_total',
+  help: 'Total number of HTTP requests that exceeded their timeout budget',
+  labelNames: ['method', 'route'],
+  registers: [register],
+});
+
 export const httpRequestsInFlight = new client.Gauge({
   name: 'http_requests_in_flight',
   help: 'Number of HTTP requests currently being processed',
@@ -150,6 +157,32 @@ export const milestonesCompletedTotal = new client.Counter({
 export const activeEscrowsGauge = new client.Gauge({
   name: 'active_escrows',
   help: 'Current number of active escrows',
+  registers: [register],
+});
+
+// ── Indexer Lag Metrics ───────────────────────────────────────────────────────
+
+export const indexerLatestLedger = new client.Gauge({
+  name: 'indexer_latest_ledger',
+  help: 'Latest ledger sequence reported by the Stellar network',
+  registers: [register],
+});
+
+export const indexerProcessedLedger = new client.Gauge({
+  name: 'indexer_processed_ledger',
+  help: 'Last ledger sequence processed by the escrow indexer',
+  registers: [register],
+});
+
+export const indexerLedgerLag = new client.Gauge({
+  name: 'indexer_ledger_lag',
+  help: 'Number of ledgers the escrow indexer is behind the latest ledger',
+  registers: [register],
+});
+
+export const indexerLagAlert = new client.Gauge({
+  name: 'indexer_lag_alert',
+  help: '1 when indexer lag exceeds INDEXER_LAG_ALERT_THRESHOLD, otherwise 0',
   registers: [register],
 });
 

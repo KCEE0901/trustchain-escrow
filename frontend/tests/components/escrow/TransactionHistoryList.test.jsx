@@ -8,7 +8,7 @@ const SAMPLE_HISTORY = [
     id: 'created',
     type: 'created',
     description: 'Escrow initialized',
-    txHash: 'a1b2c3d4e5f6a1b2c3d4e5f6',
+    txHash: 'a'.repeat(64),
     timestamp: '2025-03-01T00:00:00Z',
   },
   {
@@ -16,7 +16,7 @@ const SAMPLE_HISTORY = [
     type: 'funded',
     description: 'Funds deposited',
     amount: '2,000 USDC',
-    txHash: 'f6e5d4c3b2a1f6e5d4c3b2a1',
+    txHash: 'B'.repeat(64),
     timestamp: '2025-03-02T00:00:00Z',
   },
 ];
@@ -42,9 +42,7 @@ describe('TransactionHistoryList', () => {
 
   it('exposes the list to assistive technology with an accessible name', () => {
     render(<TransactionHistoryList history={SAMPLE_HISTORY} />);
-    expect(
-      screen.getByRole('list', { name: /transaction history/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('list', { name: /transaction history/i })).toBeInTheDocument();
   });
 
   it('links out to the block explorer for each transaction', () => {
@@ -54,6 +52,16 @@ describe('TransactionHistoryList', () => {
       'href',
       expect.stringContaining('stellar.expert/explorer/testnet/tx'),
     );
+  });
+
+  it('does not link malformed transaction hashes to the block explorer', () => {
+    render(
+      <TransactionHistoryList
+        history={[{ id: 'bad', type: 'created', txHash: 'not-a-hash' }]}
+        network="testnet"
+      />,
+    );
+    expect(screen.queryByRole('link', { name: /View .* transaction/i })).not.toBeInTheDocument();
   });
 
   it('renders a heading for the section', () => {
@@ -78,8 +86,20 @@ describe('buildHistoryFromEscrow', () => {
       transactionHash: 'abc123',
       totalAmount: '2,000 USDC',
       milestones: [
-        { id: 0, title: 'Codebase Review', amount: '500 USDC', status: 'Approved', submittedAt: '2025-03-05' },
-        { id: 2, title: 'Final Sign-off', amount: '500 USDC', status: 'Pending', submittedAt: null },
+        {
+          id: 0,
+          title: 'Codebase Review',
+          amount: '500 USDC',
+          status: 'Approved',
+          submittedAt: '2025-03-05',
+        },
+        {
+          id: 2,
+          title: 'Final Sign-off',
+          amount: '500 USDC',
+          status: 'Pending',
+          submittedAt: null,
+        },
       ],
     };
     const history = buildHistoryFromEscrow(escrow);

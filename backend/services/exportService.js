@@ -2,6 +2,8 @@ import { createHash, randomUUID } from 'crypto';
 
 import prisma from '../lib/prisma.js';
 import { emailQueue } from '../queues/emailQueue.js';
+import cacheService from './cacheService.js';
+import { withTenantScopeBypassed } from '../lib/tenantContext.js';
 
 function withTenant(where, tenantId) {
   return tenantId ? { ...where, tenantId } : where;
@@ -11,12 +13,202 @@ function toIso(value) {
   return value instanceof Date ? value.toISOString() : value ? new Date(value).toISOString() : null;
 }
 
+/** In-memory store for active/tracked export jobs */
+const exportJobs = new Map();
+
 /**
  * Export/Import Service for Stellar Trust Escrow
  * Handles data portability - export all user data and import data in standard formats
  */
 
 class ExportService {
+  /**
+   * Create and register an export job
+   */
+  createExportJob(address, { tenantId, requestedBy, type = 'escrow_export' } = {}) {
+    const jobId = `export_${randomUUID()}`;
+    const token = randomUUID();
+    const downloadUrl = `/api/users/${address}/export/file?token=${token}`;
+    const job = {
+      id: jobId,
+      jobId,
+      address,
+      tenantId,
+      requestedBy: requestedBy ?? address,
+      type,
+      status: 'queued', // queued | running | completed | cancelled | failed
+      createdAt: new Date().toISOString(),
+      startedAt: null,
+      cancelledAt: null,
+      cancelledBy: null,
+      completedAt: null,
+      progress: 0,
+      outputWritten: false,
+      downloadUrl,
+      data: null,
+      error: null,
+    };
+    exportJobs.set(jobId, job);
+    return job;
+  }
+
+  /**
+   * Check if an export job has been cancelled
+   */
+  isExportCancelled(jobId) {
+    const job = exportJobs.get(jobId);
+    return job?.status === 'cancelled';
+  }
+
+  /**
+   * Cancel a queued or running export job
+   */
+  async cancelExportJob(jobId, { cancelledBy = 'user' } = {}) {
+    let job = exportJobs.get(jobId);
+    if (!job) {
+      const cached = await withTenantScopeBypassed(() => cacheService.get(`export:job:${jobId}`));
+      if (cached) {
+        job = cached;
+        exportJobs.set(jobId, job);
+      }
+    }
+
+    if (!job) {
+      throw new Error(`Export job ${jobId} not found`);
+    }
+
+    if (job.status === 'completed') {
+      throw new Error('Cannot cancel an already completed export job');
+    }
+
+    if (job.status === 'cancelled') {
+      return job;
+    }
+
+    job.status = 'cancelled';
+    job.cancelledAt = new Date().toISOString();
+    job.cancelledBy = cancelledBy;
+    job.outputWritten = false;
+    job.data = null; // Ensure no output is written or retained
+
+    exportJobs.set(jobId, job);
+    await withTenantScopeBypassed(() => cacheService.set(`export:job:${jobId}`, job, 86400));
+
+    console.log(`[ExportService] Cancelled export job ${jobId} by ${cancelledBy}`);
+    return job;
+  }
+
+  /**
+   * Get an export job by ID
+   */
+  async getExportJob(jobId) {
+    let job = exportJobs.get(jobId);
+    if (!job) {
+      const cached = await withTenantScopeBypassed(() => cacheService.get(`export:job:${jobId}`));
+      if (cached) {
+        job = cached;
+        exportJobs.set(jobId, job);
+      }
+    }
+    return job || null;
+  }
+
+  /**
+   * Execute an export job with staged cancellation checks
+   */
+  async runExportJob(jobId) {
+    const job = await this.getExportJob(jobId);
+    if (!job) throw new Error(`Export job ${jobId} not found`);
+
+    if (this.isExportCancelled(jobId)) {
+      job.outputWritten = false;
+      return job;
+    }
+
+    // Step 1: Transition to running
+    job.status = 'running';
+    job.startedAt = new Date().toISOString();
+    job.progress = 10;
+    exportJobs.set(jobId, job);
+    await withTenantScopeBypassed(() => cacheService.set(`export:job:${jobId}`, job, 86400));
+
+    // Staged step: fetch data
+    if (this.isExportCancelled(jobId)) {
+      job.outputWritten = false;
+      return job;
+    }
+
+    const data = await this.exportUserData(job.address, { tenantId: job.tenantId });
+    job.progress = 60;
+
+    // Check again before formatting/writing final output
+    if (this.isExportCancelled(jobId)) {
+      job.outputWritten = false;
+      return job;
+    }
+
+    // Generate output
+    const fileContent = this.generateExportFile(data);
+    job.progress = 90;
+
+    // Final cancellation check BEFORE writing final output
+    if (this.isExportCancelled(jobId)) {
+      job.outputWritten = false;
+      return job;
+    }
+
+    // Write final output
+    job.data = fileContent;
+    job.outputWritten = true;
+    job.status = 'completed';
+    job.completedAt = new Date().toISOString();
+    job.progress = 100;
+    exportJobs.set(jobId, job);
+    await withTenantScopeBypassed(() => cacheService.set(`export:job:${jobId}`, job, 86400));
+
+    return job;
+  }
+
+  __resetExportJobsForTests() {
+    exportJobs.clear();
+  }
+
+  async queueLargeExport(address, { tenantId, requestedBy } = {}) {
+    const token = randomUUID();
+    const downloadUrl = `/api/users/${address}/export/file?token=${token}`;
+    const user = await prisma.user?.findFirst?.({
+      where: withTenant({ walletAddress: address }, tenantId),
+      select: { email: true },
+    });
+
+    const job = await emailQueue.add('data_export.deliver', {
+      address,
+      tenantId,
+      requestedBy,
+      downloadUrl,
+      recipients: user?.email ? [{ email: user.email }] : [],
+      message: {
+        subject: 'Your Stellar Trust Escrow data export is ready',
+        text: `Your data export is ready: ${downloadUrl}`,
+      },
+    });
+
+    const exportJob = {
+      id: job.id,
+      jobId: job.id,
+      address,
+      tenantId,
+      requestedBy,
+      downloadUrl,
+      status: 'queued',
+      createdAt: new Date().toISOString(),
+      outputWritten: false,
+    };
+    exportJobs.set(job.id, exportJob);
+    await withTenantScopeBypassed(() => cacheService.set(`export:job:${job.id}`, exportJob, 86400));
+
+    return { jobId: job.id, downloadUrl };
+  }
   /**
    * Export all data for a user by Stellar address
    * @param {string} address - User's Stellar address
@@ -238,29 +430,6 @@ class ExportService {
         performedAt: new Date(),
       },
     });
-  }
-
-  async queueLargeExport(address, { tenantId, requestedBy } = {}) {
-    const token = randomUUID();
-    const downloadUrl = `/api/users/${address}/export/file?token=${token}`;
-    const user = await prisma.user?.findFirst?.({
-      where: withTenant({ walletAddress: address }, tenantId),
-      select: { email: true },
-    });
-
-    const job = await emailQueue.add('data_export.deliver', {
-      address,
-      tenantId,
-      requestedBy,
-      downloadUrl,
-      recipients: user?.email ? [{ email: user.email }] : [],
-      message: {
-        subject: 'Your Stellar Trust Escrow data export is ready',
-        text: `Your data export is ready: ${downloadUrl}`,
-      },
-    });
-
-    return { jobId: job.id, downloadUrl };
   }
 
   pseudonymForAddress(address) {

@@ -57,7 +57,9 @@ TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     mem=$(echo "$line" | awk -F' \\| ' '{print $5}' | sed 's/mem=//')
 
     [[ "$first" == "false" ]] && echo "    ,"
-    echo "    {\"contract\": \"$contract\", \"function\": \"$function\", \"cpu_instructions\": $cpu, \"memory_bytes\": $mem}"
+    entry_xdr_bytes=$(echo "$line" | awk -F' \\| ' '{print $6}' | sed 's/key_value_xdr_bytes=//')
+    [[ -n "$entry_xdr_bytes" ]] || entry_xdr_bytes="null"
+    echo "    {\"contract\": \"$contract\", \"function\": \"$function\", \"cpu_instructions\": $cpu, \"memory_bytes\": $mem, \"key_value_xdr_bytes\": $entry_xdr_bytes}"
     first=false
   done <<< "$ALL_LINES"
 
@@ -71,7 +73,7 @@ echo ""
 
 # ── pretty-print table ────────────────────────────────────────────────────────
 
-printf "%-30s %-30s %18s %18s\n" "CONTRACT" "FUNCTION" "CPU INSTRUCTIONS" "MEMORY BYTES"
+printf "%-30s %-30s %18s %18s %20s\n" "CONTRACT" "FUNCTION" "CPU INSTRUCTIONS" "MEMORY BYTES" "KEY+VALUE XDR BYTES"
 printf '%s\n' "$(printf '%.0s-' {1..100})"
 
 while IFS= read -r line; do
@@ -80,7 +82,9 @@ while IFS= read -r line; do
   function=$(echo "$line" | awk -F' \\| ' '{print $3}' | xargs)
   cpu=$(echo "$line" | awk -F' \\| ' '{print $4}' | sed 's/cpu=//')
   mem=$(echo "$line" | awk -F' \\| ' '{print $5}' | sed 's/mem=//')
-  printf "%-30s %-30s %18s %18s\n" "$contract" "$function" "$cpu" "$mem"
+  entry_xdr_bytes=$(echo "$line" | awk -F' \\| ' '{print $6}' | sed 's/key_value_xdr_bytes=//')
+  [[ -n "$entry_xdr_bytes" ]] || entry_xdr_bytes="—"
+  printf "%-30s %-30s %18s %18s %20s\n" "$contract" "$function" "$cpu" "$mem" "$entry_xdr_bytes"
 done <<< "$ALL_LINES"
 
 echo ""
