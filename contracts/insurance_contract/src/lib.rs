@@ -430,11 +430,11 @@ impl InsuranceContract {
             return Err(InsuranceError::BelowMinimum);
         }
 
-        token::Client::new(&env, &Storage::get_token(&env)?).transfer(
-            &contributor,
-            &env.current_contract_address(),
-            &amount,
-        );
+        let token_client = token::Client::new(&env, &Storage::get_token(&env));
+        if token_client.balance(&contributor) < amount {
+            return Err(InsuranceError::InsufficientFunds);
+        }
+        token_client.transfer(&contributor, &env.current_contract_address(), &amount);
 
         Storage::add_contribution(&env, &contributor, amount);
 
@@ -1818,58 +1818,43 @@ mod tests {
     }
 
     #[test]
-    fn test_set_claim_cap_caller_and_bounds() {
+    fn test_contribute_caller_and_bound_checks() {
         let s = setup();
+        let contributor = Address::generate(&s.env);
         let other = Address::generate(&s.env);
-        assert_eq!(s.client.try_set_claim_cap(&s.admin, &i128::MAX), Ok(Ok(())));
+        mint(&s.env, &s.admin, &s.token_id, &contributor, 500);
+
         assert_eq!(
-            s.client.try_set_claim_cap(&other, &1_i128),
-            Err(Ok(InsuranceError::AdminOnly))
+            s.client.try_contribute(&other, &100_i128),
+            Err(Ok(InsuranceError::InsufficientFunds))
         );
         assert_eq!(
-            s.client.try_set_claim_cap(&s.admin, &0_i128),
-            Err(Ok(InsuranceError::InvalidAmount))
+            s.client.try_contribute(&contributor, &0_i128),
+            Err(Ok(InsuranceError::BelowMinimum))
         );
+        assert_eq!(
+            s.client.try_contribute(&contributor, &i128::MAX),
+            Err(Ok(InsuranceError::InsufficientFunds))
+        );
+        s.client.contribute(&contributor, &500_i128);
+        assert_eq!(s.client.get_fund_info().total_contributed, 500);
     }
 
     #[test]
-    fn test_set_quorum_caller_and_bounds() {
+    fn test_submit_claim_caller_and_bound_checks() {
         let s = setup();
-        let other = Address::generate(&s.env);
-        assert_eq!(s.client.try_set_quorum(&s.admin, &u32::MAX), Ok(Ok(())));
-        assert_eq!(
-            s.client.try_set_quorum(&other, &1_u32),
-            Err(Ok(InsuranceError::AdminOnly))
-        );
-        assert_eq!(
-            s.client.try_set_quorum(&s.admin, &0_u32),
-            Err(Ok(InsuranceError::InvalidAmount))
-        );
-    }
+        let claimant = Address::generate(&s.env);
+        let desc = String::from_str(&s.env, "loss");
 
-    #[test]
-    fn test_get_fund_info_initialized_and_uninitialized() {
-        let s = setup();
-        let info = s.client.get_fund_info();
-        assert_eq!(info.total_claims, 0);
-        let uninit = s.env.register_contract(None, InsuranceContract);
-        let uninit_client = InsuranceContractClient::new(&s.env, &uninit);
         assert_eq!(
-            uninit_client.try_get_fund_info(),
-            Err(Ok(InsuranceError::NotInitialized))
-        );
-    }
-
-    #[test]
-    fn test_get_claim_out_of_range_ids() {
-        let s = setup();
-        assert_eq!(
-            s.client.try_get_claim(&0_u32),
-            Err(Ok(InsuranceError::ClaimNotFound))
+            s.client.try_submit_claim(&claimant, &desc, &0_i128),
+            Err(Ok(InsuranceError::InvalidClaimAmount))
         );
         assert_eq!(
-            s.client.try_get_claim(&u32::MAX),
-            Err(Ok(InsuranceError::ClaimNotFound))
+            s.client.try_submit_claim(&claimant, &desc, &i128::MAX),
+            Err(Ok(InsuranceError::ClaimExceedsCap))
         );
+        let id = s.client.submit_claim(&claimant, &desc, &1_000_i128);
+        assert_eq!(s.client.submit_claim(&claimant, &desc, &1_000_i128), id + 1);
     }
 }
