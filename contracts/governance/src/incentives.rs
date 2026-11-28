@@ -376,4 +376,32 @@ mod incentive_tests {
             assert_eq!(deposit_to_pool(&env, 0), Err(ExtensionError::InvalidAmount));
         });
     }
+
+    #[test]
+    fn test_get_lock_record_caller_and_bounds() {
+        let (env, id) = mk_env();
+        env.as_contract(&id, || {
+            let staker = Address::generate(&env);
+            let other = Address::generate(&env);
+
+            // No record yet for the required caller/staker.
+            assert_eq!(get_lock_record(&env, &staker), None);
+
+            // Create a record via a valid extension bonus.
+            deposit_to_pool(&env, 50_000).unwrap();
+            let bonus =
+                apply_lock_extension_bonus(&env, &staker, 0, ONE_YEAR_SECS, 100_000).unwrap();
+            assert_eq!(bonus, 25_000);
+
+            // Required caller/staker sees the expected record.
+            let rec = get_lock_record(&env, &staker).unwrap();
+            assert_eq!(rec.staker, staker);
+            assert_eq!(rec.locked_amount, 100_000);
+            assert_eq!(rec.bonus_accumulated, 25_000);
+            assert_eq!(rec.lock_end, ONE_YEAR_SECS);
+
+            // A different address must not see the staker's record.
+            assert_eq!(get_lock_record(&env, &other), None);
+        });
+    }
 }
