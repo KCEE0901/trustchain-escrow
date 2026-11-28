@@ -161,40 +161,36 @@ pub struct SlashProposal {
 }
 
 #[cfg(test)]
-mod claim_roundtrip_tests {
+mod stakerecord_roundtrip_tests {
     use super::*;
     use soroban_sdk::{Env, IntoVal, TryFromVal, Val};
     #[test]
-    fn claim_scval_roundtrip() {
-        use soroban_sdk::String;
+    fn stakerecord_scval_roundtrip() {
         let env = Env::default();
-        let claimant = soroban_sdk::Address::generate(&env);
-        let zero = Claim {
-            id: 0,
-            claimant: claimant.clone(),
-            description: String::from_str(&env, ""),
-            amount: 0,
-            status: ClaimStatus::Pending,
-            submitted_at: 0,
-            expires_at: 0,
-            votes_for: 0,
-            votes_against: 0,
-        };
-        let back = Claim::try_from_val(&env, &zero.clone().into_val(&env)).unwrap();
+        let staker = soroban_sdk::Address::generate(&env);
+        let zero = StakeRecord { staker: staker.clone(), amount: 0, reward_debt: 0 };
+        let back = StakeRecord::try_from_val(&env, &zero.clone().into_val(&env)).unwrap();
         assert_eq!(back.amount, 0);
-        let nz = Claim {
-            id: 1,
-            claimant,
-            description: String::from_str(&env, "evidence"),
-            amount: 500,
-            status: ClaimStatus::Approved,
-            submitted_at: 1,
-            expires_at: 2,
-            votes_for: 2,
-            votes_against: 1,
-        };
-        let back2 = Claim::try_from_val(&env, &nz.clone().into_val(&env)).unwrap();
-        assert_eq!(back2.amount, 500);
+        let nz = StakeRecord { staker, amount: 50, reward_debt: 5 };
+        let back2 = StakeRecord::try_from_val(&env, &nz.clone().into_val(&env)).unwrap();
+        assert_eq!(back2.reward_debt, 5);
+
+    }
+}
+
+#[cfg(test)]
+mod fundstats_roundtrip_tests {
+    use super::*;
+    use soroban_sdk::{Env, IntoVal, TryFromVal, Val};
+    #[test]
+    fn fundstats_scval_roundtrip() {
+        let env = Env::default();
+        let zero = FundStats { total_contributed: 0, total_paid_out: 0, total_claims: 0, paid_claims: 0, governor_count: 0 };
+        let back = FundStats::try_from_val(&env, &zero.clone().into_val(&env)).unwrap();
+        assert_eq!(back.governor_count, 0);
+        let nz = FundStats { total_contributed: 1, total_paid_out: 2, total_claims: 3, paid_claims: 4, governor_count: 5 };
+        let back2 = FundStats::try_from_val(&env, &nz.clone().into_val(&env)).unwrap();
+        assert_eq!(back2.paid_claims, 4);
 
     }
 }

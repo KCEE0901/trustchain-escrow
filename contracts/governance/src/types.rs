@@ -211,39 +211,35 @@ pub enum DataKey {
 }
 
 #[cfg(test)]
-mod jurypool_roundtrip_tests {
+mod govconfig_roundtrip_tests {
     use super::*;
     use soroban_sdk::{Env, IntoVal, TryFromVal, Val};
     #[test]
-    fn jurypool_scval_roundtrip() {
+    fn govconfig_scval_roundtrip() {
         let env = Env::default();
-        let zero = JuryPool {
-            pool_id: 0,
-            escrow_id: 0,
-            milestone_id: 0,
-            created_at: 0,
-            voting_end: 0,
-            resolved: false,
-            weight_for_client: 0,
-            weight_for_freelancer: 0,
-            total_locked: 0,
+        let token = soroban_sdk::Address::generate(&env);
+        let zero = GovConfig {
+            token: token.clone(),
+            proposal_threshold: 0,
+            voting_period: 0,
+            voting_delay: 0,
+            timelock_delay: 0,
+            quorum_bps: 0,
+            approval_threshold_bps: 0,
         };
-        let back = JuryPool::try_from_val(&env, &zero.clone().into_val(&env)).unwrap();
-        assert_eq!(back.pool_id, 0);
-        assert_eq!(back.resolved, false);
-        let nz = JuryPool {
-            pool_id: 1,
-            escrow_id: 2,
-            milestone_id: 3,
-            created_at: 4,
-            voting_end: 5,
-            resolved: true,
-            weight_for_client: 10,
-            weight_for_freelancer: 20,
-            total_locked: 30,
+        let back = GovConfig::try_from_val(&env, &zero.clone().into_val(&env)).unwrap();
+        assert_eq!(back.quorum_bps, 0);
+        let nz = GovConfig {
+            token,
+            proposal_threshold: 100,
+            voting_period: 1,
+            voting_delay: 2,
+            timelock_delay: 3,
+            quorum_bps: 400,
+            approval_threshold_bps: 5100,
         };
-        let back2 = JuryPool::try_from_val(&env, &nz.clone().into_val(&env)).unwrap();
-        assert_eq!(back2.total_locked, 30);
+        let back2 = GovConfig::try_from_val(&env, &nz.clone().into_val(&env)).unwrap();
+        assert_eq!(back2.approval_threshold_bps, 5100);
 
     }
 }
