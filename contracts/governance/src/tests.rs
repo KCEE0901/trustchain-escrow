@@ -7,7 +7,7 @@ mod tests {
     };
 
     use crate::{
-        FundPayload, GovernanceContract, GovernanceContractClient, ParameterPayload,
+        FundPayload, GovError, GovernanceContract, GovernanceContractClient, ParameterPayload,
         ProposalPayload, ProposalStatus, ProposalType,
     };
 
@@ -636,6 +636,129 @@ mod tests {
 
         let result = client.try_update_config(&stranger, &config);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_update_config_caller_and_bounds() {
+        let (env, admin, _ta, _token, client) = setup();
+        let non_admin = Address::generate(&env);
+
+        // Valid config: non-zero voting_period, bps values within 10_000.
+        let mut new_config = client.get_config();
+        new_config.quorum_bps = 1_000;
+        new_config.approval_threshold_bps = 6_000;
+        new_config.voting_period = 7_200;
+
+        // Authorized caller succeeds and the change is persisted.
+        let result = client.try_update_config(&admin, &new_config);
+        assert_eq!(result, Ok(Ok(())));
+        let stored = client.get_config();
+        assert_eq!(stored.quorum_bps, 1_000);
+        assert_eq!(stored.approval_threshold_bps, 6_000);
+        assert_eq!(stored.voting_period, 7_200);
+
+        // Unauthorized caller is rejected with the crate error, not a panic.
+        let result = client.try_update_config(&non_admin, &new_config);
+        assert_eq!(result, Err(Ok(GovError::AdminOnly)));
+
+        // Out-of-range numeric inputs are rejected with the crate error.
+        let mut zero_period = client.get_config();
+        zero_period.voting_period = 0;
+        let result = client.try_update_config(&admin, &zero_period);
+        assert_eq!(result, Err(Ok(GovError::InvalidDuration)));
+
+        let mut bad_quorum = client.get_config();
+        bad_quorum.quorum_bps = 10_001;
+        let result = client.try_update_config(&admin, &bad_quorum);
+        assert_eq!(result, Err(Ok(GovError::InvalidParameter)));
+
+        let mut bad_approval = client.get_config();
+        bad_approval.approval_threshold_bps = 10_001;
+        let result = client.try_update_config(&admin, &bad_approval);
+        assert_eq!(result, Err(Ok(GovError::InvalidParameter)));
+
+        // Boundary values are accepted.
+        let mut max_bps = client.get_config();
+        max_bps.quorum_bps = 10_000;
+        max_bps.approval_threshold_bps = 10_000;
+        let result = client.try_update_config(&admin, &max_bps);
+        assert_eq!(result, Ok(Ok(())));
+    }
+
+    #[test]
+    fn test_set_treasury_caller_and_bounds() {
+        let (env, admin, _ta, _token, client) = setup();
+        let non_admin = Address::generate(&env);
+        let treasury = Address::generate(&env);
+
+        // Authorized caller succeeds.
+        let result = client.try_set_treasury(&admin, &treasury);
+        assert_eq!(result, Ok(Ok(())));
+
+        // Unauthorized caller is rejected with the crate error, not a panic.
+        let other_treasury = Address::generate(&env);
+        let result = client.try_set_treasury(&non_admin, &other_treasury);
+        assert_eq!(result, Err(Ok(GovError::AdminOnly)));
+    }
+
+    #[test]
+    fn test_get_proposal_caller_and_bounds() {
+        let (env, _admin, ta, token, client) = setup();
+        let proposer = Address::generate(&env);
+        mint(&env, &ta, &token, &proposer, THRESHOLD + PROPOSER_DEPOSIT);
+
+        let id = client.create_proposal(
+            &proposer,
+            &str(&env, "T"),
+            &str(&env, "D"),
+            &ProposalType::TextProposal,
+            &ProposalPayload::Text,
+            &10_000i128,
+        );
+
+        // Existing proposal is returned (no caller parameter applies).
+        let p = client.get_proposal(&id);
+        assert_eq!(p.id, id);
+        assert_eq!(p.status, ProposalStatus::Active);
+
+        // Out-of-range IDs return the crate error instead of panicking.
+        let result = client.try_get_proposal(&0u64);
+        assert_eq!(result, Ok(Ok(p)));
+
+        let result = client.try_get_proposal(&u64::MAX);
+        assert_eq!(result, Err(Ok(GovError::ProposalNotFound)));
+    }
+
+    #[test]
+    fn test_proposal_count_caller_and_bounds() {
+        let (env, _admin, ta, token, client) = setup();
+
+        // No caller or numeric argument applies; must not panic.
+        assert_eq!(client.proposal_count(), 0);
+
+        let proposer = Address::generate(&env);
+        mint(&env, &ta, &token, &proposer, THRESHOLD + PROPOSER_DEPOSIT);
+
+        let id = client.create_proposal(
+            &proposer,
+            &str(&env, "T"),
+            &str(&env, "D"),
+            &ProposalType::TextProposal,
+            &ProposalPayload::Text,
+            &10_000i128,
+        );
+        assert_eq!(id, 0);
+        assert_eq!(client.proposal_count(), 1);
+
+        client.create_proposal(
+            &proposer,
+            &str(&env, "T2"),
+            &str(&env, "D2"),
+            &ProposalType::TextProposal,
+            &ProposalPayload::Text,
+            &10_000i128,
+        );
+        assert_eq!(client.proposal_count(), 2);
     }
 
     // ── Full governance lifecycle ─────────────────────────────────────────────

@@ -665,6 +665,9 @@ impl GovernanceContract {
     }
 
     /// Returns the total number of proposals created.
+    ///
+    /// Returns `0` when the contract has not been initialized yet, so callers
+    /// never observe a panic for an uninitialized contract.
     pub fn proposal_count(env: Env) -> u64 {
         env.storage()
             .instance()
