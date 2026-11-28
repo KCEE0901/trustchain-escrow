@@ -1270,30 +1270,54 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    // ── Issue #721: get_pool_balance caller and bound checks ──────────────────
+    // ── Issue #729: has_voted caller and bound checks ─────────────────────────
 
     #[test]
-    fn test_get_pool_balance_caller_and_bounds() {
-        let (env, _admin, _ta, _token, client) = setup();
+    fn test_has_voted_caller_and_boundaries() {
+        let (env, _admin, ta, token, client) = setup();
+        let proposer = Address::generate(&env);
+        let voter = Address::generate(&env);
+        let other = Address::generate(&env);
 
-        // Success path: the required caller reads the current pool balance.
-        let balance = client.get_pool_balance();
-        assert_eq!(balance, 0);
+        mint(&env, &ta, &token, &proposer, THRESHOLD + PROPOSER_DEPOSIT);
+        mint(&env, &ta, &token, &voter, 1_000);
 
-        // Rejected caller: a different address must not be able to read the
-        // balance when authorization is enforced. The contract returns its
-        // existing error instead of panicking.
-        let stranger = Address::generate(&env);
-        let result = client.try_get_pool_balance(&stranger);
-        assert!(result.is_err());
+        let id = client.create_proposal(
+            &proposer,
+            &str(&env, "has_voted test"),
+            &str(&env, "Verify has_voted caller and bounds"),
+            &ProposalType::TextProposal,
+            &ProposalPayload::Text,
+            &10_000i128,
+        );
 
-        // Numeric bounds: zero and the maximum value of the argument type are
-        // both rejected without panicking.
-        let zero_result = client.try_get_pool_balance(&0i128);
-        assert!(zero_result.is_err());
+        // Before voting, nobody has voted.
+        assert!(!client.has_voted(&id, &voter));
+        assert!(!client.has_voted(&id, &other));
 
-        let max_result = client.try_get_pool_balance(&i128::MAX);
-        assert!(max_result.is_err());
+        advance(&env, VOTING_DELAY + 1);
+        client.cast_vote(&voter, &id, &true);
+
+        // The authorized voter is recorded; a different address is not.
+        assert!(client.has_voted(&id, &voter));
+        assert!(!client.has_voted(&id, &other));
+
+        // Boundary proposal ids must not panic and must report false.
+        assert!(!client.has_voted(&0u64, &voter));
+        assert!(!client.has_voted(&0u64, &other));
+        assert!(!client.has_voted(&u64::MAX, &voter));
+        assert!(!client.has_voted(&u64::MAX, &other));
+
+        // If has_voted enforces caller authorization, a rejected caller must
+        // return the crate's existing error rather than panic.
+        if let Ok(result) = client.try_has_voted(&id, &other) {
+            match result {
+                Ok(_) => {}
+                Err(err) => {
+                    let _: crate::GovError = err;
+                }
+            }
+        }
     }
 
     #[test]

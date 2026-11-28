@@ -680,8 +680,22 @@ impl GovernanceContract {
     }
 
     /// Returns whether `voter` has voted on `proposal_id`.
-    pub fn has_voted(env: Env, proposal_id: u64, voter: Address) -> bool {
-        Storage::has_voted(&env, proposal_id, &voter)
+    ///
+    /// # Arguments
+    /// * `proposal_id` - Target proposal. Any `u64` value (including `0` and
+    ///                   `u64::MAX`) is accepted; unknown IDs simply report `false`.
+    /// * `voter`       - Must `require_auth()`; the caller must be `voter`.
+    ///
+    /// # Errors
+    /// * `GovError::NotInitialized` - Contract has not been initialized.
+    pub fn has_voted(
+        env: Env,
+        proposal_id: u64,
+        voter: Address,
+    ) -> Result<bool, GovError> {
+        Storage::require_initialized(&env)?;
+        voter.require_auth();
+        Ok(Storage::has_voted(&env, proposal_id, &voter))
     }
 
     /// Returns the voting power (token balance) of `address`.
