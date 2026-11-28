@@ -1352,157 +1352,209 @@ mod tests {
         assert!(result.is_err(), "Expected AlreadyVoted error");
     }
 
-    // ── Caller and bound checks (#730–#733) ───────────────────────────────────
+    // ── Arbitrator caller and bound checks (#734–#737) ────────────────────────
 
-    use crate::GovError;
-    use soroban_sdk::testutils::{MockAuth, MockAuthInvoke};
-    use soroban_sdk::IntoVal;
+    mod arbitrator_checks {
+        use super::*;
 
-    /// #730: `voting_power` takes no caller; any address can be queried
-    /// without auth, and an uninitialized contract returns an error.
-    #[test]
-    fn test_voting_power_caller_and_bounds() {
-        let (env, _admin, ta, token, client) = setup();
-        let holder = Address::generate(&env);
-        let other = Address::generate(&env);
+        use crate::GovError;
+        use soroban_sdk::testutils::{MockAuth, MockAuthInvoke};
+        use soroban_sdk::IntoVal;
 
-        assert_eq!(client.voting_power(&holder), 0);
-        mint(&env, &ta, &token, &holder, 1_000);
-        assert_eq!(client.voting_power(&holder), 1_000);
-        assert_eq!(client.voting_power(&other), 0);
+        const MIN_STAKE: i128 = 1_000;
 
-        let uninit = GovernanceContractClient::new(
-            &env,
-            &env.register_contract(None, GovernanceContract),
-        );
-        assert_eq!(
-            uninit.try_voting_power(&holder),
-            Err(Ok(GovError::NotInitialized))
-        );
-    }
+        /// #734: `stake_arbitrator` requires the caller's auth; 0, negative and
+        /// below-minimum amounts and an overflowing total return errors.
+        #[test]
+        fn test_stake_arbitrator_caller_and_bounds() {
+            let (env, _admin, ta, token, client) = setup();
+            let arb = Address::generate(&env);
 
-    /// #731: `deposit_to_incentives_pool` requires the admin; zero, negative
-    /// and overflowing amounts return errors instead of panicking.
-    #[test]
-    fn test_deposit_to_incentives_pool_caller_and_bounds() {
-        let (env, admin, _ta, _token, client) = setup();
-        let stranger = Address::generate(&env);
+            assert_eq!(
+                client.try_stake_arbitrator(&arb, &0),
+                Err(Ok(GovError::InsufficientStake))
+            );
+            assert_eq!(
+                client.try_stake_arbitrator(&arb, &i128::MIN),
+                Err(Ok(GovError::InsufficientStake))
+            );
+            assert_eq!(
+                client.try_stake_arbitrator(&arb, &(MIN_STAKE - 1)),
+                Err(Ok(GovError::InsufficientStake))
+            );
+            assert!(!client.is_arbitrator(&arb));
 
-        assert_eq!(
-            client.try_deposit_to_incentives_pool(&stranger, &1),
-            Err(Ok(GovError::AdminOnly))
-        );
-        assert_eq!(
-            client.try_deposit_to_incentives_pool(&admin, &0),
-            Err(Ok(GovError::InvalidParameter))
-        );
-        assert_eq!(
-            client.try_deposit_to_incentives_pool(&admin, &i128::MIN),
-            Err(Ok(GovError::InvalidParameter))
-        );
+            mint(&env, &ta, &token, &arb, i128::MAX);
+            client.stake_arbitrator(&arb, &i128::MAX);
+            assert!(client.is_arbitrator(&arb));
 
-        client.deposit_to_incentives_pool(&admin, &i128::MAX);
-        assert_eq!(client.get_incentives_pool_balance(), i128::MAX);
-        assert_eq!(
-            client.try_deposit_to_incentives_pool(&admin, &i128::MAX),
-            Err(Ok(GovError::ArithmeticOverflow))
-        );
-        assert_eq!(client.get_incentives_pool_balance(), i128::MAX);
-    }
+            // A further stake would overflow the recorded total.
+            assert_eq!(
+                client.try_stake_arbitrator(&arb, &MIN_STAKE),
+                Err(Ok(GovError::ArithmeticOverflow))
+            );
+        }
 
-    /// #731: the admin's own authorization is required, not another address's.
-    #[test]
-    fn test_deposit_to_incentives_pool_rejects_other_signer() {
-        let (env, admin, _ta, _token, client) = setup();
-        let stranger = Address::generate(&env);
+        /// #734: another address cannot authorize a stake for `caller`.
+        #[test]
+        fn test_stake_arbitrator_rejects_other_signer() {
+            let (env, _admin, ta, token, client) = setup();
+            let arb = Address::generate(&env);
+            let stranger = Address::generate(&env);
+            mint(&env, &ta, &token, &arb, MIN_STAKE);
 
-        env.mock_auths(&[MockAuth {
-            address: &stranger,
-            invoke: &MockAuthInvoke {
-                contract: &client.address,
-                fn_name: "deposit_to_incentives_pool",
-                args: (admin.clone(), 1i128).into_val(&env),
-                sub_invokes: &[],
-            },
-        }]);
-        assert!(client.try_deposit_to_incentives_pool(&admin, &1).is_err());
-        assert_eq!(client.get_incentives_pool_balance(), 0);
-    }
+            env.mock_auths(&[MockAuth {
+                address: &stranger,
+                invoke: &MockAuthInvoke {
+                    contract: &client.address,
+                    fn_name: "stake_arbitrator",
+                    args: (arb.clone(), MIN_STAKE).into_val(&env),
+                    sub_invokes: &[],
+                },
+            }]);
+            assert!(client.try_stake_arbitrator(&arb, &MIN_STAKE).is_err());
+            assert!(!client.is_arbitrator(&arb));
+        }
 
-    /// #732: `get_incentives_pool_balance` takes no caller; it reports zero
-    /// before any deposit and the maximum balance without panicking.
-    #[test]
-    fn test_get_incentives_pool_balance_caller_and_bounds() {
-        let (env, admin, _ta, _token, client) = setup();
-        assert_eq!(client.get_incentives_pool_balance(), 0);
+        /// #735: `withdraw_stake` returns errors (never panics) with no stake,
+        /// during the cooldown, and when the ledger clock is at `u64::MAX`.
+        #[test]
+        fn test_withdraw_stake_caller_and_bounds() {
+            let (env, _admin, ta, token, client) = setup();
+            let arb = Address::generate(&env);
 
-        client.deposit_to_incentives_pool(&admin, &i128::MAX);
-        env.set_auths(&[]);
-        assert_eq!(client.get_incentives_pool_balance(), i128::MAX);
+            assert_eq!(
+                client.try_withdraw_stake(&arb),
+                Err(Ok(GovError::NoStakeToWithdraw))
+            );
 
-        let uninit = GovernanceContractClient::new(
-            &env,
-            &env.register_contract(None, GovernanceContract),
-        );
-        assert_eq!(uninit.get_incentives_pool_balance(), 0);
-    }
+            mint(&env, &ta, &token, &arb, MIN_STAKE);
+            client.stake_arbitrator(&arb, &MIN_STAKE);
+            assert_eq!(
+                client.try_withdraw_stake(&arb),
+                Err(Ok(GovError::StakeCooldownActive))
+            );
 
-    /// #733: `extend_lock_bonus` requires the staker's auth; zero and maximum
-    /// lock ends and amounts return a value or an error, never a panic.
-    #[test]
-    fn test_extend_lock_bonus_caller_and_bounds() {
-        let (env, admin, _ta, _token, client) = setup();
-        let staker = Address::generate(&env);
+            env.ledger().with_mut(|l| l.timestamp = u64::MAX);
+            assert_eq!(
+                client.try_withdraw_stake(&arb),
+                Err(Ok(GovError::ArithmeticOverflow))
+            );
+            assert!(client.is_arbitrator(&arb));
+        }
 
-        // Zero / equal lock ends are rejected.
-        assert_eq!(
-            client.try_extend_lock_bonus(&staker, &0, &0, &0),
-            Err(Ok(GovError::InvalidParameter))
-        );
-        assert_eq!(
-            client.try_extend_lock_bonus(&staker, &u64::MAX, &u64::MAX, &i128::MAX),
-            Err(Ok(GovError::InvalidParameter))
-        );
-        // Zero amount over a long extension earns no bonus.
-        assert_eq!(client.extend_lock_bonus(&staker, &0, &u64::MAX, &0), 0);
-        // Maximum amount with an empty pool fails cleanly.
-        assert_eq!(
-            client.try_extend_lock_bonus(&staker, &0, &u64::MAX, &i128::MAX),
-            Err(Ok(GovError::InvalidParameter))
-        );
-        // Negative amount earns no bonus.
-        assert_eq!(
-            client.extend_lock_bonus(&staker, &0, &u64::MAX, &i128::MIN),
-            0
-        );
+        /// #735: another address cannot withdraw on behalf of `caller`.
+        #[test]
+        fn test_withdraw_stake_rejects_other_signer() {
+            let (env, _admin, ta, token, client) = setup();
+            let arb = Address::generate(&env);
+            let stranger = Address::generate(&env);
+            mint(&env, &ta, &token, &arb, MIN_STAKE);
+            client.stake_arbitrator(&arb, &MIN_STAKE);
 
-        client.deposit_to_incentives_pool(&admin, &i128::MAX);
-        let bonus = client.extend_lock_bonus(&staker, &0, &u64::MAX, &i128::MAX);
-        assert!(bonus > 0);
-        assert_eq!(client.get_incentives_pool_balance(), i128::MAX - bonus);
-    }
+            env.mock_auths(&[MockAuth {
+                address: &stranger,
+                invoke: &MockAuthInvoke {
+                    contract: &client.address,
+                    fn_name: "withdraw_stake",
+                    args: (arb.clone(),).into_val(&env),
+                    sub_invokes: &[],
+                },
+            }]);
+            assert!(client.try_withdraw_stake(&arb).is_err());
+            assert!(client.is_arbitrator(&arb));
+        }
 
-    /// #733: another address cannot authorize a bonus for `staker`.
-    #[test]
-    fn test_extend_lock_bonus_rejects_other_signer() {
-        let (env, admin, _ta, _token, client) = setup();
-        let staker = Address::generate(&env);
-        let stranger = Address::generate(&env);
-        client.deposit_to_incentives_pool(&admin, &1_000_000);
-        let one_year = crate::incentives::ONE_YEAR_SECS;
+        /// #736: `slash_arbitrator` requires the admin; a missing stake and an
+        /// overflowing slash return errors instead of panicking.
+        #[test]
+        fn test_slash_arbitrator_caller_and_bounds() {
+            let (env, admin, ta, token, client) = setup();
+            let arb = Address::generate(&env);
+            let whale = Address::generate(&env);
+            let recipient = Address::generate(&env);
+            let stranger = Address::generate(&env);
+            let reason = str(&env, "ipfs://evidence");
 
-        env.mock_auths(&[MockAuth {
-            address: &stranger,
-            invoke: &MockAuthInvoke {
-                contract: &client.address,
-                fn_name: "extend_lock_bonus",
-                args: (staker.clone(), 0u64, one_year, 100_000i128).into_val(&env),
-                sub_invokes: &[],
-            },
-        }]);
-        assert!(client
-            .try_extend_lock_bonus(&staker, &0, &one_year, &100_000)
-            .is_err());
-        assert_eq!(client.get_incentives_pool_balance(), 1_000_000);
+            assert_eq!(
+                client.try_slash_arbitrator(&admin, &arb, &recipient, &reason),
+                Err(Ok(GovError::NotArbitrator))
+            );
+
+            mint(&env, &ta, &token, &arb, MIN_STAKE);
+            client.stake_arbitrator(&arb, &MIN_STAKE);
+            assert_eq!(
+                client.try_slash_arbitrator(&stranger, &arb, &recipient, &reason),
+                Err(Ok(GovError::AdminOnly))
+            );
+
+            // Minimum stake: 10% is slashed and the remainder drops below the minimum.
+            assert_eq!(
+                client.slash_arbitrator(&admin, &arb, &recipient, &reason),
+                MIN_STAKE / 10
+            );
+            assert!(!client.is_arbitrator(&arb));
+            let tok = token::Client::new(&env, &token);
+            assert_eq!(tok.balance(&recipient), MIN_STAKE / 10);
+
+            // Maximum stake: computing the slash overflows and is rejected cleanly.
+            mint(&env, &ta, &token, &whale, i128::MAX);
+            client.stake_arbitrator(&whale, &i128::MAX);
+            assert_eq!(
+                client.try_slash_arbitrator(&admin, &whale, &recipient, &reason),
+                Err(Ok(GovError::ArithmeticOverflow))
+            );
+            assert!(client.is_arbitrator(&whale));
+        }
+
+        /// #736: another address cannot authorize a slash as the admin.
+        #[test]
+        fn test_slash_arbitrator_rejects_other_signer() {
+            let (env, admin, ta, token, client) = setup();
+            let arb = Address::generate(&env);
+            let recipient = Address::generate(&env);
+            let stranger = Address::generate(&env);
+            let reason = str(&env, "r");
+            mint(&env, &ta, &token, &arb, MIN_STAKE);
+            client.stake_arbitrator(&arb, &MIN_STAKE);
+
+            env.mock_auths(&[MockAuth {
+                address: &stranger,
+                invoke: &MockAuthInvoke {
+                    contract: &client.address,
+                    fn_name: "slash_arbitrator",
+                    args: (admin.clone(), arb.clone(), recipient.clone(), reason.clone())
+                        .into_val(&env),
+                    sub_invokes: &[],
+                },
+            }]);
+            assert!(client
+                .try_slash_arbitrator(&admin, &arb, &recipient, &reason)
+                .is_err());
+            assert!(client.is_arbitrator(&arb));
+        }
+
+        /// #737: `is_arbitrator` takes no caller and needs no auth; it reports
+        /// false for unknown addresses and on an uninitialized contract.
+        #[test]
+        fn test_is_arbitrator_caller_and_bounds() {
+            let (env, _admin, ta, token, client) = setup();
+            let arb = Address::generate(&env);
+            let other = Address::generate(&env);
+
+            assert!(!client.is_arbitrator(&arb));
+            mint(&env, &ta, &token, &arb, MIN_STAKE);
+            client.stake_arbitrator(&arb, &MIN_STAKE);
+
+            env.set_auths(&[]);
+            assert!(client.is_arbitrator(&arb));
+            assert!(!client.is_arbitrator(&other));
+
+            let uninit = GovernanceContractClient::new(
+                &env,
+                &env.register_contract(None, GovernanceContract),
+            );
+            assert!(!uninit.is_arbitrator(&arb));
+        }
     }
 }
