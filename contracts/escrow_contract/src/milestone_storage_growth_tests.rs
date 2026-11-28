@@ -289,4 +289,34 @@ mod milestone_storage_growth_tests {
         );
         assert_eq!(s.client.get_milestone_by_index(&s.escrow_id, &0).id, 0);
     }
+
+    /// Issue #669: lookup by milestone_id uses PackedDataKey (not a Vec scan).
+    #[test]
+    fn get_milestone_by_id_with_three_milestones() {
+        let s = setup();
+        let id0 = add(&s, "first");
+        let id1 = add(&s, "second");
+        let id2 = add(&s, "third");
+        assert_eq!(id0, 0);
+        assert_eq!(id1, 1);
+        assert_eq!(id2, 2);
+
+        let mid = s.client.get_milestone(&s.escrow_id, &id1);
+        assert_eq!(mid.id, id1);
+        assert_eq!(mid.title, String::from_str(&s.env, "second"));
+
+        // Direct persistent key — proves the map is the source of truth.
+        let stored = s.env.as_contract(&s.contract_id, || {
+            s.env.storage()
+                .persistent()
+                .get::<_, Milestone>(&PackedDataKey::Milestone(s.escrow_id, id1))
+                .expect("milestone must be stored under PackedDataKey::Milestone")
+        });
+        assert_eq!(stored.id, id1);
+
+        assert_eq!(
+            s.client.try_get_milestone(&s.escrow_id, &99),
+            Err(Ok(EscrowError::E13))
+        );
+    }
 }
