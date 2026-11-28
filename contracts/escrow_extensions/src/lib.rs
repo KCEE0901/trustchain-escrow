@@ -673,4 +673,27 @@ impl EscrowExtensions {
     }
 }
 
+// ── get_pending_upgrade helpers ───────────────────────────────────────────────
+
+/// Pure argument checks for `get_pending_upgrade`.
+///
+/// Performs no storage writes and returns the existing `ExtError` variants
+/// so callers observe identical errors.
+fn validate_pending_upgrade(env: &Env) -> Result<(), ExtError> {
+    if !env.storage().instance().has(&DataKey::Admin) {
+        return Err(ExtError::NotInitialized);
+    }
+    Ok(())
+}
+
+/// Post-transfer storage update for `get_pending_upgrade`.
+///
+/// Kept separate so a failure after the transfer can be tested in isolation.
+fn write_pending_upgrade(env: &Env, pending: &PendingUpgrade) {
+    env.storage()
+        .instance()
+        .set(&DataKey::PendingUpgrade, pending);
+    bump_instance(env);
+}
+
 mod tests;

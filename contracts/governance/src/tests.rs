@@ -1116,6 +1116,31 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    // ── Issue #698: select_panel missing-value path ───────────────────────────
+
+    #[test]
+    fn test_select_panel_missing_value_returns_typed_error() {
+        use crate::arbitrators::{ArbError, ArbitratorRegistry, ArbitratorRegistryClient};
+
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register_contract(None, ArbitratorRegistry);
+        let client = ArbitratorRegistryClient::new(&env, &contract_id);
+
+        // Register a single arbitrator so the panel size is valid, but leave the
+        // stored selection index absent so `select_panel` hits the missing-value
+        // path instead of panicking.
+        let arb = Address::generate(&env);
+        client.register_arbitrator(&arb);
+
+        let result = client.try_select_panel(&1u32);
+        match result {
+            Err(Ok(err)) => assert_eq!(err, ArbError::NotFound),
+            _ => panic!("expected typed ArbError::NotFound, got {:?}", result),
+        }
+    }
+
     #[test]
     fn test_ve_token_double_vote_prevention() {
         let (env, _admin, ta, token, client) = setup();

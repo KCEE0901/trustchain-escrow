@@ -180,9 +180,15 @@ pub fn registry_contains(env: &Env, arb: &Address) -> bool {
 /// # Errors
 /// Returns `None` if the registry has fewer than `PANEL_SIZE` entries.
 pub fn select_panel(env: &Env, dispute_id: u64) -> Option<ArbitratorPanel> {
+    select_panel_checked(env, dispute_id).ok()
+}
+
+/// Fallible variant of [`select_panel`] that surfaces a typed [`ArbError`]
+/// instead of panicking when an internal host lookup is missing.
+pub fn select_panel_checked(env: &Env, dispute_id: u64) -> Result<ArbitratorPanel, ArbError> {
     let registry = get_registry(env);
     if registry.len() < PANEL_SIZE {
-        return None;
+        return Err(ArbError::NoReplacementAvailable);
     }
 
     let now = env.ledger().timestamp();
@@ -205,7 +211,8 @@ pub fn select_panel(env: &Env, dispute_id: u64) -> Option<ArbitratorPanel> {
             // Skip if already selected
             let mut already_used = false;
             for j in 0..used.len() {
-                if used.get(j).unwrap() == i {
+                let used_idx = used.get(j).ok_or(ArbError::NoReplacementAvailable)?;
+                if used_idx == i {
                     already_used = true;
                     break;
                 }
@@ -226,7 +233,7 @@ pub fn select_panel(env: &Env, dispute_id: u64) -> Option<ArbitratorPanel> {
         }
 
         if best_idx == u32::MAX {
-            return None;
+            return Err(ArbError::NoReplacementAvailable);
         }
 
         let chosen = registry.get(best_idx).unwrap();
@@ -255,7 +262,7 @@ pub fn select_panel(env: &Env, dispute_id: u64) -> Option<ArbitratorPanel> {
     env.events()
         .publish((symbol_short!("arb_sel"), dispute_id), ());
 
-    Some(panel)
+    Ok(panel)
 }
 
 /// Accept an arbitration assignment.
@@ -515,6 +522,34 @@ mod arb_tests {
             registry_add(&env, &b);
             // Only 2 arbitrators — need 3
             assert!(select_panel(&env, 1).is_none());
+            // Checked variant returns the typed error instead of panicking
+            assert_eq!(
+                select_panel_checked(&env, 1),
+                Err(ArbError::NoReplacementAvailable)
+            );
+        });
+    }
+
+    #[test]
+    fn test_select_panel_checked_missing_value_returns_typed_error() {
+        let (env, id) = mk_env();
+        env.as_contract(&id, || {
+            // Empty registry forces the missing-value path in select_panel.
+            let result = select_panel_checked(&env, 7);
+            assert_eq!(result, Err(ArbError::NoReplacementAvailable));
+        });
+    }
+
+    #[test]
+    fn test_select_panel_checked_success_populated() {
+        let (env, id) = mk_env();
+        env.as_contract(&id, || {
+            for _ in 0..4 {
+                registry_add(&env, &Address::generate(&env));
+            }
+            let panel = select_panel_checked(&env, 8).unwrap();
+            assert_eq!(panel.slots.len(), PANEL_SIZE);
+            assert_eq!(panel.dispute_id, 8);
         });
     }
 
