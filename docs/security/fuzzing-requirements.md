@@ -191,6 +191,11 @@ mod roundtrip_tests {
 
 Apply the same pattern to every other `#[contracttype]` struct in the contract (e.g., `Milestone`, `EscrowStatus`, `MilestoneStatus`).
 
+### Round-trip coverage (issue batches)
+
+- `ArbitrationDispute`
+- `FundInfo`
+
 ---
 
 ## Regression Test Requirement

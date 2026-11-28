@@ -44,44 +44,6 @@ import {
   broadcastTransaction,
 } from '../../../lib/stellar';
 
-// Fallback data used while the API integration (Issue #34) is pending.
-const PLACEHOLDER_ESCROW = {
-  id: 1,
-  title: 'Smart Contract Audit',
-  status: 'Active',
-  txHash: 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2', // TODO: replace with real tx hash
-  clientAddress: 'GABCD...1234',
-  freelancerAddress: 'GXYZ...5678',
-  totalAmount: '2,000 USDC',
-  remainingBalance: '1,500 USDC',
-  createdAt: '2025-03-01',
-  deadline: '2025-04-01',
-  transactionHash: 'a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6a7b8c9d0e1f2',
-  milestones: [
-    {
-      id: 0,
-      title: 'Codebase Review',
-      amount: '500 USDC',
-      status: 'Approved',
-      submittedAt: '2025-03-05',
-    },
-    {
-      id: 1,
-      title: 'Vulnerability Report',
-      amount: '1,000 USDC',
-      status: 'Submitted',
-      submittedAt: '2025-03-12',
-    },
-    {
-      id: 2,
-      title: 'Final Sign-off',
-      amount: '500 USDC',
-      status: 'Pending',
-      submittedAt: null,
-    },
-  ],
-};
-
 export default function EscrowDetailPage({ params }) {
   const { id } = params;
   const [isDisputeOpen, setDisputeOpen] = useState(false);
@@ -90,13 +52,10 @@ export default function EscrowDetailPage({ params }) {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isActionLoading, setIsActionLoading] = useState(false);
 
-  const { escrow: fetchedEscrow, isLoading, mutate } = useEscrow(id);
+  const { escrow: fetchedEscrow, isLoading, error, mutate } = useEscrow(id);
   const { address, signTx } = useWallet();
   const relativeTime = useRelativeTime(lastRefreshed);
   const { showToast } = useToast();
-
-  // Use fetched data when available, fall back to placeholder during development.
-  const escrow = fetchedEscrow ?? PLACEHOLDER_ESCROW;
 
   // Update the last-refreshed timestamp whenever data arrives from SWR
   // (initial load, scheduled poll, or manual refresh).
@@ -210,6 +169,37 @@ export default function EscrowDetailPage({ params }) {
       </div>
     );
   }
+
+  if (error) {
+    return (
+      <div className="max-w-lg mx-auto space-y-4 text-center py-16">
+        <h1 className="text-xl font-semibold text-white">Unable to load escrow</h1>
+        <p className="text-gray-400 text-sm">{error.message || 'The request failed.'}</p>
+        <div className="flex justify-center gap-3">
+          <Button variant="secondary" onClick={handleRefresh} disabled={isRefreshing}>
+            {isRefreshing ? 'Retrying…' : 'Retry'}
+          </Button>
+          <Button variant="ghost" onClick={() => window.history.back()}>
+            Go back
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!fetchedEscrow) {
+    return (
+      <div className="max-w-lg mx-auto space-y-4 text-center py-16">
+        <h1 className="text-xl font-semibold text-white">Escrow not found</h1>
+        <p className="text-gray-400 text-sm">No escrow exists for #{id}.</p>
+        <Button variant="secondary" onClick={() => window.history.back()}>
+          Back to explorer
+        </Button>
+      </div>
+    );
+  }
+
+  const escrow = fetchedEscrow;
 
   return (
     <div className="space-y-8 max-w-4xl mx-auto">

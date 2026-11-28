@@ -159,3 +159,34 @@ pub struct SlashProposal {
     pub status: SlashStatus,
     pub created_at: u64,
 }
+
+#[cfg(test)]
+mod fundinfo_roundtrip_tests {
+    use super::*;
+    use soroban_sdk::{Env, IntoVal, TryFromVal, Val};
+    #[test]
+    fn fundinfo_scval_roundtrip() {
+        let env = Env::default();
+        let zero = FundInfo {
+            total_contributed: 0,
+            total_paid_out: 0,
+            current_balance: 0,
+            total_claims: 0,
+            paid_claims: 0,
+            governor_count: 0,
+        };
+        let back = FundInfo::try_from_val(&env, &zero.clone().into_val(&env)).unwrap();
+        assert_eq!(back.governor_count, 0);
+        let nz = FundInfo {
+            total_contributed: 1,
+            total_paid_out: 2,
+            current_balance: 3,
+            total_claims: 4,
+            paid_claims: 5,
+            governor_count: 6,
+        };
+        let back2 = FundInfo::try_from_val(&env, &nz.clone().into_val(&env)).unwrap();
+        assert_eq!(back2.governor_count, 6);
+
+    }
+}
