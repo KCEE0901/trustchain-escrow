@@ -47,6 +47,8 @@ const INSTANCE_TTL_THRESHOLD: u32 = 5_000;
 const INSTANCE_TTL_EXTEND_TO: u32 = 50_000;
 const PERSISTENT_TTL_THRESHOLD: u32 = 5_000;
 const PERSISTENT_TTL_EXTEND_TO: u32 = 50_000;
+/// Upper bound on the number of registered governors.
+const MAX_GOVERNORS: u32 = 32;
 
 /// Default claim expiry window in ledgers (~7 days at 5 s/ledger).
 const DEFAULT_CLAIM_EXPIRY_LEDGERS: u64 = 120_960;
@@ -499,6 +501,17 @@ impl InsuranceContract {
         caller.require_auth();
         Storage::require_initialized(&env)?;
 
+        // Bound check: claim ids are assigned sequentially from 0, so any id at
+        // or beyond the counter cannot exist. Reject before touching storage.
+        let next_id: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::ClaimCounter)
+            .unwrap_or(0_u32);
+        if claim_id >= next_id {
+            return Err(InsuranceError::ClaimNotFound);
+        }
+
         let mut claim = Storage::load_claim(&env, claim_id)?;
         if claim.claimant != caller {
             return Err(InsuranceError::Unauthorized);
@@ -585,13 +598,23 @@ impl InsuranceContract {
 
     /// Execute the payout for an approved claim.
     ///
-    /// Anyone can trigger this once the claim is `Approved` — the tokens
-    /// always go to the original claimant.
+    /// Only a registered governor may trigger the payout — the tokens always
+    /// go to the original claimant.
     ///
     /// # Arguments
+    /// * `caller`   - Must `require_auth()` and be a registered governor.
     /// * `claim_id` - Must be in `Approved` state.
-    pub fn execute_payout(env: Env, claim_id: u32) -> Result<(), InsuranceError> {
+    pub fn execute_payout(
+        env: Env,
+        caller: Address,
+        claim_id: u32,
+    ) -> Result<(), InsuranceError> {
+        caller.require_auth();
         Storage::require_initialized(&env)?;
+
+        if !Storage::is_governor(&env, &caller) {
+            return Err(InsuranceError::NotGovernor);
+        }
 
         let mut claim = Storage::load_claim(&env, claim_id)?;
         if claim.status != ClaimStatus::Approved {
@@ -599,6 +622,13 @@ impl InsuranceContract {
         }
 
         let amount = claim.amount;
+        if amount <= 0 {
+            return Err(InsuranceError::InvalidClaimAmount);
+        }
+        if amount > Storage::get_claim_cap(&env) {
+            return Err(InsuranceError::ClaimExceedsCap);
+        }
+
         let token = token::Client::new(&env, &Storage::get_token(&env));
         let balance = token.balance(&env.current_contract_address());
         if balance < amount {
@@ -624,6 +654,10 @@ impl InsuranceContract {
     // ── Governance management ─────────────────────────────────────────────────
 
     /// Admin registers a new governor.
+    ///
+    /// Rejects callers that are not the admin (`AdminOnly`) and rejects
+    /// registration once `MAX_GOVERNORS` governors are registered
+    /// (`InvalidAmount`).
     pub fn add_governor(
         env: Env,
         caller: Address,
@@ -636,9 +670,13 @@ impl InsuranceContract {
             return Err(InsuranceError::GovernorAlreadyExists);
         }
 
+        let mut stats = Storage::load_stats(&env);
+        if stats.governor_count >= MAX_GOVERNORS {
+            return Err(InsuranceError::InvalidAmount);
+        }
+
         Storage::add_governor(&env, &governor);
 
-        let mut stats = Storage::load_stats(&env);
         stats.governor_count += 1;
         Storage::save_stats(&env, &stats);
 
@@ -647,6 +685,16 @@ impl InsuranceContract {
     }
 
     /// Admin removes a governor.
+    ///
+    /// # Arguments
+    /// * `caller`   - Must `require_auth()` and be the registered admin.
+    /// * `governor` - Must be a currently registered governor.
+    ///
+    /// # Errors
+    /// * `AdminOnly`         - `caller` is not the admin.
+    /// * `GovernorNotFound`  - `governor` is not registered.
+    /// * `InvalidAmount`     - Removing would leave the governor count out of
+    ///   range (i.e. the stored count is already zero).
     pub fn remove_governor(
         env: Env,
         caller: Address,
@@ -659,10 +707,14 @@ impl InsuranceContract {
             return Err(InsuranceError::GovernorNotFound);
         }
 
+        let mut stats = Storage::load_stats(&env);
+        if stats.governor_count == 0 {
+            return Err(InsuranceError::InvalidAmount);
+        }
+
         Storage::remove_governor(&env, &governor);
 
-        let mut stats = Storage::load_stats(&env);
-        stats.governor_count = stats.governor_count.saturating_sub(1);
+        stats.governor_count -= 1;
         Storage::save_stats(&env, &stats);
 
         events::emit_governor_removed(&env, &governor);
@@ -1224,6 +1276,26 @@ mod tests {
         assert_eq!(claim.status, ClaimStatus::Withdrawn);
     }
 
+    #[test]
+    fn test_withdraw_claim_rejects_unauthorized_caller_and_out_of_range_id() {
+        let s = setup();
+        let claimant = Address::generate(&s.env);
+        let other = Address::generate(&s.env);
+        let desc = String::from_str(&s.env, "Claim");
+        let id = s.client.submit_claim(&claimant, &desc, &100_i128);
+
+        // Rejected caller: must return an error, never panic.
+        let unauthorized = s.client.try_withdraw_claim(&other, &id);
+        assert_eq!(unauthorized, Err(Ok(InsuranceError::Unauthorized)));
+
+        // Out-of-range claim id: must return an error, never panic.
+        let out_of_range = s.client.try_withdraw_claim(&claimant, &u32::MAX);
+        assert_eq!(out_of_range, Err(Ok(InsuranceError::ClaimNotFound)));
+
+        // Claim is untouched by the rejected attempts.
+        assert_eq!(s.client.get_claim(&id).status, ClaimStatus::Pending);
+    }
+
     // ── Governance ────────────────────────────────────────────────────────────
 
     #[test]
@@ -1239,6 +1311,31 @@ mod tests {
 
         s.client.remove_governor(&s.admin, &gov);
         assert!(!s.client.is_governor(&gov));
+    }
+
+    #[test]
+    fn test_add_governor_rejects_unauthorized_caller_and_bound() {
+        let s = setup();
+        let stranger = Address::generate(&s.env);
+        let gov = Address::generate(&s.env);
+
+        // Non-admin caller is rejected with the crate error, not a panic.
+        let result = s.client.try_add_governor(&stranger, &gov);
+        assert_eq!(result, Err(Ok(InsuranceError::AdminOnly)));
+        assert!(!s.client.is_governor(&gov));
+
+        // Fill the governor set up to the bound.
+        for _ in 0..MAX_GOVERNORS {
+            let g = Address::generate(&s.env);
+            s.client.add_governor(&s.admin, &g);
+        }
+        assert_eq!(s.client.get_fund_info().governor_count, MAX_GOVERNORS);
+
+        // One more governor is out of range and rejected without panicking.
+        let extra = Address::generate(&s.env);
+        let result = s.client.try_add_governor(&s.admin, &extra);
+        assert_eq!(result, Err(Ok(InsuranceError::InvalidAmount)));
+        assert!(!s.client.is_governor(&extra));
     }
 
     #[test]
@@ -1323,7 +1420,7 @@ mod tests {
         s.client.vote(&gov1, &id, &true);
         s.client.vote(&gov2, &id, &true);
 
-        s.client.execute_payout(&id);
+        s.client.execute_payout(&gov1, &id);
 
         let token_client = token::Client::new(&s.env, &s.token_id);
         assert_eq!(token_client.balance(&claimant), 1_000_i128);
