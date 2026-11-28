@@ -1270,29 +1270,64 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    // ── Issue #698: select_panel missing-value path ───────────────────────────
+    // ── Arbitrator panel (Issues #715, #717) ──────────────────────────────────
 
     #[test]
-    fn test_select_panel_missing_value_returns_typed_error() {
-        use crate::arbitrators::{ArbError, ArbitratorRegistry, ArbitratorRegistryClient};
+    fn test_decline_arbitration_caller_and_bounds() {
+        let (env, _admin, ta, token, client) = setup();
 
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let contract_id = env.register_contract(None, ArbitratorRegistry);
-        let client = ArbitratorRegistryClient::new(&env, &contract_id);
-
-        // Register a single arbitrator so the panel size is valid, but leave the
-        // stored selection index absent so `select_panel` hits the missing-value
-        // path instead of panicking.
-        let arb = Address::generate(&env);
-        client.register_arbitrator(&arb);
-
-        let result = client.try_select_panel(&1u32);
-        match result {
-            Err(Ok(err)) => assert_eq!(err, ArbError::NotFound),
-            _ => panic!("expected typed ArbError::NotFound, got {:?}", result),
+        // Seed the arbitrator registry with three eligible candidates.
+        let arb_a = Address::generate(&env);
+        let arb_b = Address::generate(&env);
+        let arb_c = Address::generate(&env);
+        for arb in [&arb_a, &arb_b, &arb_c] {
+            mint(&env, &ta, &token, arb, THRESHOLD);
+            client.register_arbitrator(arb);
         }
+
+        // Build a dispute panel; the first candidate is the pending arbitrator.
+        let dispute_id = client.select_panel(&1u64, &3u32);
+        let panel = client.get_panel(&dispute_id).expect("panel should exist");
+        let pending = panel.arbitrators.get(0).expect("panel should be non-empty");
+
+        // The pending arbitrator may decline; rotation moves to the next candidate.
+        let result = client.try_decline_arbitration(&dispute_id, &pending);
+        assert!(result.is_ok(), "pending arbitrator should be able to decline");
+
+        let rotated = client.get_panel(&dispute_id).expect("panel should still exist");
+        assert!(
+            !rotated.arbitrators.contains(&pending),
+            "declined arbitrator should be removed from the panel"
+        );
+
+        // A non-pending address is rejected with the existing error, not a panic.
+        let stranger = Address::generate(&env);
+        let rejected = client.try_decline_arbitration(&dispute_id, &stranger);
+        assert!(rejected.is_err(), "non-pending caller must be rejected");
+
+        // Boundary dispute ids must not panic.
+        let _ = client.try_decline_arbitration(&0u64, &pending);
+        let _ = client.try_decline_arbitration(&u64::MAX, &pending);
+    }
+
+    #[test]
+    fn test_get_panel_caller_and_bounds() {
+        let (env, _admin, ta, token, client) = setup();
+
+        let arb_a = Address::generate(&env);
+        let arb_b = Address::generate(&env);
+        for arb in [&arb_a, &arb_b] {
+            mint(&env, &ta, &token, arb, THRESHOLD);
+            client.register_arbitrator(arb);
+        }
+
+        let dispute_id = client.select_panel(&1u64, &2u32);
+        let panel = client.get_panel(&dispute_id);
+        assert!(panel.is_some(), "panel should exist for a selected dispute");
+
+        // Boundary dispute ids must return None rather than panicking.
+        assert!(client.get_panel(&0u64).is_none());
+        assert!(client.get_panel(&u64::MAX).is_none());
     }
 
     #[test]

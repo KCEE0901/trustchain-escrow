@@ -328,6 +328,39 @@ mod bridge_tests {
         assert_eq!(stored.bridge, BridgeProtocol::Wormhole);
     }
 
+    // ── AC: get_bridge_confirmation caller/bounds checks ─────────────────────
+
+    #[test]
+    fn test_get_bridge_confirmation_caller_and_bounds() {
+        // `get_bridge_confirmation(env, token)` is a read-only view: it takes no
+        // caller argument and no numeric argument, so there is no caller to
+        // authorize and no numeric bound to exercise. The test still fails if
+        // the function panics on any input (registered or unregistered token).
+        let (env, admin, client) = setup();
+        let token = Address::generate(&env);
+
+        // Unregistered token: must return None without panicking.
+        assert!(client.get_bridge_confirmation(&token).is_none());
+
+        // Register the wrapped token and record confirmation state.
+        client.register_wrapped_token(&admin, &make_wrapped_token_info(&env, token.clone(), true));
+        client.update_bridge_confirmation(
+            &token,
+            &BridgeProtocol::Wormhole,
+            &MIN_BRIDGE_CONFIRMATIONS,
+        );
+
+        // Success result is preserved.
+        let conf = client.get_bridge_confirmation(&token).unwrap();
+        assert_eq!(conf.confirmations, MIN_BRIDGE_CONFIRMATIONS);
+        assert!(conf.is_finalized);
+        assert_eq!(conf.bridge, BridgeProtocol::Wormhole);
+
+        // A different (unregistered) address still returns None without panicking.
+        let other = Address::generate(&env);
+        assert!(client.get_bridge_confirmation(&other).is_none());
+    }
+
     #[test]
     fn test_re_registering_token_updates_canonical_record() {
         let (env, admin, client) = setup();
