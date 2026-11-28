@@ -211,54 +211,55 @@ pub enum DataKey {
 }
 
 #[cfg(test)]
-mod parameterpayload_roundtrip_tests {
+mod juryvote_roundtrip_tests {
     use super::*;
     use soroban_sdk::{Env, IntoVal, TryFromVal, Val};
     #[test]
-    fn parameterpayload_scval_roundtrip() {
-        use soroban_sdk::String;
+    fn juryvote_scval_roundtrip() {
         let env = Env::default();
-        let zero = ParameterPayload { key: String::from_str(&env, ""), value: 0 };
-        let back = ParameterPayload::try_from_val(&env, &zero.clone().into_val(&env)).unwrap();
-        assert_eq!(back.value, 0);
-        let nz = ParameterPayload { key: String::from_str(&env, "fee"), value: 100 };
-        let back2 = ParameterPayload::try_from_val(&env, &nz.clone().into_val(&env)).unwrap();
-        assert_eq!(back2.value, 100);
+        let voter = soroban_sdk::Address::generate(&env);
+        let zero = JuryVote { voter: voter.clone(), locked_tokens: 0, for_client: false };
+        let back = JuryVote::try_from_val(&env, &zero.clone().into_val(&env)).unwrap();
+        assert_eq!(back.locked_tokens, 0);
+        assert_eq!(back.for_client, false);
+        let nz = JuryVote { voter, locked_tokens: 99, for_client: true };
+        let back2 = JuryVote::try_from_val(&env, &nz.clone().into_val(&env)).unwrap();
+        assert_eq!(back2.locked_tokens, 99);
+        assert_eq!(back2.for_client, true);
 
     }
 }
 
 #[cfg(test)]
-mod vote_roundtrip_tests {
+mod proposal_roundtrip_tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Address, Env, IntoVal, TryFromVal};
-
+    use soroban_sdk::{Env, IntoVal, TryFromVal, Val};
     #[test]
-    fn vote_scval_roundtrip() {
+    fn proposal_scval_roundtrip() {
+        use soroban_sdk::String;
         let env = Env::default();
-        let voter = Address::generate(&env);
-        let zero = Vote {
-            voter: voter.clone(),
-            support: false,
-            power: 0,
-            cast_at: 0,
+        let proposer = soroban_sdk::Address::generate(&env);
+        let original = Proposal {
+            id: 1,
+            proposal_type: ProposalType::TextProposal,
+            proposer: proposer.clone(),
+            title: String::from_str(&env, "t"),
+            description: String::from_str(&env, "d"),
+            payload: ProposalPayload::Text,
+            status: ProposalStatus::Active,
+            vote_start: 0,
+            vote_end: 1,
+            executable_at: 2,
+            votes_for: 0,
+            votes_against: 0,
+            total_supply_snapshot: 0,
+            created_at: 0,
+            executed_at: None,
         };
-        let back = Vote::try_from_val(&env, &zero.clone().into_val(&env)).unwrap();
-        assert_eq!(back.voter, zero.voter);
-        assert_eq!(back.support, false);
-        assert_eq!(back.power, 0);
-        assert_eq!(back.cast_at, 0);
+        let back = Proposal::try_from_val(&env, &original.clone().into_val(&env)).unwrap();
+        assert_eq!(back.id, original.id);
+        assert_eq!(back.proposal_type, original.proposal_type);
+        assert_eq!(back.title, original.title);
 
-        let nz = Vote {
-            voter,
-            support: true,
-            power: 1_000_000,
-            cast_at: 1_700_000_000,
-        };
-        let back2 = Vote::try_from_val(&env, &nz.clone().into_val(&env)).unwrap();
-        assert_eq!(back2.voter, nz.voter);
-        assert_eq!(back2.support, true);
-        assert_eq!(back2.power, 1_000_000);
-        assert_eq!(back2.cast_at, 1_700_000_000);
     }
 }
