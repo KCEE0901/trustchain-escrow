@@ -31,6 +31,8 @@
 #![deny(warnings)]
 
 mod errors;
+#[cfg(test)]
+mod get_stake_tests;
 mod events;
 mod gas_profiling;
 mod types;
