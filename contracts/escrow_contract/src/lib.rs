@@ -66,6 +66,7 @@ mod batch_add_milestones_cap_tests;
 mod batch_approve_release_e2e_tests;
 mod bridge;
 mod bridge_tests;
+mod caller_bound_tests;
 mod contract_version_tests;
 mod creation_validation_tests;
 mod deadline_auth_boundary_tests;
