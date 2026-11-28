@@ -177,7 +177,7 @@ impl EscrowExtensions {
         // ── Validate all params before touching storage ───────────────────────
         // This ensures atomicity: we fail fast before any state changes.
         for i in 0..count {
-            let p = escrows.get(i).unwrap();
+            let p = escrows.get(i).ok_or(ExtError::BatchItemInvalid)?;
             if p.total_amount <= 0 {
                 return Err(ExtError::BatchItemInvalid);
             }
@@ -206,7 +206,7 @@ impl EscrowExtensions {
         let mut total_batch_amount: i128 = 0;
 
         for i in 0..count {
-            let p = escrows.get(i).unwrap();
+            let p = escrows.get(i).ok_or(ExtError::BatchItemInvalid)?;
             let escrow_id = base_id + u64::from(i);
 
             // Transfer tokens from client to this contract

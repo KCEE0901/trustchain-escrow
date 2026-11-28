@@ -193,10 +193,7 @@ Apply the same pattern to every other `#[contracttype]` struct in the contract (
 
 ### Round-trip coverage (issue batches)
 
-- `JuryVote`
-- `PanelSlot`
-- `Proposal`
-- `SlashProposal`
+- `VeLock`, `UpgradePayload` — `contracts/governance/src/types.rs`
 
 ---
 

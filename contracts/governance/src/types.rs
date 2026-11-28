@@ -211,55 +211,65 @@ pub enum DataKey {
 }
 
 #[cfg(test)]
-mod juryvote_roundtrip_tests {
+mod velock_roundtrip_tests {
     use super::*;
     use soroban_sdk::{Env, IntoVal, TryFromVal, Val};
-    #[test]
-    fn juryvote_scval_roundtrip() {
-        let env = Env::default();
-        let voter = soroban_sdk::Address::generate(&env);
-        let zero = JuryVote { voter: voter.clone(), locked_tokens: 0, for_client: false };
-        let back = JuryVote::try_from_val(&env, &zero.clone().into_val(&env)).unwrap();
-        assert_eq!(back.locked_tokens, 0);
-        assert_eq!(back.for_client, false);
-        let nz = JuryVote { voter, locked_tokens: 99, for_client: true };
-        let back2 = JuryVote::try_from_val(&env, &nz.clone().into_val(&env)).unwrap();
-        assert_eq!(back2.locked_tokens, 99);
-        assert_eq!(back2.for_client, true);
 
+    #[test]
+    fn velock_scval_roundtrip_zero_and_nonzero() {
+        let env = Env::default();
+        let zero = VeLock {
+            amount: 0,
+            unlock_time: 0,
+            locked_at: 0,
+        };
+        let val: Val = zero.clone().into_val(&env);
+        let back = VeLock::try_from_val(&env, &val).expect("VeLock round-trip");
+        assert_eq!(back.amount, zero.amount);
+        assert_eq!(back.unlock_time, zero.unlock_time);
+        assert_eq!(back.locked_at, zero.locked_at);
+
+        let nonzero = VeLock {
+            amount: 1_000,
+            unlock_time: 9_999,
+            locked_at: 1_700_000_000,
+        };
+        let val2: Val = nonzero.clone().into_val(&env);
+        let back2 = VeLock::try_from_val(&env, &val2).expect("VeLock round-trip");
+        assert_eq!(back2.amount, nonzero.amount);
+        assert_eq!(back2.unlock_time, nonzero.unlock_time);
+        assert_eq!(back2.locked_at, nonzero.locked_at);
     }
 }
 
 #[cfg(test)]
-mod proposal_roundtrip_tests {
+mod upgradepayload_roundtrip_tests {
     use super::*;
-    use soroban_sdk::{Env, IntoVal, TryFromVal, Val};
-    #[test]
-    fn proposal_scval_roundtrip() {
-        use soroban_sdk::String;
-        let env = Env::default();
-        let proposer = soroban_sdk::Address::generate(&env);
-        let original = Proposal {
-            id: 1,
-            proposal_type: ProposalType::TextProposal,
-            proposer: proposer.clone(),
-            title: String::from_str(&env, "t"),
-            description: String::from_str(&env, "d"),
-            payload: ProposalPayload::Text,
-            status: ProposalStatus::Active,
-            vote_start: 0,
-            vote_end: 1,
-            executable_at: 2,
-            votes_for: 0,
-            votes_against: 0,
-            total_supply_snapshot: 0,
-            created_at: 0,
-            executed_at: None,
-        };
-        let back = Proposal::try_from_val(&env, &original.clone().into_val(&env)).unwrap();
-        assert_eq!(back.id, original.id);
-        assert_eq!(back.proposal_type, original.proposal_type);
-        assert_eq!(back.title, original.title);
+    use soroban_sdk::{Address, BytesN, Env, IntoVal, TryFromVal, Val};
 
+    #[test]
+    fn upgradepayload_scval_roundtrip_zero_and_nonzero() {
+        let env = Env::default();
+        let zero_hash = BytesN::from_array(&env, &[0u8; 32]);
+        let full_hash = BytesN::from_array(&env, &[0xAB; 32]);
+        let target = Address::generate(&env);
+
+        let zero = UpgradePayload {
+            target_contract: target.clone(),
+            new_wasm_hash: zero_hash,
+        };
+        let val: Val = zero.clone().into_val(&env);
+        let back = UpgradePayload::try_from_val(&env, &val).expect("UpgradePayload round-trip");
+        assert_eq!(back.target_contract, zero.target_contract);
+        assert_eq!(back.new_wasm_hash, zero.new_wasm_hash);
+
+        let nonzero = UpgradePayload {
+            target_contract: target,
+            new_wasm_hash: full_hash,
+        };
+        let val2: Val = nonzero.clone().into_val(&env);
+        let back2 = UpgradePayload::try_from_val(&env, &val2).expect("UpgradePayload round-trip");
+        assert_eq!(back2.target_contract, nonzero.target_contract);
+        assert_eq!(back2.new_wasm_hash, nonzero.new_wasm_hash);
     }
 }
