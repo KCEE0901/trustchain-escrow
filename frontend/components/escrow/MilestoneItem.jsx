@@ -39,6 +39,22 @@ import CurrencyAmount from '../ui/CurrencyAmount';
 import { useI18n } from '../../i18n/index.jsx';
 import { useToast } from '../../contexts/ToastContext';
 
+const IPFS_GATEWAY = process.env.NEXT_PUBLIC_IPFS_GATEWAY || 'https://ipfs.io/ipfs/';
+
+function isPublishedDescriptionHash(hash) {
+  if (!hash) return false;
+  const normalized = String(hash).replace(/^0x/, '').toLowerCase();
+  return normalized.length > 0 && !/^0+$/.test(normalized);
+}
+
+function contentGatewayUrl(hash) {
+  const value = String(hash);
+  if (value.startsWith('Qm') || value.startsWith('baf')) {
+    return `${IPFS_GATEWAY}${value}`;
+  }
+  return null;
+}
+
 export default function MilestoneItem({
   milestone,
   index,
@@ -109,7 +125,23 @@ export default function MilestoneItem({
             </div>
           </div>
 
-          {/* TODO (contributor — Issue #40): show description / IPFS link */}
+          {isPublishedDescriptionHash(milestone.descriptionHash) ? (
+            <div className="text-xs text-gray-400 space-y-1">
+              <p className="font-mono break-all text-gray-500">{milestone.descriptionHash}</p>
+              {contentGatewayUrl(milestone.descriptionHash) && (
+                <a
+                  href={contentGatewayUrl(milestone.descriptionHash)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-indigo-400 hover:text-indigo-300 underline"
+                >
+                  View published description
+                </a>
+              )}
+            </div>
+          ) : (
+            <p className="text-xs text-gray-600">Description not published on-chain.</p>
+          )}
 
           {/* Action Buttons */}
           {!isActing ? (

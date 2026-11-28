@@ -193,8 +193,9 @@ Apply the same pattern to every other `#[contracttype]` struct in the contract (
 
 ### Round-trip coverage (issue batches)
 
-- `ArbitrationDispute`
-- `FundInfo`
+- `BatchEscrowParams`
+- `ParameterPayload`
+- `Vote`
 
 ---
 
