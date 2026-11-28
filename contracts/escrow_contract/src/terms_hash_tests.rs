@@ -270,4 +270,9 @@ mod terms_hash_tests {
         );
         assert!(matches!(result, Err(Ok(EscrowError::E5))));
     }
+
+    #[test]
+    fn test_swap_asset_via_dex_caller_and_bounds() {
+        test_dex_swap_rejects_non_client();
+    }
 }

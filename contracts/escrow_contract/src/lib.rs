@@ -8733,6 +8733,21 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_execute_meta_transaction_caller_and_bounds() {
+        test_meta_transaction_expired_deadline_rejected();
+    }
+
+    #[test]
+    fn test_set_platform_treasury_caller_and_bounds() {
+        let (env, admin, _contract_id, client) = setup();
+        client.initialize(&admin);
+        let treasury = Address::generate(&env);
+
+        client.set_platform_treasury(&admin, &treasury);
+        assert_eq!(client.get_platform_treasury(), Some(treasury));
+    }
+
     // ── Oracle Fallback Dispute Resolution Tests ──────────────────────────────
 
     /// Build a valid OracleResolutionPayload signed with a test keypair.
