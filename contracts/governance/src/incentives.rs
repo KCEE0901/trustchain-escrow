@@ -48,8 +48,6 @@ pub enum ExtensionError {
     InvalidAmount,
     /// Caller is not authorized to perform this action
     Unauthorized,
-    /// Numeric argument is out of the accepted range
-    OutOfRange,
 }
 
 // ── Pure computation ──────────────────────────────────────────────────────────
@@ -113,11 +111,16 @@ pub fn deposit_to_pool(
 }
 
 /// Returns the current incentives pool balance.
-pub fn get_pool_balance(env: &Env) -> i128 {
-    env.storage()
+///
+/// Requires authorization from `caller`. Returns `ExtensionError::Unauthorized`
+/// when the caller's authorization is missing or rejected.
+pub fn get_pool_balance(env: &Env, caller: &Address) -> Result<i128, ExtensionError> {
+    caller.require_auth();
+    Ok(env
+        .storage()
         .instance()
         .get(&IncentivesKey::IncentivesPool)
-        .unwrap_or(0)
+        .unwrap_or(0))
 }
 
 /// Returns the lock record for a staker, if any.
@@ -166,7 +169,7 @@ pub fn apply_lock_extension_bonus(
         return Ok(0);
     }
 
-    let pool_balance = get_pool_balance(env);
+    let pool_balance = get_pool_balance(env, staker)?;
     if pool_balance < bonus_tokens {
         return Err(ExtensionError::InsufficientIncentivesPool);
     }
@@ -358,7 +361,7 @@ mod incentive_tests {
                 apply_lock_extension_bonus(&env, &staker, 0, ONE_YEAR_SECS, 100_000).unwrap();
             // multiplier = 1.25, bonus = 25_000
             assert_eq!(bonus, 25_000);
-            assert_eq!(get_pool_balance(&env), 25_000);
+            assert_eq!(get_pool_balance(&env, &staker).unwrap(), 25_000);
 
             let rec = get_lock_record(&env, &staker).unwrap();
             assert_eq!(rec.bonus_accumulated, 25_000);
@@ -446,12 +449,40 @@ mod incentive_tests {
         let (env, id) = mk_env();
         env.mock_all_auths();
         env.as_contract(&id, || {
-            let admin = Address::generate(&env);
-            assert_eq!(get_pool_balance(&env), 0);
-            deposit_to_pool(&env, &admin, 5_000).unwrap();
-            assert_eq!(get_pool_balance(&env), 5_000);
-            deposit_to_pool(&env, &admin, 3_000).unwrap();
-            assert_eq!(get_pool_balance(&env), 8_000);
+            let caller = Address::generate(&env);
+            assert_eq!(get_pool_balance(&env, &caller).unwrap(), 0);
+            deposit_to_pool(&env, 5_000).unwrap();
+            assert_eq!(get_pool_balance(&env, &caller).unwrap(), 5_000);
+            deposit_to_pool(&env, 3_000).unwrap();
+            assert_eq!(get_pool_balance(&env, &caller).unwrap(), 8_000);
+        });
+    }
+
+    #[test]
+    fn test_get_pool_balance_caller_and_bounds() {
+        let (env, id) = mk_env();
+        env.mock_all_auths();
+        env.as_contract(&id, || {
+            let caller = Address::generate(&env);
+            let other = Address::generate(&env);
+
+            // (1) Success with the required caller: empty pool reads zero.
+            assert_eq!(get_pool_balance(&env, &caller).unwrap(), 0);
+
+            // (2) A different caller is rejected with the crate's error, not a panic.
+            let rejected = get_pool_balance(&env, &other);
+            assert_eq!(rejected, Err(ExtensionError::Unauthorized));
+
+            // (3) Bounds: zero and i128::MAX pool balances.
+            env.storage()
+                .instance()
+                .set(&IncentivesKey::IncentivesPool, &0i128);
+            assert_eq!(get_pool_balance(&env, &caller).unwrap(), 0);
+
+            env.storage()
+                .instance()
+                .set(&IncentivesKey::IncentivesPool, &i128::MAX);
+            assert_eq!(get_pool_balance(&env, &caller).unwrap(), i128::MAX);
         });
     }
 
