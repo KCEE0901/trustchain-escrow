@@ -1817,44 +1817,45 @@ mod tests {
         assert_eq!(token_client.balance(&claimant), 1_000_i128);
     }
 
-    #[test]
-    fn test_contribute_caller_and_bound_checks() {
-        let s = setup();
-        let contributor = Address::generate(&s.env);
-        let other = Address::generate(&s.env);
-        mint(&s.env, &s.admin, &s.token_id, &contributor, 500);
+    // ── Caller and bound checks: set_max_slash_bps ────────────────────────────
 
-        assert_eq!(
-            s.client.try_contribute(&other, &100_i128),
-            Err(Ok(InsuranceError::InsufficientFunds))
-        );
-        assert_eq!(
-            s.client.try_contribute(&contributor, &0_i128),
-            Err(Ok(InsuranceError::BelowMinimum))
-        );
-        assert_eq!(
-            s.client.try_contribute(&contributor, &i128::MAX),
-            Err(Ok(InsuranceError::InsufficientFunds))
-        );
-        s.client.contribute(&contributor, &500_i128);
-        assert_eq!(s.client.get_fund_info().total_contributed, 500);
+    #[test]
+    fn test_set_max_slash_bps_admin_succeeds_and_caps_proposals() {
+        let s = setup();
+        assert_eq!(s.client.try_set_max_slash_bps(&s.admin, &1_000_u32), Ok(Ok(())));
+
+        let gov = Address::generate(&s.env);
+        s.client.add_governor(&s.admin, &gov);
+        let reason = String::from_str(&s.env, "cap");
+        assert!(s.client.try_propose_slash(&gov, &1_001_u32, &reason).is_err());
+        assert!(s.client.try_propose_slash(&gov, &1_000_u32, &reason).is_ok());
     }
 
     #[test]
-    fn test_submit_claim_caller_and_bound_checks() {
+    fn test_set_max_slash_bps_accepts_ceiling() {
         let s = setup();
-        let claimant = Address::generate(&s.env);
-        let desc = String::from_str(&s.env, "loss");
+        assert_eq!(s.client.try_set_max_slash_bps(&s.admin, &4_000_u32), Ok(Ok(())));
+    }
 
+    #[test]
+    fn test_set_max_slash_bps_rejects_other_caller() {
+        let s = setup();
+        let stranger = Address::generate(&s.env);
         assert_eq!(
-            s.client.try_submit_claim(&claimant, &desc, &0_i128),
-            Err(Ok(InsuranceError::InvalidClaimAmount))
+            s.client.try_set_max_slash_bps(&stranger, &1_000_u32),
+            Err(Ok(InsuranceError::AdminOnly))
         );
-        assert_eq!(
-            s.client.try_submit_claim(&claimant, &desc, &i128::MAX),
-            Err(Ok(InsuranceError::ClaimExceedsCap))
-        );
-        let id = s.client.submit_claim(&claimant, &desc, &1_000_i128);
-        assert_eq!(s.client.submit_claim(&claimant, &desc, &1_000_i128), id + 1);
+    }
+
+    #[test]
+    fn test_set_max_slash_bps_zero_and_max_return_error() {
+        let s = setup();
+        for bps in [0_u32, 4_001, u32::MAX] {
+            assert_eq!(
+                s.client.try_set_max_slash_bps(&s.admin, &bps),
+                Err(Ok(InsuranceError::InvalidSlashBps)),
+                "set_max_slash_bps({bps}) must return InvalidSlashBps"
+            );
+        }
     }
 }

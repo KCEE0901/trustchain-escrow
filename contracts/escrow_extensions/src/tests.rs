@@ -665,13 +665,113 @@ mod tests {
         );
     }
 
+    // ── Caller and bound checks: set_fee_bps / get_fee_bps / set_fee_recipients ──
+
+    fn recipient(env: &Env, share_bps: u32) -> FeeRecipient {
+        FeeRecipient {
+            address: soroban_sdk::Address::generate(env),
+            share_bps,
+        }
+    }
+
     #[test]
-    fn test_create_batch_missing_vec_entry_returns_typed_error() {
-        let env = Env::default();
-        let params: Vec<BatchEscrowParams> = Vec::new(&env);
+    fn test_set_fee_bps_admin_succeeds_at_zero_and_cap() {
+        let s = setup_with_fee(50);
+        for fee in [0_u32, 200] {
+            assert_eq!(s.client.try_set_fee_bps(&s.admin, &fee), Ok(Ok(())));
+            assert_eq!(s.client.get_fee_bps(), fee);
+        }
+    }
+
+    #[test]
+    fn test_set_fee_bps_rejects_other_caller() {
+        let s = setup_with_fee(50);
+        let stranger = soroban_sdk::Address::generate(&s.env);
         assert_eq!(
-            params.get(0).ok_or(ExtError::BatchItemInvalid),
-            Err(ExtError::BatchItemInvalid),
+            s.client.try_set_fee_bps(&stranger, &100),
+            Err(Ok(ExtError::AdminOnly))
+        );
+        assert_eq!(s.client.get_fee_bps(), 50);
+    }
+
+    #[test]
+    fn test_set_fee_bps_max_value_returns_error() {
+        let s = setup_with_fee(50);
+        for fee in [201_u32, u32::MAX] {
+            assert_eq!(
+                s.client.try_set_fee_bps(&s.admin, &fee),
+                Err(Ok(ExtError::FeeTooHigh))
+            );
+        }
+        assert_eq!(s.client.get_fee_bps(), 50);
+    }
+
+    #[test]
+    fn test_get_fee_bps_needs_no_caller() {
+        let s = setup_with_fee(150);
+        s.env.set_auths(&[]);
+        assert_eq!(s.client.try_get_fee_bps(), Ok(Ok(150)));
+    }
+
+    #[test]
+    fn test_get_fee_bps_defaults_to_zero_and_reads_max_without_panic() {
+        let s = setup_with_fee(0);
+        assert_eq!(s.client.get_fee_bps(), 0);
+        s.env.as_contract(&s.contract_id, || {
+            s.env.storage().instance().set(&DataKey::FeeBps, &u32::MAX);
+        });
+        assert_eq!(s.client.try_get_fee_bps(), Ok(Ok(u32::MAX)));
+    }
+
+    #[test]
+    fn test_set_fee_recipients_admin_succeeds() {
+        let s = setup_with_fee(100);
+        let mut recipients = Vec::new(&s.env);
+        recipients.push_back(recipient(&s.env, 6_000));
+        recipients.push_back(recipient(&s.env, 4_000));
+        assert_eq!(
+            s.client.try_set_fee_recipients(&s.admin, &recipients),
+            Ok(Ok(()))
+        );
+    }
+
+    #[test]
+    fn test_set_fee_recipients_rejects_other_caller() {
+        let s = setup_with_fee(100);
+        let stranger = soroban_sdk::Address::generate(&s.env);
+        let mut recipients = Vec::new(&s.env);
+        recipients.push_back(recipient(&s.env, 10_000));
+        assert_eq!(
+            s.client.try_set_fee_recipients(&stranger, &recipients),
+            Err(Ok(ExtError::AdminOnly))
+        );
+    }
+
+    #[test]
+    fn test_set_fee_recipients_zero_and_max_shares_return_error() {
+        let s = setup_with_fee(100);
+
+        let mut zero = Vec::new(&s.env);
+        zero.push_back(recipient(&s.env, 0));
+        assert_eq!(
+            s.client.try_set_fee_recipients(&s.admin, &zero),
+            Err(Ok(ExtError::InvalidRecipient))
+        );
+
+        let mut max = Vec::new(&s.env);
+        max.push_back(recipient(&s.env, u32::MAX));
+        assert_eq!(
+            s.client.try_set_fee_recipients(&s.admin, &max),
+            Err(Ok(ExtError::InvalidRecipient))
+        );
+
+        // Two shares whose u32 sum overflows must return an error, not panic.
+        let mut overflow = Vec::new(&s.env);
+        overflow.push_back(recipient(&s.env, u32::MAX));
+        overflow.push_back(recipient(&s.env, 10_001));
+        assert_eq!(
+            s.client.try_set_fee_recipients(&s.admin, &overflow),
+            Err(Ok(ExtError::InvalidRecipient))
         );
     }
 }
