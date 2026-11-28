@@ -1621,3 +1621,210 @@ mod tests {
         assert!(result.is_err());
     }
 }
+
+/// Caller and bound checks for `claim_yield` (#762), `propose_slash` (#763)
+/// and `vote_slash` (#764). Every rejection is asserted as the exact
+/// `InsuranceError` (`Err(Ok(..))`), so a panic, which surfaces as
+/// `Err(Err(..))`, fails the test.
+#[cfg(test)]
+mod caller_and_bound_tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, token, Env, String};
+
+    struct Setup {
+        env: Env,
+        admin: Address,
+        token_id: Address,
+        client: InsuranceContractClient<'static>,
+    }
+
+    fn setup() -> Setup {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let token_id = env
+            .register_stellar_asset_contract_v2(admin.clone())
+            .address();
+        let contract_id = env.register_contract(None, InsuranceContract);
+        let client = InsuranceContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &token_id, &10_i128, &10_000_i128, &2_u32);
+        Setup {
+            env,
+            admin,
+            token_id,
+            client,
+        }
+    }
+
+    fn mint(s: &Setup, to: &Address, amount: i128) {
+        token::StellarAssetClient::new(&s.env, &s.token_id).mint(to, &amount);
+    }
+
+    fn governor(s: &Setup) -> Address {
+        let g = Address::generate(&s.env);
+        s.client.add_governor(&s.admin, &g);
+        g
+    }
+
+    fn reason(s: &Setup) -> String {
+        String::from_str(&s.env, "misbehaving stakers")
+    }
+
+    /// Drop every mocked authorisation, so the next call is unsigned.
+    fn unsigned(s: &Setup) {
+        s.env.set_auths(&[]);
+    }
+
+    // ── claim_yield (#762) ────────────────────────────────────────────────────
+
+    #[test]
+    fn claim_yield_pays_the_staker_who_signs() {
+        let s = setup();
+        let staker = Address::generate(&s.env);
+        mint(&s, &staker, 1_000);
+        s.client.stake(&staker, &1_000);
+        mint(&s, &s.admin, 100);
+        s.client.add_platform_fees(&s.admin, &100);
+
+        let token = token::Client::new(&s.env, &s.token_id);
+        let before = token.balance(&staker);
+        let paid = s.client.claim_yield(&staker);
+        assert_eq!(paid, 100);
+        assert_eq!(token.balance(&staker), before + 100);
+        // Nothing left to claim: the existing error, not a panic.
+        assert_eq!(
+            s.client.try_claim_yield(&staker),
+            Err(Ok(InsuranceError::NoYieldAvailable))
+        );
+    }
+
+    #[test]
+    fn claim_yield_rejects_a_different_address() {
+        let s = setup();
+        let staker = Address::generate(&s.env);
+        mint(&s, &staker, 1_000);
+        s.client.stake(&staker, &1_000);
+        mint(&s, &s.admin, 100);
+        s.client.add_platform_fees(&s.admin, &100);
+
+        // A signed caller with no stake gets the crate's error.
+        let other = Address::generate(&s.env);
+        assert_eq!(
+            s.client.try_claim_yield(&other),
+            Err(Ok(InsuranceError::NoStakeFound))
+        );
+
+        // The real staker without their signature is refused by require_auth,
+        // and the yield stays claimable.
+        unsigned(&s);
+        assert!(s.client.try_claim_yield(&staker).is_err());
+        s.env.mock_all_auths();
+        assert_eq!(s.client.claim_yield(&staker), 100);
+    }
+
+    // ── propose_slash (#763) ──────────────────────────────────────────────────
+
+    #[test]
+    fn propose_slash_accepts_a_governor_within_the_cap() {
+        let s = setup();
+        let g = governor(&s);
+        let id = s.client.propose_slash(&g, &4_000, &reason(&s)); // default cap 40%
+        let p = s.client.get_slash_proposal(&id);
+        assert_eq!(
+            (p.proposer, p.slash_bps, p.status),
+            (g, 4_000, SlashStatus::Pending)
+        );
+    }
+
+    #[test]
+    fn propose_slash_rejects_a_caller_who_is_not_a_governor() {
+        let s = setup();
+        let stranger = Address::generate(&s.env);
+        assert_eq!(
+            s.client.try_propose_slash(&stranger, &100, &reason(&s)),
+            Err(Ok(InsuranceError::NotGovernor))
+        );
+        // A governor's proposal without their signature is refused.
+        let g = governor(&s);
+        unsigned(&s);
+        assert!(s.client.try_propose_slash(&g, &100, &reason(&s)).is_err());
+    }
+
+    #[test]
+    fn propose_slash_bounds_zero_and_u32_max() {
+        let s = setup();
+        let g = governor(&s);
+        assert_eq!(
+            s.client.try_propose_slash(&g, &0, &reason(&s)),
+            Err(Ok(InsuranceError::InvalidSlashBps))
+        );
+        assert_eq!(
+            s.client.try_propose_slash(&g, &u32::MAX, &reason(&s)),
+            Err(Ok(InsuranceError::SlashExceedsCap))
+        );
+        assert_eq!(
+            s.client.try_propose_slash(&g, &4_001, &reason(&s)),
+            Err(Ok(InsuranceError::SlashExceedsCap))
+        );
+        // Rejected proposals don't consume ids.
+        assert_eq!(s.client.propose_slash(&g, &1, &reason(&s)), 0);
+    }
+
+    // ── vote_slash (#764) ─────────────────────────────────────────────────────
+
+    #[test]
+    fn vote_slash_counts_governor_votes_and_resolves_at_quorum() {
+        let s = setup();
+        let (g1, g2) = (governor(&s), governor(&s));
+        let id = s.client.propose_slash(&g1, &1_000, &reason(&s));
+        s.client.vote_slash(&g1, &id, &true);
+        assert_eq!(
+            s.client.get_slash_proposal(&id).status,
+            SlashStatus::Pending
+        );
+        s.client.vote_slash(&g2, &id, &true);
+        let p = s.client.get_slash_proposal(&id);
+        assert_eq!((p.votes_for, p.status), (2, SlashStatus::Approved));
+        assert_eq!(
+            s.client.try_vote_slash(&g1, &id, &false),
+            Err(Ok(InsuranceError::AlreadyVoted))
+        );
+    }
+
+    #[test]
+    fn vote_slash_rejects_a_caller_who_is_not_a_governor() {
+        let s = setup();
+        let g = governor(&s);
+        let id = s.client.propose_slash(&g, &1_000, &reason(&s));
+        let stranger = Address::generate(&s.env);
+        assert_eq!(
+            s.client.try_vote_slash(&stranger, &id, &true),
+            Err(Ok(InsuranceError::NotGovernor))
+        );
+        unsigned(&s);
+        assert!(s.client.try_vote_slash(&g, &id, &true).is_err());
+        s.env.mock_all_auths();
+        let p = s.client.get_slash_proposal(&id);
+        assert_eq!((p.votes_for, p.votes_against), (0, 0));
+    }
+
+    #[test]
+    fn vote_slash_bounds_zero_and_u32_max_slash_ids() {
+        let s = setup();
+        let g = governor(&s);
+        // No proposals yet: id 0 doesn't exist.
+        assert_eq!(
+            s.client.try_vote_slash(&g, &0, &true),
+            Err(Ok(InsuranceError::SlashProposalNotFound))
+        );
+        assert_eq!(
+            s.client.try_vote_slash(&g, &u32::MAX, &true),
+            Err(Ok(InsuranceError::SlashProposalNotFound))
+        );
+        // Id 0 is valid once a proposal exists.
+        let id = s.client.propose_slash(&g, &1_000, &reason(&s));
+        assert_eq!(id, 0);
+        s.client.vote_slash(&g, &0, &false);
+        assert_eq!(s.client.get_slash_proposal(&0).votes_against, 1);
+    }
+}
