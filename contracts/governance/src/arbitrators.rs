@@ -138,7 +138,7 @@ fn get_load(env: &Env, arb: &Address) -> u32 {
 }
 
 fn inc_load(env: &Env, arb: &Address) {
-    let v = get_load(env, arb) + 1;
+    let v = get_load(env, arb).saturating_add(1);
     env.storage()
         .persistent()
         .set(&ArbKey::Load(arb.clone()), &v);
@@ -280,7 +280,7 @@ pub fn select_panel(env: &Env, dispute_id: u64) -> Option<ArbitratorPanel> {
         slots.push_back(PanelSlot {
             arbitrator: selected.get(i).unwrap(),
             status: SlotStatus::Pending,
-            deadline: now + ACCEPT_WINDOW_SECS,
+            deadline: now.saturating_add(ACCEPT_WINDOW_SECS),
         });
     }
 
@@ -439,7 +439,7 @@ fn rotate_slot(
             new_slots.push_back(PanelSlot {
                 arbitrator: new_arb.clone(),
                 status: SlotStatus::Pending,
-                deadline: now + ACCEPT_WINDOW_SECS,
+                deadline: now.saturating_add(ACCEPT_WINDOW_SECS),
             });
             rotated = true;
         } else {
