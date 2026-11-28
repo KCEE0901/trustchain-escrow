@@ -1326,4 +1326,158 @@ mod tests {
         let result = client.try_cast_vote(&voter, &id, &true);
         assert!(result.is_err(), "Expected AlreadyVoted error");
     }
+
+    // ── Caller and bound checks (#730–#733) ───────────────────────────────────
+
+    use crate::GovError;
+    use soroban_sdk::testutils::{MockAuth, MockAuthInvoke};
+    use soroban_sdk::IntoVal;
+
+    /// #730: `voting_power` takes no caller; any address can be queried
+    /// without auth, and an uninitialized contract returns an error.
+    #[test]
+    fn test_voting_power_caller_and_bounds() {
+        let (env, _admin, ta, token, client) = setup();
+        let holder = Address::generate(&env);
+        let other = Address::generate(&env);
+
+        assert_eq!(client.voting_power(&holder), 0);
+        mint(&env, &ta, &token, &holder, 1_000);
+        assert_eq!(client.voting_power(&holder), 1_000);
+        assert_eq!(client.voting_power(&other), 0);
+
+        let uninit = GovernanceContractClient::new(
+            &env,
+            &env.register_contract(None, GovernanceContract),
+        );
+        assert_eq!(
+            uninit.try_voting_power(&holder),
+            Err(Ok(GovError::NotInitialized))
+        );
+    }
+
+    /// #731: `deposit_to_incentives_pool` requires the admin; zero, negative
+    /// and overflowing amounts return errors instead of panicking.
+    #[test]
+    fn test_deposit_to_incentives_pool_caller_and_bounds() {
+        let (env, admin, _ta, _token, client) = setup();
+        let stranger = Address::generate(&env);
+
+        assert_eq!(
+            client.try_deposit_to_incentives_pool(&stranger, &1),
+            Err(Ok(GovError::AdminOnly))
+        );
+        assert_eq!(
+            client.try_deposit_to_incentives_pool(&admin, &0),
+            Err(Ok(GovError::InvalidParameter))
+        );
+        assert_eq!(
+            client.try_deposit_to_incentives_pool(&admin, &i128::MIN),
+            Err(Ok(GovError::InvalidParameter))
+        );
+
+        client.deposit_to_incentives_pool(&admin, &i128::MAX);
+        assert_eq!(client.get_incentives_pool_balance(), i128::MAX);
+        assert_eq!(
+            client.try_deposit_to_incentives_pool(&admin, &i128::MAX),
+            Err(Ok(GovError::ArithmeticOverflow))
+        );
+        assert_eq!(client.get_incentives_pool_balance(), i128::MAX);
+    }
+
+    /// #731: the admin's own authorization is required, not another address's.
+    #[test]
+    fn test_deposit_to_incentives_pool_rejects_other_signer() {
+        let (env, admin, _ta, _token, client) = setup();
+        let stranger = Address::generate(&env);
+
+        env.mock_auths(&[MockAuth {
+            address: &stranger,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "deposit_to_incentives_pool",
+                args: (admin.clone(), 1i128).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        assert!(client.try_deposit_to_incentives_pool(&admin, &1).is_err());
+        assert_eq!(client.get_incentives_pool_balance(), 0);
+    }
+
+    /// #732: `get_incentives_pool_balance` takes no caller; it reports zero
+    /// before any deposit and the maximum balance without panicking.
+    #[test]
+    fn test_get_incentives_pool_balance_caller_and_bounds() {
+        let (env, admin, _ta, _token, client) = setup();
+        assert_eq!(client.get_incentives_pool_balance(), 0);
+
+        client.deposit_to_incentives_pool(&admin, &i128::MAX);
+        env.set_auths(&[]);
+        assert_eq!(client.get_incentives_pool_balance(), i128::MAX);
+
+        let uninit = GovernanceContractClient::new(
+            &env,
+            &env.register_contract(None, GovernanceContract),
+        );
+        assert_eq!(uninit.get_incentives_pool_balance(), 0);
+    }
+
+    /// #733: `extend_lock_bonus` requires the staker's auth; zero and maximum
+    /// lock ends and amounts return a value or an error, never a panic.
+    #[test]
+    fn test_extend_lock_bonus_caller_and_bounds() {
+        let (env, admin, _ta, _token, client) = setup();
+        let staker = Address::generate(&env);
+
+        // Zero / equal lock ends are rejected.
+        assert_eq!(
+            client.try_extend_lock_bonus(&staker, &0, &0, &0),
+            Err(Ok(GovError::InvalidParameter))
+        );
+        assert_eq!(
+            client.try_extend_lock_bonus(&staker, &u64::MAX, &u64::MAX, &i128::MAX),
+            Err(Ok(GovError::InvalidParameter))
+        );
+        // Zero amount over a long extension earns no bonus.
+        assert_eq!(client.extend_lock_bonus(&staker, &0, &u64::MAX, &0), 0);
+        // Maximum amount with an empty pool fails cleanly.
+        assert_eq!(
+            client.try_extend_lock_bonus(&staker, &0, &u64::MAX, &i128::MAX),
+            Err(Ok(GovError::InvalidParameter))
+        );
+        // Negative amount earns no bonus.
+        assert_eq!(
+            client.extend_lock_bonus(&staker, &0, &u64::MAX, &i128::MIN),
+            0
+        );
+
+        client.deposit_to_incentives_pool(&admin, &i128::MAX);
+        let bonus = client.extend_lock_bonus(&staker, &0, &u64::MAX, &i128::MAX);
+        assert!(bonus > 0);
+        assert_eq!(client.get_incentives_pool_balance(), i128::MAX - bonus);
+    }
+
+    /// #733: another address cannot authorize a bonus for `staker`.
+    #[test]
+    fn test_extend_lock_bonus_rejects_other_signer() {
+        let (env, admin, _ta, _token, client) = setup();
+        let staker = Address::generate(&env);
+        let stranger = Address::generate(&env);
+        client.deposit_to_incentives_pool(&admin, &1_000_000);
+        let one_year = crate::incentives::ONE_YEAR_SECS;
+
+        env.mock_auths(&[MockAuth {
+            address: &stranger,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "extend_lock_bonus",
+                args: (staker.clone(), 0u64, one_year, 100_000i128).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        assert!(client
+            .try_extend_lock_bonus(&staker, &0, &one_year, &100_000)
+            .is_err());
+        assert_eq!(client.get_incentives_pool_balance(), 1_000_000);
+    }
 }
