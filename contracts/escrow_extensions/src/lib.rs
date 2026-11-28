@@ -397,7 +397,9 @@ impl EscrowExtensions {
         }
 
         let now = env.ledger().timestamp();
-        let closes_at = now + VOTING_WINDOW_SECONDS;
+        let closes_at = now
+            .checked_add(VOTING_WINDOW_SECONDS)
+            .ok_or(ExtError::ArithmeticOverflow)?;
 
         let dispute = ArbitrationDispute {
             escrow_id,
@@ -697,3 +699,4 @@ fn write_pending_upgrade(env: &Env, pending: &PendingUpgrade) {
 }
 
 mod tests;
+mod caller_bound_tests;
