@@ -1039,6 +1039,12 @@ impl GovernanceContract {
             return Err(GovError::LockAlreadyExists);
         }
 
+        // Reject an overflowing unlock time before moving any tokens.
+        let now = env.ledger().timestamp();
+        let unlock_time = now
+            .checked_add(lock_duration)
+            .ok_or(GovError::ArithmeticOverflow)?;
+
         let config = Storage::config(&env)?;
         token::Client::new(&env, &config.token).transfer(
             &caller,
@@ -1046,10 +1052,9 @@ impl GovernanceContract {
             &amount,
         );
 
-        let now = env.ledger().timestamp();
         let lock = VeLock {
             amount,
-            unlock_time: now + lock_duration,
+            unlock_time,
             locked_at: now,
         };
 
@@ -1095,7 +1100,7 @@ impl GovernanceContract {
             if new_unlock_time < lock.unlock_time {
                 return Err(GovError::NewUnlockTimeTooEarly);
             }
-            let max_unlock = now + Self::MAX_LOCK_DURATION;
+            let max_unlock = now.saturating_add(Self::MAX_LOCK_DURATION);
             if new_unlock_time > max_unlock {
                 return Err(GovError::LockDurationTooLong);
             }
@@ -1104,13 +1109,18 @@ impl GovernanceContract {
 
         // Add tokens
         if additional_amount > 0 {
+            // Reject an overflowing total before moving any tokens.
+            let new_amount = lock
+                .amount
+                .checked_add(additional_amount)
+                .ok_or(GovError::ArithmeticOverflow)?;
             let config = Storage::config(&env)?;
             token::Client::new(&env, &config.token).transfer(
                 &caller,
                 &env.current_contract_address(),
                 &additional_amount,
             );
-            lock.amount += additional_amount;
+            lock.amount = new_amount;
         }
 
         lock.locked_at = now;
@@ -1179,9 +1189,13 @@ impl GovernanceContract {
             return 0;
         }
 
-        let remaining = lock.unlock_time - now;
-        // Integer arithmetic: multiply first to preserve precision
-        lock.amount * remaining as i128 / Self::MAX_LOCK_DURATION as i128
+        let remaining = (lock.unlock_time - now) as i128;
+        let max = Self::MAX_LOCK_DURATION as i128;
+        // `amount * remaining / max`, split into whole and remainder parts of
+        // `max` so large locked amounts cannot overflow; the result is the same.
+        (lock.amount / max)
+            .saturating_mul(remaining)
+            .saturating_add(lock.amount % max * remaining / max)
     }
 
     /// Returns the VeLock record for `address`, if one exists.
