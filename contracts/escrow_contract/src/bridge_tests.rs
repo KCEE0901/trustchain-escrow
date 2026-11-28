@@ -375,104 +375,74 @@ mod bridge_tests {
         assert!(client.get_wrapped_token_info(&token).unwrap().is_approved);
     }
 
-    // ── Caller and bound checks for bridge helpers ───────────────────────────
-    //
-    // None of the helpers below take a numeric argument, so there are no
-    // zero/max bound cases to exercise. Each test verifies the success result
-    // is preserved and that rejected inputs return the crate's existing error
-    // (or `None`/`false`) rather than panicking.
+    // ── require_bridge_finalized: caller and bound checks ────────────────────
 
     #[test]
-    fn test_get_wrapped_token_info_caller_and_bounds() {
-        let (env, admin, client) = setup();
-        let token = Address::generate(&env);
-        let info = make_wrapped_token_info(&env, token.clone(), true);
-        client.register_wrapped_token(&admin, &info);
+    fn test_require_bridge_finalized_caller_and_bounds() {
+        let (env, _, client) = setup();
 
-        // Registered token returns canonical metadata.
-        let stored = client.get_wrapped_token_info(&token).unwrap();
-        assert_eq!(stored.stellar_address, token);
-        assert_eq!(stored.origin_chain, String::from_str(&env, "ethereum"));
-        assert_eq!(stored.bridge, BridgeProtocol::Wormhole);
-        assert!(stored.is_approved);
+        // NOTE: `require_bridge_finalized` takes no caller parameter, so there is
+        // no authorization check to exercise. We only validate the numeric
+        // confirmation bounds and the success/error results.
 
-        // A different (unregistered) address returns None without panicking.
-        let other = Address::generate(&env);
-        assert!(client.get_wrapped_token_info(&other).is_none());
-    }
-
-    #[test]
-    fn test_is_approved_wrapped_token_caller_and_bounds() {
-        let (env, admin, client) = setup();
-
-        // Approved wrapped token -> true.
-        let approved = Address::generate(&env);
-        client.register_wrapped_token(
-            &admin,
-            &make_wrapped_token_info(&env, approved.clone(), true),
-        );
-        assert!(client.is_approved_wrapped_token(&approved));
-
-        // Unapproved wrapped token -> false.
-        let unapproved = Address::generate(&env);
-        client.register_wrapped_token(
-            &admin,
-            &make_wrapped_token_info(&env, unapproved.clone(), false),
-        );
-        assert!(!client.is_approved_wrapped_token(&unapproved));
-
-        // Unregistered address -> false without panicking.
-        let unknown = Address::generate(&env);
-        assert!(!client.is_approved_wrapped_token(&unknown));
-    }
-
-    #[test]
-    fn test_validate_escrow_token_caller_and_bounds() {
-        let (env, admin, client) = setup();
-
-        // Native Stellar asset that is not registered as wrapped -> Ok(()).
-        let token_admin = Address::generate(&env);
-        let native_token = env.register_stellar_asset_contract_v2(token_admin).address();
-        assert!(client.validate_escrow_token(&native_token).is_ok());
-
-        // Approved wrapped token with a finalized bridge confirmation -> Ok(()).
-        let approved = Address::generate(&env);
-        client.register_wrapped_token(
-            &admin,
-            &make_wrapped_token_info(&env, approved.clone(), true),
-        );
+        // Success path: a finalized confirmation returns Ok.
+        let finalized_token = Address::generate(&env);
         client.update_bridge_confirmation(
-            &approved,
+            &finalized_token,
             &BridgeProtocol::Wormhole,
             &MIN_BRIDGE_CONFIRMATIONS,
         );
-        assert!(client.validate_escrow_token(&approved).is_ok());
+        assert!(client.require_bridge_finalized(&finalized_token).is_ok());
 
-        // Unapproved wrapped token -> existing error, no panic.
-        let unapproved = Address::generate(&env);
-        client.register_wrapped_token(
-            &admin,
-            &make_wrapped_token_info(&env, unapproved.clone(), false),
-        );
-        let result = client.try_validate_escrow_token(&unapproved);
+        // No confirmation recorded: must return E54, not panic.
+        let unknown_token = Address::generate(&env);
+        let result = client.try_require_bridge_finalized(&unknown_token);
         assert!(matches!(result, Err(Ok(EscrowError::E54))));
+
+        // Below-threshold confirmation: must return E54, not panic.
+        let below_token = Address::generate(&env);
+        client.update_bridge_confirmation(
+            &below_token,
+            &BridgeProtocol::Wormhole,
+            &(MIN_BRIDGE_CONFIRMATIONS - 1),
+        );
+        let result = client.try_require_bridge_finalized(&below_token);
+        assert!(matches!(result, Err(Ok(EscrowError::E54))));
+
+        // Numeric boundary: zero confirmations must not panic.
+        let zero_token = Address::generate(&env);
+        client.update_bridge_confirmation(&zero_token, &BridgeProtocol::Wormhole, &0);
+        let result = client.try_require_bridge_finalized(&zero_token);
+        assert!(matches!(result, Err(Ok(EscrowError::E54))));
+
+        // Numeric boundary: u32::MAX confirmations must not panic and is finalized.
+        let max_token = Address::generate(&env);
+        client.update_bridge_confirmation(&max_token, &BridgeProtocol::Wormhole, &u32::MAX);
+        assert!(client.require_bridge_finalized(&max_token).is_ok());
     }
 
+    // ── set_wormhole_bridge: caller and bound checks ─────────────────────────
+
     #[test]
-    fn test_get_wormhole_bridge_caller_and_bounds() {
-        let (env, _, client) = setup();
+    fn test_set_wormhole_bridge_caller_and_bounds() {
+        let (env, admin, client) = setup();
 
-        // Fresh env -> None.
-        assert!(client.get_wormhole_bridge().is_none());
+        // NOTE: `set_wormhole_bridge` takes no numeric argument, so no zero/max
+        // bound applies. We only validate caller authorization.
 
-        // After setting the bridge -> Some(bridge).
+        // Authorized admin caller stores the bridge address.
         let bridge = Address::generate(&env);
-        client.set_wormhole_bridge(&bridge);
-        assert_eq!(client.get_wormhole_bridge(), Some(bridge.clone()));
+        client.set_wormhole_bridge(&admin, &bridge);
+        assert_eq!(client.get_wormhole_bridge().unwrap(), bridge);
 
-        // Calling from a different caller context does not panic.
-        let other_caller = Address::generate(&env);
-        let _ = other_caller;
-        assert_eq!(client.get_wormhole_bridge(), Some(bridge));
+        // Unauthorized caller must be rejected with the crate's existing error
+        // rather than panicking.
+        let unauthorized = Address::generate(&env);
+        let other_bridge = Address::generate(&env);
+        let result = client.try_set_wormhole_bridge(&unauthorized, &other_bridge);
+        assert!(matches!(result, Err(Ok(EscrowError::E1))));
+
+        // The stored bridge address is unchanged after the rejected call.
+        assert_eq!(client.get_wormhole_bridge().unwrap(), bridge);
     }
 }

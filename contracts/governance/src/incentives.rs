@@ -262,6 +262,55 @@ mod incentive_tests {
     }
 
     #[test]
+    fn test_compute_multiplier_caller_and_bounds() {
+        // `compute_multiplier` is a pure function with no caller parameter, so
+        // no authorization check applies. These calls exercise the zero and
+        // maximum bounds of both numeric arguments and must not panic.
+        assert_eq!(compute_multiplier(0, 0), SCALE);
+        assert_eq!(compute_multiplier(0, MAX_LOCK_DURATION), SCALE);
+        assert_eq!(compute_multiplier(ONE_YEAR_SECS, 0), SCALE);
+
+        // u64::MAX arguments must saturate rather than panic.
+        let m_max_ext = compute_multiplier(u64::MAX, MAX_LOCK_DURATION);
+        assert_eq!(m_max_ext, u64::MAX);
+
+        let m_max_max = compute_multiplier(u64::MAX, u64::MAX);
+        assert_eq!(m_max_max, SCALE.saturating_add(SCALE));
+
+        // Success result is preserved for normal inputs.
+        assert_eq!(
+            compute_multiplier(MAX_LOCK_DURATION, MAX_LOCK_DURATION),
+            2 * SCALE
+        );
+    }
+
+    #[test]
+    fn test_compute_bonus_tokens_caller_and_bounds() {
+        // `compute_bonus_tokens` is a pure function with no caller parameter, so
+        // no authorization check applies. These calls exercise the zero and
+        // extreme bounds of both numeric arguments and must not panic.
+        assert_eq!(compute_bonus_tokens(0, SCALE), 0);
+        assert_eq!(compute_bonus_tokens(0, u64::MAX), 0);
+        assert_eq!(compute_bonus_tokens(0, 0), 0);
+        assert_eq!(compute_bonus_tokens(100_000, 0), 0);
+        assert_eq!(compute_bonus_tokens(100_000, SCALE), 0);
+
+        // i128::MAX / i128::MIN locked amounts must saturate rather than panic.
+        let m = compute_multiplier(ONE_YEAR_SECS, MAX_LOCK_DURATION);
+        let bonus_max = compute_bonus_tokens(i128::MAX, m);
+        assert!(bonus_max > 0);
+        let bonus_min = compute_bonus_tokens(i128::MIN, m);
+        assert!(bonus_min <= 0);
+
+        // u64::MAX multiplier must saturate rather than panic.
+        let bonus_hi = compute_bonus_tokens(100_000, u64::MAX);
+        assert!(bonus_hi > 0);
+
+        // Success result is preserved for normal inputs.
+        assert_eq!(compute_bonus_tokens(100_000, m), 25_000);
+    }
+
+    #[test]
     fn test_compute_bonus_tokens_zero_when_at_scale() {
         assert_eq!(compute_bonus_tokens(100_000, SCALE), 0);
     }
