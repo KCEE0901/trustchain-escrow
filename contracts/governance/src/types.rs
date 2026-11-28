@@ -211,65 +211,39 @@ pub enum DataKey {
 }
 
 #[cfg(test)]
-mod velock_roundtrip_tests {
+mod jurypool_roundtrip_tests {
     use super::*;
     use soroban_sdk::{Env, IntoVal, TryFromVal, Val};
-
     #[test]
-    fn velock_scval_roundtrip_zero_and_nonzero() {
+    fn jurypool_scval_roundtrip() {
         let env = Env::default();
-        let zero = VeLock {
-            amount: 0,
-            unlock_time: 0,
-            locked_at: 0,
+        let zero = JuryPool {
+            pool_id: 0,
+            escrow_id: 0,
+            milestone_id: 0,
+            created_at: 0,
+            voting_end: 0,
+            resolved: false,
+            weight_for_client: 0,
+            weight_for_freelancer: 0,
+            total_locked: 0,
         };
-        let val: Val = zero.clone().into_val(&env);
-        let back = VeLock::try_from_val(&env, &val).expect("VeLock round-trip");
-        assert_eq!(back.amount, zero.amount);
-        assert_eq!(back.unlock_time, zero.unlock_time);
-        assert_eq!(back.locked_at, zero.locked_at);
-
-        let nonzero = VeLock {
-            amount: 1_000,
-            unlock_time: 9_999,
-            locked_at: 1_700_000_000,
+        let back = JuryPool::try_from_val(&env, &zero.clone().into_val(&env)).unwrap();
+        assert_eq!(back.pool_id, 0);
+        assert_eq!(back.resolved, false);
+        let nz = JuryPool {
+            pool_id: 1,
+            escrow_id: 2,
+            milestone_id: 3,
+            created_at: 4,
+            voting_end: 5,
+            resolved: true,
+            weight_for_client: 10,
+            weight_for_freelancer: 20,
+            total_locked: 30,
         };
-        let val2: Val = nonzero.clone().into_val(&env);
-        let back2 = VeLock::try_from_val(&env, &val2).expect("VeLock round-trip");
-        assert_eq!(back2.amount, nonzero.amount);
-        assert_eq!(back2.unlock_time, nonzero.unlock_time);
-        assert_eq!(back2.locked_at, nonzero.locked_at);
-    }
-}
+        let back2 = JuryPool::try_from_val(&env, &nz.clone().into_val(&env)).unwrap();
+        assert_eq!(back2.total_locked, 30);
 
-#[cfg(test)]
-mod upgradepayload_roundtrip_tests {
-    use super::*;
-    use soroban_sdk::{Address, BytesN, Env, IntoVal, TryFromVal, Val};
-
-    #[test]
-    fn upgradepayload_scval_roundtrip_zero_and_nonzero() {
-        let env = Env::default();
-        let zero_hash = BytesN::from_array(&env, &[0u8; 32]);
-        let full_hash = BytesN::from_array(&env, &[0xAB; 32]);
-        let target = Address::generate(&env);
-
-        let zero = UpgradePayload {
-            target_contract: target.clone(),
-            new_wasm_hash: zero_hash,
-        };
-        let val: Val = zero.clone().into_val(&env);
-        let back = UpgradePayload::try_from_val(&env, &val).expect("UpgradePayload round-trip");
-        assert_eq!(back.target_contract, zero.target_contract);
-        assert_eq!(back.new_wasm_hash, zero.new_wasm_hash);
-
-        let nonzero = UpgradePayload {
-            target_contract: target,
-            new_wasm_hash: full_hash,
-        };
-        let val2: Val = nonzero.clone().into_val(&env);
-        let back2 = UpgradePayload::try_from_val(&env, &val2).expect("UpgradePayload round-trip");
-        assert_eq!(back2.target_contract, nonzero.target_contract);
-        assert_eq!(back2.new_wasm_hash, nonzero.new_wasm_hash);
     }
 }

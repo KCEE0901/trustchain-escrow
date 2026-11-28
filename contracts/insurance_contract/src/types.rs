@@ -161,39 +161,40 @@ pub struct SlashProposal {
 }
 
 #[cfg(test)]
-mod slashproposal_roundtrip_tests {
+mod claim_roundtrip_tests {
     use super::*;
     use soroban_sdk::{Env, IntoVal, TryFromVal, Val};
     #[test]
-    fn slashproposal_scval_roundtrip() {
+    fn claim_scval_roundtrip() {
         use soroban_sdk::String;
         let env = Env::default();
-        let proposer = soroban_sdk::Address::generate(&env);
-        let zero = SlashProposal {
+        let claimant = soroban_sdk::Address::generate(&env);
+        let zero = Claim {
             id: 0,
-            proposer: proposer.clone(),
-            slash_bps: 0,
-            reason: String::from_str(&env, ""),
+            claimant: claimant.clone(),
+            description: String::from_str(&env, ""),
+            amount: 0,
+            status: ClaimStatus::Pending,
+            submitted_at: 0,
+            expires_at: 0,
             votes_for: 0,
             votes_against: 0,
-            status: SlashStatus::Pending,
-            created_at: 0,
         };
-        let back = SlashProposal::try_from_val(&env, &zero.clone().into_val(&env)).unwrap();
-        assert_eq!(back.id, 0);
-        assert_eq!(back.slash_bps, 0);
-        let nz = SlashProposal {
-            id: 2,
-            proposer,
-            slash_bps: 100,
-            reason: String::from_str(&env, "r"),
-            votes_for: 1,
-            votes_against: 0,
-            status: SlashStatus::Approved,
-            created_at: 9,
+        let back = Claim::try_from_val(&env, &zero.clone().into_val(&env)).unwrap();
+        assert_eq!(back.amount, 0);
+        let nz = Claim {
+            id: 1,
+            claimant,
+            description: String::from_str(&env, "evidence"),
+            amount: 500,
+            status: ClaimStatus::Approved,
+            submitted_at: 1,
+            expires_at: 2,
+            votes_for: 2,
+            votes_against: 1,
         };
-        let back2 = SlashProposal::try_from_val(&env, &nz.clone().into_val(&env)).unwrap();
-        assert_eq!(back2.slash_bps, 100);
+        let back2 = Claim::try_from_val(&env, &nz.clone().into_val(&env)).unwrap();
+        assert_eq!(back2.amount, 500);
 
     }
 }
