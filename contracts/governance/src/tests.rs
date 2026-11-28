@@ -55,6 +55,15 @@ mod tests {
         (env, admin, token_admin, token, client)
     }
 
+    #[test]
+    fn test_proposal_count_is_public_and_defaults_to_zero() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, GovernanceContract);
+        let client = GovernanceContractClient::new(&env, &contract_id);
+
+        assert_eq!(client.proposal_count(), 0);
+    }
+
     fn mint(env: &Env, _token_admin: &Address, token: &Address, to: &Address, amount: i128) {
         token::StellarAssetClient::new(env, token).mint(to, &amount);
     }
