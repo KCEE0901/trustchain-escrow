@@ -38,6 +38,8 @@ mod event_names;
 mod events;
 mod types;
 
+mod cancel_upgrade_tests;
+
 pub use errors::ExtError;
 pub use types::{
     ArbitrationDispute, BatchEscrowParams, DataKey, FeeBalance, FeeRecipient, PendingUpgrade, Vote,

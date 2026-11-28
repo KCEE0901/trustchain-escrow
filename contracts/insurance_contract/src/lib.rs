@@ -35,6 +35,8 @@ mod events;
 mod gas_profiling;
 mod types;
 
+mod caller_bound_tests;
+
 pub use errors::InsuranceError;
 pub use types::{
     Claim, ClaimStatus, DataKey, FundInfo, FundStats, SlashProposal, SlashStatus, StakeRecord,
@@ -347,7 +349,7 @@ impl Storage {
         }
         record
             .amount
-            .saturating_mul(current_acc - record.reward_debt)
+            .saturating_mul(current_acc.saturating_sub(record.reward_debt))
             / YIELD_PRECISION
     }
 }
