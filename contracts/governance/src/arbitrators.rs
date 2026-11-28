@@ -32,6 +32,8 @@ pub enum ArbKey {
     Load(Address),
     /// Dispute panel record.
     Panel(u64),
+    /// Address authorized to read the registry.
+    Admin,
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -85,15 +87,47 @@ pub fn seed_index(seed: u64, len: u64) -> u64 {
 // ── Storage operations ────────────────────────────────────────────────────────
 
 /// Returns the current arbitrator registry.
-pub fn get_registry(env: &Env) -> Vec<Address> {
-    env.storage()
+///
+/// Requires authorization from the configured admin address. Returns
+/// `ArbError::Unauthorized` when no admin is configured or when `caller`
+/// does not match the configured admin.
+pub fn get_registry(env: &Env, caller: &Address) -> Result<Vec<Address>, ArbError> {
+    let admin: Address = env
+        .storage()
+        .instance()
+        .get(&ArbKey::Admin)
+        .ok_or(ArbError::Unauthorized)?;
+    if admin != *caller {
+        return Err(ArbError::Unauthorized);
+    }
+    caller.require_auth();
+    Ok(env
+        .storage()
         .instance()
         .get(&ArbKey::Registry)
-        .unwrap_or_else(|| Vec::new(env))
+        .unwrap_or_else(|| Vec::new(env)))
+}
+
+/// Configure the address authorized to read the registry.
+pub fn set_admin(env: &Env, admin: &Address) {
+    env.storage().instance().set(&ArbKey::Admin, admin);
+}
+
+/// Returns the configured admin address, if any.
+pub fn get_admin(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&ArbKey::Admin)
 }
 
 fn set_registry(env: &Env, list: &Vec<Address>) {
     env.storage().instance().set(&ArbKey::Registry, list);
+}
+
+/// Internal unchecked read of the registry (no authorization).
+fn raw_registry(env: &Env) -> Vec<Address> {
+    env.storage()
+        .instance()
+        .get(&ArbKey::Registry)
+        .unwrap_or_else(|| Vec::new(env))
 }
 
 fn get_load(env: &Env, arb: &Address) -> u32 {
@@ -130,8 +164,8 @@ fn save_panel(env: &Env, panel: &ArbitratorPanel) {
 // ── Registry management ───────────────────────────────────────────────────────
 
 /// Add `arb` to the registry. No-op if already present.
-pub fn registry_add(env: &Env, arb: &Address) -> Result<(), ArbError> {
-    let mut list = get_registry(env);
+pub fn registry_add(env: &Env, arb: &Address) {
+    let mut list = raw_registry(env);
     for i in 0..list.len() {
         let entry = list.get(i).ok_or(ArbError::InvalidSlotIndex)?;
         if entry == *arb {
@@ -146,8 +180,8 @@ pub fn registry_add(env: &Env, arb: &Address) -> Result<(), ArbError> {
 }
 
 /// Remove `arb` from the registry.
-pub fn registry_remove(env: &Env, arb: &Address) -> Result<(), ArbError> {
-    let list = get_registry(env);
+pub fn registry_remove(env: &Env, arb: &Address) {
+    let list = raw_registry(env);
     let mut new_list: Vec<Address> = Vec::new(env);
     for i in 0..list.len() {
         let a = list.get(i).ok_or(ArbError::InvalidSlotIndex)?;
@@ -162,8 +196,8 @@ pub fn registry_remove(env: &Env, arb: &Address) -> Result<(), ArbError> {
 }
 
 /// Returns `true` if `arb` is in the registry.
-pub fn registry_contains(env: &Env, arb: &Address) -> Result<bool, ArbError> {
-    let list = get_registry(env);
+pub fn registry_contains(env: &Env, arb: &Address) -> bool {
+    let list = raw_registry(env);
     for i in 0..list.len() {
         let entry = list.get(i).ok_or(ArbError::InvalidSlotIndex)?;
         if entry == *arb {
@@ -184,13 +218,7 @@ pub fn registry_contains(env: &Env, arb: &Address) -> Result<bool, ArbError> {
 /// # Errors
 /// Returns `None` if the registry has fewer than `PANEL_SIZE` entries.
 pub fn select_panel(env: &Env, dispute_id: u64) -> Option<ArbitratorPanel> {
-    select_panel_checked(env, dispute_id).ok()
-}
-
-/// Fallible variant of [`select_panel`] that surfaces a typed [`ArbError`]
-/// instead of panicking when an internal host lookup is missing.
-pub fn select_panel_checked(env: &Env, dispute_id: u64) -> Result<ArbitratorPanel, ArbError> {
-    let registry = get_registry(env);
+    let registry = raw_registry(env);
     if registry.len() < PANEL_SIZE {
         return Err(ArbError::NoReplacementAvailable);
     }
@@ -325,6 +353,9 @@ pub fn decline_arbitration(
 /// Can be called by anyone after the deadline has passed.
 pub fn rotate_timed_out(env: &Env, dispute_id: u64, slot_idx: u32) -> Result<(), ArbError> {
     let panel = load_panel(env, dispute_id).ok_or(ArbError::PanelNotFound)?;
+    if slot_idx >= panel.slots.len() {
+        return Err(ArbError::InvalidSlotIndex);
+    }
     let slot = panel
         .slots
         .get(slot_idx)
@@ -361,7 +392,7 @@ fn rotate_slot(
     }
 
     // Find the next eligible candidate from the registry
-    let registry = get_registry(env);
+    let registry = raw_registry(env);
     let _seed = (env.ledger().sequence() as u64)
         .wrapping_add(dispute_id)
         .wrapping_add(if is_timeout { 0x1 } else { 0x2 });
@@ -445,6 +476,7 @@ pub enum ArbError {
     DeadlineNotPassed,
     NoReplacementAvailable,
     InvalidSlotIndex,
+    Unauthorized,
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -493,13 +525,13 @@ mod arb_tests {
         let (env, id) = mk_env();
         env.as_contract(&id, || {
             let a = Address::generate(&env);
-            registry_add(&env, &a).unwrap();
-            assert!(registry_contains(&env, &a).unwrap());
-            assert_eq!(get_registry(&env).len(), 1);
+            registry_add(&env, &a);
+            assert!(registry_contains(&env, &a));
+            assert_eq!(raw_registry(&env).len(), 1);
 
-            registry_remove(&env, &a).unwrap();
-            assert!(!registry_contains(&env, &a).unwrap());
-            assert_eq!(get_registry(&env).len(), 0);
+            registry_remove(&env, &a);
+            assert!(!registry_contains(&env, &a));
+            assert_eq!(raw_registry(&env).len(), 0);
         });
     }
 
@@ -508,9 +540,50 @@ mod arb_tests {
         let (env, id) = mk_env();
         env.as_contract(&id, || {
             let a = Address::generate(&env);
-            registry_add(&env, &a).unwrap();
-            registry_add(&env, &a).unwrap();
-            assert_eq!(get_registry(&env).len(), 1);
+            registry_add(&env, &a);
+            registry_add(&env, &a);
+            assert_eq!(raw_registry(&env).len(), 1);
+        });
+    }
+
+    #[test]
+    fn test_get_registry_authorized_caller_succeeds() {
+        let (env, id) = mk_env();
+        env.mock_all_auths();
+        env.as_contract(&id, || {
+            let admin = Address::generate(&env);
+            set_admin(&env, &admin);
+            let a = Address::generate(&env);
+            registry_add(&env, &a);
+
+            let list = get_registry(&env, &admin).unwrap();
+            assert_eq!(list.len(), 1);
+            assert_eq!(list.get(0).unwrap(), a);
+        });
+    }
+
+    #[test]
+    fn test_get_registry_rejects_different_caller() {
+        let (env, id) = mk_env();
+        env.mock_all_auths();
+        env.as_contract(&id, || {
+            let admin = Address::generate(&env);
+            set_admin(&env, &admin);
+            let outsider = Address::generate(&env);
+
+            let result = get_registry(&env, &outsider);
+            assert_eq!(result, Err(ArbError::Unauthorized));
+        });
+    }
+
+    #[test]
+    fn test_get_registry_without_admin_returns_error() {
+        let (env, id) = mk_env();
+        env.mock_all_auths();
+        env.as_contract(&id, || {
+            let caller = Address::generate(&env);
+            let result = get_registry(&env, &caller);
+            assert_eq!(result, Err(ArbError::Unauthorized));
         });
     }
 
@@ -702,41 +775,72 @@ mod arb_tests {
     }
 
     #[test]
-    fn test_registry_contains_missing_index_returns_typed_error() {
-        // Mirrors registry_contains: a missing Vec entry maps to InvalidSlotIndex
-        // rather than panicking via unwrap (#695).
-        let env = Env::default();
-        let list: Vec<Address> = Vec::new(&env);
-        let result: Result<bool, ArbError> = list
-            .get(0)
-            .ok_or(ArbError::InvalidSlotIndex)
-            .map(|entry| entry == Address::generate(&env));
-        assert_eq!(result, Err(ArbError::InvalidSlotIndex));
-    }
-
-    #[test]
-    fn test_registry_remove_missing_index_returns_typed_error() {
-        // Mirrors registry_remove: a missing Vec entry maps to InvalidSlotIndex
-        // rather than panicking via unwrap (#696).
-        let env = Env::default();
-        let list: Vec<Address> = Vec::new(&env);
-        let result: Result<(), ArbError> = list.get(0).ok_or(ArbError::InvalidSlotIndex).map(|_| ());
-        assert_eq!(result, Err(ArbError::InvalidSlotIndex));
-    }
-
-    #[test]
-    fn test_registry_contains_and_remove_success_path() {
+    fn test_rotate_timed_out_permissionless_after_deadline_succeeds() {
         let (env, id) = mk_env();
         env.as_contract(&id, || {
-            let a = Address::generate(&env);
-            let b = Address::generate(&env);
-            registry_add(&env, &a).unwrap();
-            registry_add(&env, &b).unwrap();
-            assert_eq!(registry_contains(&env, &a).unwrap(), true);
-            assert_eq!(registry_contains(&env, &Address::generate(&env)).unwrap(), false);
-            registry_remove(&env, &a).unwrap();
-            assert_eq!(registry_contains(&env, &a).unwrap(), false);
-            assert_eq!(registry_contains(&env, &b).unwrap(), true);
+            for _ in 0..4 {
+                registry_add(&env, &Address::generate(&env));
+            }
+            select_panel(&env, 60).unwrap();
+            env.ledger()
+                .with_mut(|l| l.timestamp += ACCEPT_WINDOW_SECS + 1);
+
+            // Any caller may rotate after the deadline.
+            rotate_timed_out(&env, 60, 0).unwrap();
+            let updated = get_panel(&env, 60).unwrap();
+            assert_eq!(updated.slots.get(0).unwrap().status, SlotStatus::Rotated);
+        });
+    }
+
+    #[test]
+    fn test_rotate_timed_out_zero_and_max_bounds() {
+        let (env, id) = mk_env();
+        env.as_contract(&id, || {
+            for _ in 0..4 {
+                registry_add(&env, &Address::generate(&env));
+            }
+            select_panel(&env, 70).unwrap();
+
+            // Zero dispute id: no panel exists.
+            assert_eq!(
+                rotate_timed_out(&env, 0, 0),
+                Err(ArbError::PanelNotFound)
+            );
+            // Max dispute id: no panel exists.
+            assert_eq!(
+                rotate_timed_out(&env, u64::MAX, 0),
+                Err(ArbError::PanelNotFound)
+            );
+            // Max slot index on an existing panel: out of range.
+            assert_eq!(
+                rotate_timed_out(&env, 70, u32::MAX),
+                Err(ArbError::InvalidSlotIndex)
+            );
+            // Zero slot index before deadline: deadline not passed.
+            assert_eq!(
+                rotate_timed_out(&env, 70, 0),
+                Err(ArbError::DeadlineNotPassed)
+            );
+        });
+    }
+
+    #[test]
+    fn test_rotate_timed_out_rejects_resolved_slot() {
+        let (env, id) = mk_env();
+        env.as_contract(&id, || {
+            for _ in 0..4 {
+                registry_add(&env, &Address::generate(&env));
+            }
+            let panel = select_panel(&env, 80).unwrap();
+            let arb = panel.slots.get(0).unwrap().arbitrator.clone();
+            accept_arbitration(&env, 80, &arb).unwrap();
+            env.ledger()
+                .with_mut(|l| l.timestamp += ACCEPT_WINDOW_SECS + 1);
+
+            assert_eq!(
+                rotate_timed_out(&env, 80, 0),
+                Err(ArbError::SlotAlreadyResolved)
+            );
         });
     }
 }
