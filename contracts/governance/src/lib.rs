@@ -659,8 +659,12 @@ impl GovernanceContract {
     }
 
     /// Returns the current governance configuration.
-    pub fn get_config(env: Env) -> Result<GovConfig, GovError> {
+    ///
+    /// # Arguments
+    /// * `caller` - Must `require_auth()`. Any address may read the config.
+    pub fn get_config(env: Env, caller: Address) -> Result<GovConfig, GovError> {
         Storage::require_initialized(&env)?;
+        caller.require_auth();
         Storage::config(&env)
     }
 
